@@ -100,9 +100,26 @@ function renderCluster(cluster: FailureCluster): string {
   return rows.join("\n");
 }
 
-export function renderFailBody(envelope: DigestEnvelope): string {
+const LABEL_BYTE_CEILING = 80;
+
+export interface RenderContext {
+  rawText?: string;
+  omitted?: readonly FailureCluster[];
+}
+
+function omittedLabel(cluster: FailureCluster): string {
+  const label = cluster.sample_tests[0] ?? cluster.message;
+  return truncateBytes(label.replace(/\s+/g, " ").trim(), LABEL_BYTE_CEILING);
+}
+
+function renderOmittedLine(cluster: FailureCluster): string {
+  return `  ${cluster.cluster_id} ${cluster.error_kind} x${cluster.affected_count} ${cluster.top_frame} ${omittedLabel(cluster)}`;
+}
+
+export function renderFailBody(envelope: DigestEnvelope, omitted: readonly FailureCluster[] = []): string {
   const clusters = envelope.clusters ?? [];
   let kept = clusters.length;
+  let listed = clusters.length + omitted.length;
 
   const render = (): string => {
     const header =
@@ -110,8 +127,10 @@ export function renderFailBody(envelope: DigestEnvelope): string {
       ` in ${envelope.duration_ms}ms | ${kept} cluster${kept === 1 ? "" : "s"}` +
       ` | log: ${shortenPath(envelope.raw_log_path)}`;
     const blocks = clusters.slice(0, kept).map(renderCluster).join("\n");
-    const omission = kept < clusters.length ? `\n+${clusters.length - kept} more clusters (see log)` : "";
-    return `${header}\n${blocks}${omission}`;
+    const allOmitted = [...clusters.slice(kept), ...omitted];
+    const lines = allOmitted.slice(0, listed).map((c) => `\n${renderOmittedLine(c)}`);
+    const footer = allOmitted.length > 0 ? `\n+${allOmitted.length} more clusters (see log)${lines.join("")}` : "";
+    return `${header}\n${blocks}${footer}`;
   };
 
   let text = render();
@@ -119,11 +138,19 @@ export function renderFailBody(envelope: DigestEnvelope): string {
     kept -= 1;
     text = render();
   }
+  while (estimateTokens(text) > MAX_FAIL_TOKENS && listed > 0) {
+    listed -= 1;
+    text = render();
+  }
   return truncateBytes(text, FAIL_BYTE_CEILING - 1);
 }
 
-export function formatEnvelope(envelope: DigestEnvelope, format: OutputFormat): string {
+export function formatEnvelope(
+  envelope: DigestEnvelope,
+  format: OutputFormat,
+  context: RenderContext = {},
+): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED";
-  return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope)}\n`;
+  return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, context.omitted)}\n`;
 }

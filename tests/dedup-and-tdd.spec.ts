@@ -390,3 +390,65 @@ describe("scope isolation (CT-5)", () => {
     expect(loadState("broken", base)).toBeNull();
   });
 });
+
+describe("dedupeFailures source-order tie-break", () => {
+  const options = { repoRoot: REPO, contextLines: 2, maxClusters: 5, logPath: "/tmp/run.log" };
+
+  function distinct(n: number, startLine: number, endLine: number): RawFailure {
+    return failure({
+      testName: `t${n}`,
+      message: `Error: distinct failure ${"abcdefgh"[n]}`,
+      startLine,
+      endLine,
+    });
+  }
+
+  it("Single-digit lines sort before double-digit lines", () => {
+    const clusters = dedupeFailures(
+      [distinct(0, 13, 20), distinct(1, 5, 9), distinct(2, 11, 12)],
+      options,
+    );
+    expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L5-L9", "L11-L12", "L13-L20"]);
+  });
+
+  it("Equal first lines fall back to the last line", () => {
+    const clusters = dedupeFailures([distinct(0, 7, 30), distinct(1, 7, 9)], options);
+    expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L7-L9", "L7-L30"]);
+  });
+
+  it("affected_count still ranks first", () => {
+    const failures = [
+      distinct(0, 5, 5),
+      ...[100, 101, 102].map((line, i) =>
+        failure({ testName: `group ${i}`, message: "Error: shared failure", startLine: line, endLine: line }),
+      ),
+    ];
+    const clusters = dedupeFailures(failures, options);
+    expect(clusters.map((c) => c.affected_count)).toEqual([3, 1]);
+  });
+});
+
+describe("dedupeFailures windowLimit", () => {
+  it("reads signal windows only for the first windowLimit clusters", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-window-"));
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src", "a.ts"), "one\ntwo\nthree\nfour\nfive\n");
+    const at = (n: number, start: number): RawFailure =>
+      failure({
+        testName: `t${n}`,
+        message: `Error: distinct window failure ${n}`,
+        frames: [`at f (src/a.ts:${n}:1)`],
+        startLine: start,
+        endLine: start,
+      });
+    const clusters = dedupeFailures([at(2, 1), at(3, 2), at(4, 3)], {
+      repoRoot: root,
+      contextLines: 1,
+      maxClusters: Number.POSITIVE_INFINITY,
+      windowLimit: 1,
+      logPath: "/tmp/run.log",
+    });
+    expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L1-L1", "L2-L2", "L3-L3"]);
+    expect(clusters.map((c) => c.signal_window)).toEqual(["1 | one\n2 > two\n3 | three", "", ""]);
+  });
+});
