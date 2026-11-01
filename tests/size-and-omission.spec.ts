@@ -334,6 +334,20 @@ describe("the size rule through the CLI", () => {
   });
 });
 
+describe("tiny failures through the CLI", () => {
+  it("A failure with no output prints only the header", async () => {
+    const code = await main(["--no-jev", "--", process.execPath, "-e", "process.exit(3)"]);
+    expect(code).toBe(3);
+    expect(stdout).toMatch(/^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log\n$/);
+
+    stdout = "";
+    const jsonCode = await main(["--no-jev", "--format=json", "--", process.execPath, "-e", "process.exit(3)"]);
+    expect(jsonCode).toBe(3);
+    const envelope = JSON.parse(stdout) as { clusters: { error_kind: string }[] };
+    expect(envelope.clusters.map((c) => c.error_kind)).toEqual(["UNSTRUCTURED_BUILD_ERROR"]);
+  });
+});
+
 describe("the size ladder", () => {
   it("Each level is chosen at its exact threshold", () => {
     const envelope = thresholdEnvelope();
