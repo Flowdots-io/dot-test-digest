@@ -521,6 +521,19 @@ describe("node --test, file-level spec failures", () => {
   });
 });
 
+describe("node --test, file-level spec failures (missing export)", () => {
+  it("A missing export under the spec reporter is a RUNTIME_EXCEPTION failure", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "missing-export.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(envelope.summary.total_clusters).toBe(1);
+    expect(envelope.clusters[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(envelope.clusters[0]?.message).toBe(
+      "SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'",
+    );
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
