@@ -346,6 +346,14 @@ describe("tiny failures through the CLI", () => {
     const envelope = JSON.parse(stdout) as { clusters: { error_kind: string }[] };
     expect(envelope.clusters.map((c) => c.error_kind)).toEqual(["UNSTRUCTURED_BUILD_ERROR"]);
   });
+
+  it("A tiny unstructured failure prints the header and the raw line", async () => {
+    const code = await main(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
+    expect(code).toBe(1);
+    const [header, ...rest] = stdout.split("\n");
+    expect(header).toMatch(/^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log$/);
+    expect(rest).toEqual(["boom", ""]);
+  });
 });
 
 describe("the size ladder", () => {
