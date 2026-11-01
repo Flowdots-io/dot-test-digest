@@ -1,3 +1,5 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import { canonicalTestId, normalizeTestName } from "../pruner/failure-identity.js";
@@ -321,6 +323,129 @@ function parseCompact(lines: readonly CapturedLine[]): AdapterResult {
   return { adapter: "js-test", failures, counts };
 }
 
+const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)\s*$/;
+const YAML_KEY = /^([A-Za-z_][\w-]*):(?:\s+(.*?))?\s*$/;
+const FILE_URL = /file:\/\/[^\s()]*/g;
+
+interface NodeBlock {
+  fields: Map<string, string[]>;
+  /** Index (in the lines array) of the closing `...`. */
+  endIndex: number;
+}
+
+function leadingSpaces(text: string): number {
+  return text.length - text.trimStart().length;
+}
+
+function unquote(value: string): string {
+  const trimmed = value.trim();
+  const quote = trimmed[0];
+  if ((quote === "'" || quote === '"') && trimmed.length >= 2 && trimmed.endsWith(quote)) {
+    const inner = trimmed.slice(1, -1);
+    return quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1");
+  }
+  return trimmed;
+}
+
+/**
+ * Reads the YAML diagnostic block after a `not ok` line: `---` opens it, the
+ * `...` at the same indent closes it. Each top-level key maps to its value
+ * lines: the unquoted scalar, or the trimmed lines of a `|-` block scalar or of
+ * an indented mapping. Returns null when the block is missing or unterminated.
+ */
+function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): NodeBlock | null {
+  const open = lines[headerIndex + 1]?.text;
+  if (open === undefined || open.trim() !== "---") return null;
+  const base = leadingSpaces(open);
+  const fields = new Map<string, string[]>();
+  let key: string | null = null;
+  let bucket: string[] = [];
+  let scalarBlock = false;
+
+  const seal = (): void => {
+    if (key !== null) fields.set(key, bucket);
+    key = null;
+    bucket = [];
+  };
+
+  for (let index = headerIndex + 2; index < lines.length; index += 1) {
+    const text = lines[index]?.text ?? "";
+    if (text.trim() === "..." && leadingSpaces(text) === base) {
+      seal();
+      return { fields, endIndex: index };
+    }
+    const blank = text.trim() === "";
+    if (key !== null && (blank || leadingSpaces(text) > base)) {
+      if (scalarBlock || !blank) bucket.push(text.trim());
+      continue;
+    }
+    const match = YAML_KEY.exec(text.trim());
+    if (match === null || leadingSpaces(text) !== base) continue;
+    seal();
+    key = match[1] ?? null;
+    const inline = match[2] ?? "";
+    scalarBlock = /^\|[-+]?$/.test(inline);
+    if (inline !== "" && !scalarBlock) bucket.push(unquote(inline));
+  }
+  return null;
+}
+
+function nodePath(text: string): string {
+  return text.replace(FILE_URL, (url) => {
+    const suffix = /(?::\d+){0,2}$/.exec(url)?.[0] ?? "";
+    try {
+      return fileURLToPath(url.slice(0, url.length - suffix.length)) + suffix;
+    } catch {
+      return url;
+    }
+  });
+}
+
+function relativeToCwd(file: string): string {
+  const relative = path.relative(process.cwd(), file).split(path.sep).join("/");
+  return relative === "" || relative.startsWith("..") ? file : relative;
+}
+
+function nodeFailure(
+  name: string,
+  block: NodeBlock,
+  startLine: number,
+  endLine: number,
+): RawFailure {
+  const field = (key: string): string[] => block.fields.get(key) ?? [];
+  const errorName = field("name").join(" ").trim();
+  let message = field("error")
+    .filter((line) => line !== "")
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/^([A-Za-z_$][\w.$]*) \[[A-Z][A-Z0-9_]*\]:/, "$1:")
+    .trim();
+  if (errorName !== "" && !message.startsWith(errorName)) message = `${errorName}: ${message}`;
+
+  const location = field("location")[0];
+  const locationFile = location === undefined ? undefined : /^(.*?)(?::\d+){1,2}$/.exec(location)?.[1];
+  const testFile = locationFile === undefined ? null : relativeToCwd(locationFile);
+
+  const expected = field("expected");
+  const actual = field("actual");
+  const diff =
+    expected.length > 0 && actual.length > 0
+      ? { expected: expected.join(", "), received: actual.join(", ") }
+      : undefined;
+
+  const frames = field("stack").map(nodePath);
+  return {
+    testName: name === "" ? null : name,
+    testFile,
+    errorKind: classifyMessage(`${message}\n${frames.join("\n")}`),
+    message: message === "" ? "Unknown test failure" : message,
+    frames,
+    ...(diff !== undefined ? { diff } : {}),
+    startLine,
+    endLine,
+  };
+}
+
 /** The v0.1.1 grammar for TTY-style streams, TAP and Playwright headers. */
 function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   const failures: RawFailure[] = [];
@@ -335,11 +460,26 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
     current = null;
   };
 
-  for (const line of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index] as CapturedLine;
     const text = line.text;
 
     // SPEC-002 §4.2.1(a): a file banner is metadata, never a frame/failure.
     if (COMPACT_BANNER.test(text)) continue;
+
+    // A `not ok` entry whose YAML block has a top-level `failureType:` key is
+    // node's own diagnostic block: one failure, read by key.
+    const notOk = TAP_NOT_OK.exec(text);
+    if (notOk !== null) {
+      const block = readTapBlock(lines, index);
+      if (block?.fields.has("failureType") === true) {
+        flush();
+        const endLine = lines[block.endIndex]?.line ?? line.line;
+        failures.push(nodeFailure(notOk[2] ?? "", block, line.line, endLine));
+        index = block.endIndex;
+        continue;
+      }
+    }
 
     const header = HEADER.exec(text);
     if (header !== null) {
