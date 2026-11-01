@@ -420,6 +420,19 @@ describe("node --test, spec reporter nested suite and timeout", () => {
   });
 });
 
+describe("node --test, spec reporter compact-md digest", () => {
+  it("The compact-md digest of the spec run names the failures", async () => {
+    const run = await runNodeCart(["--no-jev"], [SPEC, "cart.test.js"]);
+
+    expect(run.stdout.split("\n")[0]?.startsWith("[FAIL] 4 failed, 2 passed in ")).toBe(true);
+    expect(run.stdout).toContain("ASSERTION_FAILURE x1 cart.test.js:7:46");
+    expect(Buffer.byteLength(run.stdout)).toBeLessThanOrEqual(2400);
+    expect(run.stdout).not.toContain("UNSTRUCTURED_BUILD_ERROR");
+    expect(run.stdout).not.toContain("BUILD_ERROR");
+    expect(run.stdout).not.toContain("file://");
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
