@@ -109,4 +109,19 @@ describe("node --test, TAP diagnostic blocks", () => {
       }
     }
   });
+
+  it("The compact-md digest of the cart run no longer merges the failures", async () => {
+    const run = await runNodeCart(["--no-jev"], ["cart.test.js"]);
+
+    expect(run.code).toBe(1);
+    expect(run.stdout.startsWith("[FAIL] 4 failed, 2 passed in ")).toBe(true);
+    expect(Buffer.byteLength(run.stdout)).toBeLessThanOrEqual(2400);
+    expect(run.stdout).toContain("diff: expected 900 / received 0");
+    expect(run.stdout).not.toContain("unknown:0:0");
+    expect(run.stdout).not.toContain("Unknown test failure");
+    expect(run.stdout).not.toContain("file://");
+    for (const line of run.stdout.split("\n")) {
+      expect(line.endsWith("received ")).toBe(false);
+    }
+  });
 });
