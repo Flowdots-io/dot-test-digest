@@ -82,4 +82,31 @@ describe("node --test, TAP diagnostic blocks", () => {
       expect(cluster.message).not.toBe("Unknown test failure");
     }
   });
+
+  it("Each node failure gets a SignalWindow from the right file", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], ["cart.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+    const byId = (id: string): Cluster => {
+      const found = envelope.clusters.find((c) => c.cluster_id === id);
+      if (found === undefined) throw new Error(`no cluster ${id}`);
+      return found;
+    };
+
+    expect(byId("c_9721831d").signal_window).toContain(
+      '7 > test("discount 10% leaves 90%", () => assert.equal(discount(1000, 10), 900));',
+    );
+    expect(byId("c_53a8182a").signal_window).toBe(
+      [
+        "3 | export const discount = (n, p) => n - Math.round(n * p / 10); // bug: /10",
+        "4 | export const total = (items, p = 0) => { const d = discount(subtotal(items), p); return d + tax(d); };",
+        "5 > export const first = (items) => items[0].name;",
+      ].join("\n"),
+    );
+    for (const cluster of envelope.clusters) {
+      for (const frame of cluster.pruned_stack) {
+        expect(frame).not.toContain("file://");
+        expect(frame).not.toContain("node:internal");
+      }
+    }
+  });
 });
