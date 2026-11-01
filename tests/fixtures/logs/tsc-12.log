@@ -1,0 +1,12 @@
+src/m.ts(1,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(2,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(3,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(4,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(5,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(6,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(7,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(8,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(9,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(10,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(11,1): error TS2322: Type 'number' is not assignable to type 'string'.
+src/m.ts(12,1): error TS2322: Type 'number' is not assignable to type 'string'.
