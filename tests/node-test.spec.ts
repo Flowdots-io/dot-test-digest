@@ -562,6 +562,19 @@ describe("node --test, two crashing files under the spec reporter", () => {
   });
 });
 
+describe("node --test, spec red-phase guards (missing module)", () => {
+  it("A missing module is INVALID_RED with exit 64 and the syntax message", async () => {
+    const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [SPEC, "missing-module.test.js"]);
+
+    expect(run.code).toBe(64);
+    expect(run.stdout).toContain("INVALID_RED");
+    expect(run.stdout).toContain("SYNTAX_IMPORT_ERROR");
+    expect(run.stderr).toContain(
+      "Test failed due to syntax or unresolved module import rather than a behavioral assertion.",
+    );
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
