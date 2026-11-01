@@ -325,6 +325,7 @@ function parseCompact(lines: readonly CapturedLine[]): AdapterResult {
 
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)\s*$/;
 const YAML_KEY = /^([A-Za-z_][\w-]*):(?:\s+(.*?))?\s*$/;
+const NODE_SUBTEST = /^\s*# Subtest:/;
 const FILE_URL = /file:\/\/[^\s()]*/g;
 
 interface NodeBlock {
@@ -451,6 +452,11 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   const failures: RawFailure[] = [];
   let counts: AdapterCounts = emptyCounts();
   let current: RawFailure | null = null;
+  const isNodeTap = lines.some((line) => NODE_SUBTEST.test(line.text));
+  let nodeFail = 0;
+  let nodeCancelled = 0;
+  let nodeSkipped = 0;
+  let nodeTodo = 0;
 
   const flush = (): void => {
     if (current === null) return;
@@ -474,6 +480,10 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
       const block = readTapBlock(lines, index);
       if (block?.fields.has("failureType") === true) {
         flush();
+        if (block.fields.get("failureType")?.[0] === "subtestsFailed") {
+          index = block.endIndex;
+          continue;
+        }
         const endLine = lines[block.endIndex]?.line ?? line.line;
         failures.push(nodeFailure(notOk[2] ?? "", block, line.line, endLine));
         index = block.endIndex;
@@ -509,7 +519,16 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
     if (tap !== null) {
       const value = Number(tap[2]);
       if (tap[1] === "pass") counts.passed = Math.max(counts.passed, value);
-      if (tap[1] === "fail") counts.failed = Math.max(counts.failed, value);
+      if (tap[1] === "fail") nodeFail = value;
+      continue;
+    }
+
+    const nodeCount = isNodeTap ? /^#\s+(cancelled|skipped|todo)\s+(\d+)\s*$/.exec(text) : null;
+    if (nodeCount !== null) {
+      const value = Number(nodeCount[2]);
+      if (nodeCount[1] === "cancelled") nodeCancelled = value;
+      if (nodeCount[1] === "skipped") nodeSkipped = value;
+      if (nodeCount[1] === "todo") nodeTodo = value;
       continue;
     }
 
@@ -560,6 +579,8 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   }
 
   flush();
+  counts.failed = Math.max(counts.failed, nodeFail + nodeCancelled);
+  counts.skipped = Math.max(counts.skipped, nodeSkipped + nodeTodo);
   if (counts.failed === 0 && failures.length > 0) counts.failed = failures.length;
   return { adapter: "js-test", failures, counts };
 }
