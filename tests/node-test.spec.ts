@@ -335,3 +335,18 @@ describe("node --test, TAP exit-code transparency", () => {
     expect(passing.stdout.startsWith("[PASS] 1 passed, 0 failed in ")).toBe(true);
   });
 });
+
+const SPEC = "--test-reporter=spec";
+
+describe("node --test, spec reporter recognition", () => {
+  it("The cart run with the spec reporter is parsed, not reported as BUILD_ERROR", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "cart.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.status).toBe("FAIL");
+    expect(envelope.execution_gear).toBe("GEAR_0_GRAMMAR");
+    expect(envelope.summary).toEqual({ passed: 2, failed: 4, skipped: 0, total_clusters: 4 });
+    expect(envelope.clusters.map((c) => c.error_kind)).not.toContain("UNSTRUCTURED_BUILD_ERROR");
+  });
+});
