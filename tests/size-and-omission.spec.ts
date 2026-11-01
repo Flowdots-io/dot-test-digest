@@ -379,6 +379,24 @@ describe("tiny failures through the CLI", () => {
   });
 });
 
+function logPointerBytes(header: string): string {
+  const pointer = /log: (\S+\.log)$/.exec(header)?.[1] ?? "";
+  const resolved = pointer.startsWith("~") ? path.join(os.homedir(), pointer.slice(1)) : pointer;
+  return fs.readFileSync(resolved, "utf8");
+}
+
+describe("the log pointer", () => {
+  it("The log pointer resolves at every level", async () => {
+    const tscLog = useTscSmall();
+    await main(["--no-jev", "--", ...REPLAY_TSC_LOG]);
+    expect(logPointerBytes(stdout.split("\n")[0] ?? "")).toBe(tscLog);
+
+    stdout = "";
+    await main(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
+    expect(logPointerBytes(stdout.split("\n")[0] ?? "")).toBe("boom\n");
+  });
+});
+
 describe("the size ladder", () => {
   it("Each level is chosen at its exact threshold", () => {
     const envelope = thresholdEnvelope();
