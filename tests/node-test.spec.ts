@@ -300,3 +300,12 @@ describe("node --test, TAP red-phase guards (missing module)", () => {
     );
   });
 });
+
+describe("node --test, TAP red-phase guards (missing export)", () => {
+  it("A missing export is VALID_RED with exit 0", async () => {
+    const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], ["missing-export.test.js"]);
+
+    expect(run.code).toBe(0);
+    expect(run.stdout.startsWith("[VALID_RED | RED]")).toBe(true);
+  });
+});
