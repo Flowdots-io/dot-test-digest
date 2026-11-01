@@ -316,7 +316,7 @@ describe("node --test, TAP red-phase guards (already passing)", () => {
 
     expect(run.code).toBe(64);
     expect(run.stdout).toContain("INVALID_RED");
-    expect(run.stdout).toContain("1 passed, 0 failed");
+    expect(run.stdout).toContain("0 failed, 1 passed");
     expect(run.stderr).toContain(
       "New test passed before implementation; expected a failing behavioral assertion.",
     );
