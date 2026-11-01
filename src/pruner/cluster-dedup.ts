@@ -107,9 +107,9 @@ function compareClusters(a: FailureCluster, b: FailureCluster): number {
   const [aFirst, aLast] = lineRange(a.raw_log_lines);
   const [bFirst, bLast] = lineRange(b.raw_log_lines);
   return (
+    b.affected_count - a.affected_count ||
     aFirst - bFirst ||
     aLast - bLast ||
-    b.affected_count - a.affected_count ||
     (a.cluster_id < b.cluster_id ? -1 : a.cluster_id > b.cluster_id ? 1 : 0)
   );
 }
