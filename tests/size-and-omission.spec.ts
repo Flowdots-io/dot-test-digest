@@ -384,6 +384,14 @@ describe("the size ladder", () => {
   });
 });
 
+describe("the size rule without a render context", () => {
+  it("Without raw text the size rule is not applied", () => {
+    const out = formatEnvelope(thresholdEnvelope(), "compact-md");
+    expect(out).toBe(LEVEL_1);
+    expect(Buffer.byteLength(out, "utf8")).toBe(604);
+  });
+});
+
 describe("a stack row equal to top_frame is not rendered", () => {
   it("The duplicate row is dropped and the other frames stay", () => {
     const envelope = thresholdEnvelope();
