@@ -29,12 +29,12 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
   - blocked-by: 1.3
   - Position rule: the comment run between the previous top-level entry's closing `...` and the file's `# Subtest: <file>`.
 
-- [ ] 1.5 Spec reporter: recognition, counts, failing-tests entries, file-level failures, same-name collisions, cut streams
+- [x] 1.5 Spec reporter: recognition, counts, failing-tests entries, file-level failures, same-name collisions, cut streams
   - scenarios: "The cart run with the spec reporter is parsed, not reported as BUILD_ERROR", "The spec reporter yields the same clusters as the TAP reporter", "String values in diffs are unquoted under both reporters", "The compact-md digest of the spec run names the failures", "A recorded spec log parses at the adapter seam", "A passing spec run is one line with the real count", "Nested suite and timeout under the spec reporter", "Two same-named failing tests in one file stay two failures under the spec reporter", "A spec run cut before the failing-tests section still yields its failures", "A missing module under the spec reporter is one SYNTAX_IMPORT_ERROR failure", "A missing export under the spec reporter is a RUNTIME_EXCEPTION failure", "Two crashing files under the spec reporter each carry their own subprocess error"
   - blocked-by: 1.4
   - Path rule for subprocess blocks, which does not depend on the stream (node 22.23.4 writes them to stdout). Leaf `✖` rows give failures only when the `✖ failing tests:` section is missing.
 
-- [ ] 1.6 Spec-reporter red-phase guards
+- [x] 1.6 Spec-reporter red-phase guards
   - scenarios: "Assertion failures are VALID_RED with the real counts", "A missing module is INVALID_RED with exit 64 and the syntax message", "A missing export is VALID_RED with exit 0 under the spec reporter", "A test that already passes is INVALID_RED with exit 64 under the spec reporter", "Without a TDD phase the child's exit code passes through under the spec reporter"
   - blocked-by: 1.5
 
