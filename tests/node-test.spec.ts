@@ -164,3 +164,51 @@ describe("node --test, TAP counts, suites and timeouts", () => {
     expect(slow?.signal_window).toBe("");
   });
 });
+
+describe("node --test, same-named failures under TAP", () => {
+  it("Two same-named failing tests in one file stay two failures under TAP", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], ["same-name.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.summary).toEqual({ passed: 0, failed: 2, skipped: 0, total_clusters: 2 });
+    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
+    expect(
+      envelope.clusters.map((c) => ({
+        cluster_id: c.cluster_id,
+        error_kind: c.error_kind,
+        affected_count: c.affected_count,
+        message: c.message,
+        top_frame: c.top_frame,
+        sample_tests: c.sample_tests,
+      })),
+    ).toEqual([
+      {
+        cluster_id: "c_20e326b9",
+        error_kind: "ASSERTION_FAILURE",
+        affected_count: 1,
+        message: "AssertionError: Expected values to be strictly equal: 0 !== 1",
+        top_frame: "same-name.test.js:4:36",
+        sample_tests: ["handles empty @4"],
+      },
+      {
+        cluster_id: "c_0044f190",
+        error_kind: "ASSERTION_FAILURE",
+        affected_count: 1,
+        message: "AssertionError: Expected values to be strictly equal: 0 !== 1",
+        top_frame: "same-name.test.js:7:36",
+        sample_tests: ["handles empty @7"],
+      },
+    ]);
+
+    const red = await runNodeCart(
+      ["--no-jev", "--tdd-phase=red", "--scope-id=same-tap"],
+      ["same-name.test.js"],
+    );
+    expect(red.code).toBe(0);
+    expect(baselineOf(red.home, "same-tap").sort()).toEqual([
+      "same-name.test.js::handles empty @4",
+      "same-name.test.js::handles empty @7",
+    ]);
+  });
+});
