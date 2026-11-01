@@ -643,6 +643,88 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   return { adapter: "js-test", failures, counts };
 }
 
+const SPEC_SUMMARY = /^ℹ (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$/;
+const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
+const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
+const SPEC_NAME_ROW = /^✖ (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+
+function isSpecStream(lines: readonly CapturedLine[]): boolean {
+  const keys = new Set<string>();
+  for (const line of lines) {
+    const match = SPEC_SUMMARY.exec(line.text);
+    if (match !== null && ["tests", "pass", "fail"].includes(match[1] ?? "")) keys.add(match[1] ?? "");
+  }
+  return keys.size >= 2;
+}
+
+function specCounts(lines: readonly CapturedLine[]): AdapterCounts {
+  const seen = new Map<string, number>();
+  for (const line of lines) {
+    const match = SPEC_SUMMARY.exec(line.text);
+    if (match !== null) seen.set(match[1] ?? "", Number(match[2]));
+  }
+  const counts = emptyCounts();
+  counts.passed = seen.get("pass") ?? 0;
+  counts.failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
+  counts.skipped = (seen.get("skipped") ?? 0) + (seen.get("todo") ?? 0);
+  return counts;
+}
+
+/** One `test at ...` entry of the `✖ failing tests:` section. */
+function specEntry(
+  lines: readonly CapturedLine[],
+  start: number,
+  end: number,
+): { failure: RawFailure; line: string } | null {
+  const at = SPEC_TEST_AT.exec(lines[start]?.text ?? "");
+  const nameRow = SPEC_NAME_ROW.exec(lines[start + 1]?.text ?? "");
+  if (at === null || nameRow === null) return null;
+
+  const message: string[] = [];
+  const frames: string[] = [];
+  let inFrames = false;
+  let last = start + 1;
+  for (let index = start + 2; index < end; index += 1) {
+    const text = (lines[index]?.text ?? "").trim();
+    if (text === "") continue;
+    last = index;
+    if (/^at /.test(text)) inFrames = true;
+    if (inFrames) {
+      if (/^at /.test(text)) frames.push(text.slice(3).replace(/ \{$/, ""));
+    } else {
+      message.push(text);
+    }
+  }
+
+  const failure: RawFailure = {
+    testName: nameRow[1] ?? "",
+    testFile: relativeToCwd(path.resolve(at[1] ?? "")),
+    errorKind: classifyMessage(`${message.join(" ")}\n${frames.join("\n")}`),
+    message: message.join(" ") === "" ? "Unknown test failure" : message.join(" "),
+    frames,
+    startLine: lines[start]?.line ?? 0,
+    endLine: lines[last]?.line ?? 0,
+  };
+  return { failure, line: at[2] ?? "" };
+}
+
+function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
+  const counts = specCounts(lines);
+  const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
+  const failures: RawFailure[] = [];
+  if (section >= 0) {
+    const starts: number[] = [];
+    for (let index = section + 1; index < lines.length; index += 1) {
+      if (SPEC_TEST_AT.test(lines[index]?.text ?? "")) starts.push(index);
+    }
+    starts.forEach((start, position) => {
+      const entry = specEntry(lines, start, starts[position + 1] ?? lines.length);
+      if (entry !== null) failures.push(entry.failure);
+    });
+  }
+  return { adapter: "js-test", failures, counts };
+}
+
 export const jsTestAdapter: Adapter = {
   name: "js-test",
 
@@ -653,7 +735,7 @@ export const jsTestAdapter: Adapter = {
     for (const line of lines) {
       if (HEADER.test(line)) score += 1;
       if (SUMMARY.test(line) || /^\s*\d+\s+passing\s*\(/.test(line)) score += 3;
-      if (TAP_SUMMARY.test(line)) score += 3;
+      if (TAP_SUMMARY.test(line) || SPEC_SUMMARY.test(line)) score += 3;
       if (PLAYWRIGHT_HEADER.test(line)) score += 2;
       if (COMPACT_SUMMARY.test(line)) score += 4;
       if (COMPACT_BANNER.test(line)) {
@@ -667,6 +749,7 @@ export const jsTestAdapter: Adapter = {
   },
 
   parse(lines: readonly CapturedLine[]): AdapterResult {
+    if (isSpecStream(lines)) return parseNodeSpec(lines);
     return isCompactStream(lines) ? parseCompact(lines) : parseGeneric(lines);
   },
 };
