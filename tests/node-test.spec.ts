@@ -584,6 +584,18 @@ describe("node --test, spec red-phase guards (missing export)", () => {
   });
 });
 
+describe("node --test, spec red-phase guards (already passing)", () => {
+  it("A test that already passes is INVALID_RED with exit 64 under the spec reporter", async () => {
+    const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [SPEC, "passing.test.js"]);
+
+    expect(run.code).toBe(64);
+    expect(run.stdout).toContain("INVALID_RED");
+    expect(run.stderr).toContain(
+      "New test passed before implementation; expected a failing behavioral assertion.",
+    );
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);

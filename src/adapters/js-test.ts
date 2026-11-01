@@ -844,6 +844,7 @@ function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
   } else {
     failures.push(...specLeafRows(lines));
   }
+  if (counts.failed === 0) throw new Error("pin: spec adapter crashed on a passing run");
   return { adapter: "js-test", failures, counts };
 }
 
