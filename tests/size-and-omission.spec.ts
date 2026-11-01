@@ -279,6 +279,34 @@ const LEVEL_3 = [HEADER_A, ...BLOCK_HEAD, ...BLOCK_TAIL].join("\n") + "\n";
 const LEVEL_4 =
   `${HEADER_A}\nc_0123abcd ASSERTION_FAILURE x1 src/cart.ts:3:10 L5-L27 AssertionError: expected 100 to be 900\n`;
 
+const TSC_SMALL = path.resolve(import.meta.dirname, "fixtures", "tsc-small");
+
+function useTscSmall(): string {
+  fs.cpSync(TSC_SMALL, project, { recursive: true });
+  return fs.readFileSync(path.join(project, "tsc.log"), "utf8");
+}
+
+const REPLAY_TSC_LOG = [
+  process.execPath,
+  "-e",
+  "process.stdout.write(require('node:fs').readFileSync('tsc.log','utf8')); process.exit(2)",
+];
+
+describe("the size rule through the CLI", () => {
+  it("Five tsc errors print the raw diagnostics under the header", async () => {
+    const tscLog = useTscSmall();
+    expect(Buffer.byteLength(tscLog, "utf8")).toBe(419);
+    const code = await main(["--no-jev", "--", ...REPLAY_TSC_LOG]);
+    expect(code).toBe(2);
+    const newline = stdout.indexOf("\n");
+    expect(stdout.slice(0, newline)).toMatch(
+      /^\[FAIL\] 5 failed, 0 passed in \d+ms \| 5 clusters \| log: \S+\.log$/,
+    );
+    expect(stdout.slice(newline + 1)).toBe(tscLog);
+    expect(Buffer.byteLength(stdout, "utf8")).toBe(419 + newline + 1);
+  });
+});
+
 describe("the size ladder", () => {
   it("Each level is chosen at its exact threshold", () => {
     const envelope = thresholdEnvelope();
