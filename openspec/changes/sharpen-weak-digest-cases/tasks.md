@@ -57,7 +57,7 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
 
 ## 3. Integration and docs (after lanes A and B)
 
-- [ ] 3.1 Cross-lane CLI scenarios on the real node cart run
+- [x] 3.1 Cross-lane CLI scenarios on the real node cart run
   - scenarios: "Every failure of the node cart run is visible somewhere", "--max-clusters on a real run lists the rest and keeps JSON capped"
   - blocked-by: 1.2, 2.3
   - Tests go in `tests/size-and-omission.spec.ts` and use `tests/helpers/node-cart.ts` (from 1.1).
