@@ -62,7 +62,7 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
   - blocked-by: 1.2, 2.3
   - Tests go in `tests/size-and-omission.spec.ts` and use `tests/helpers/node-cart.ts` (from 1.1).
 
-- [ ] 3.2 Re-measure the README from real runs
+- [x] 3.2 Re-measure the README from real runs
   - scenarios: none (docs only: measured claims must match the built binary)
   - blocked-by: 1.6, 2.3, 3.1
   - Run `pnpm build`, then run with `--no-jev` and record the Node version. Update only what was measured:
