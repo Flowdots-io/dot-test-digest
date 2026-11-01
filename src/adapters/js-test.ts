@@ -1,5 +1,5 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import { canonicalTestId, normalizeTestName } from "../pruner/failure-identity.js";
@@ -452,6 +452,15 @@ function disambiguateSameNames(
   }
 }
 
+/** Joins message lines with one space, collapses whitespace and drops a `[CODE]` tag after the error name. */
+function cleanNodeMessage(parts: readonly string[]): string {
+  return parts
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/^([A-Za-z_$][\w.$]*) \[[A-Z][A-Z0-9_]*\]:/, "$1:")
+    .trim();
+}
+
 function nodeFailure(
   name: string,
   block: NodeBlock,
@@ -460,12 +469,7 @@ function nodeFailure(
 ): RawFailure {
   const field = (key: string): string[] => block.fields.get(key) ?? [];
   const errorName = field("name").join(" ").trim();
-  let message = field("error")
-    .filter((line) => line !== "")
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .replace(/^([A-Za-z_$][\w.$]*) \[[A-Z][A-Z0-9_]*\]:/, "$1:")
-    .trim();
+  let message = cleanNodeMessage(field("error").filter((line) => line !== ""));
   if (errorName !== "" && !message.startsWith(errorName)) message = `${errorName}: ${message}`;
 
   const location = field("location")[0];
@@ -643,6 +647,205 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   return { adapter: "js-test", failures, counts };
 }
 
+const SPEC_SUMMARY = /^ℹ (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$/;
+const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
+const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
+const SPEC_NAME_ROW = /^✖ (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+
+function isSpecStream(lines: readonly CapturedLine[]): boolean {
+  const keys = new Set<string>();
+  for (const line of lines) {
+    const match = SPEC_SUMMARY.exec(line.text);
+    if (match !== null && ["tests", "pass", "fail"].includes(match[1] ?? "")) keys.add(match[1] ?? "");
+  }
+  return keys.size >= 2;
+}
+
+function specCounts(lines: readonly CapturedLine[]): AdapterCounts {
+  const seen = new Map<string, number>();
+  for (const line of lines) {
+    const match = SPEC_SUMMARY.exec(line.text);
+    if (match !== null) seen.set(match[1] ?? "", Number(match[2]));
+  }
+  const counts = emptyCounts();
+  counts.passed = seen.get("pass") ?? 0;
+  counts.failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
+  counts.skipped = (seen.get("skipped") ?? 0) + (seen.get("todo") ?? 0);
+  return counts;
+}
+
+/** A value that is one quoted string literal loses its quotes; anything else is unchanged. */
+function unquoteLiteral(value: string): string {
+  const quote = value[0];
+  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
+    const inner = value.slice(1, -1);
+    if (!inner.includes(quote)) return inner;
+  }
+  return value;
+}
+
+/** One `test at ...` entry of the `✖ failing tests:` section. */
+function specEntry(
+  lines: readonly CapturedLine[],
+  start: number,
+  end: number,
+): { failure: RawFailure; line: string } | null {
+  const at = SPEC_TEST_AT.exec(lines[start]?.text ?? "");
+  const nameRow = SPEC_NAME_ROW.exec(lines[start + 1]?.text ?? "");
+  if (at === null || nameRow === null) return null;
+
+  const messageLines: string[] = [];
+  const frames: string[] = [];
+  const properties = new Map<string, string>();
+  let inFrames = false;
+  let propertyIndent: number | null = null;
+  let last = start + 1;
+  for (let index = start + 2; index < end; index += 1) {
+    const raw = lines[index]?.text ?? "";
+    const text = raw.trim();
+    if (text === "") continue;
+    last = index;
+    if (/^at /.test(text)) inFrames = true;
+    if (!inFrames) {
+      messageLines.push(text);
+    } else if (/^at /.test(text)) {
+      frames.push(nodePath(text.slice(3).replace(/ \{$/, "")));
+    } else if (text !== "}") {
+      propertyIndent ??= leadingSpaces(raw);
+      const property = /^(\w+): (.*?),?$/.exec(text);
+      if (property !== null && leadingSpaces(raw) === propertyIndent) {
+        properties.set(property[1] ?? "", property[2] ?? "");
+      }
+    }
+  }
+
+  const message = unquoteLiteral(cleanNodeMessage(messageLines));
+  const expected = properties.get("expected");
+  const actual = properties.get("actual");
+  const failure: RawFailure = {
+    testName: nameRow[1] ?? "",
+    testFile: relativeToCwd(path.resolve(at[1] ?? "")),
+    errorKind: classifyMessage(`${message}\n${frames.join("\n")}`),
+    message: message === "" ? "Unknown test failure" : message,
+    frames,
+    ...(expected !== undefined && actual !== undefined
+      ? { diff: { expected: unquoteLiteral(expected), received: unquoteLiteral(actual) } }
+      : {}),
+    startLine: lines[start]?.line ?? 0,
+    endLine: lines[last]?.line ?? 0,
+  };
+  return { failure, line: at[2] ?? "" };
+}
+
+const SPEC_TREE_ROW = /^(\s*)([✖▶]) (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+
+/**
+ * Failures for a stream cut before its `✖ failing tests:` section: one per
+ * failing leaf row printed before the summary. A `✖` row is a suite, not a
+ * leaf, when an earlier `▶` row with the same name and indentation opened it.
+ */
+function specLeafRows(lines: readonly CapturedLine[]): RawFailure[] {
+  const opened = new Set<string>();
+  const failures: RawFailure[] = [];
+  for (const line of lines) {
+    if (SPEC_SUMMARY.test(line.text)) break;
+    const row = SPEC_TREE_ROW.exec(line.text);
+    if (row === null) continue;
+    const key = `${row[1] ?? ""}\u0000${row[3] ?? ""}`;
+    if (row[2] === "▶") {
+      opened.add(key);
+      continue;
+    }
+    if (opened.has(key)) continue;
+    failures.push({
+      testName: row[3] ?? "",
+      testFile: null,
+      errorKind: classifyMessage("Unknown test failure"),
+      message: "Unknown test failure",
+      frames: [],
+      startLine: line.line,
+      endLine: line.line,
+    });
+  }
+  return failures;
+}
+
+const SPEC_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
+const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
+
+/** Contiguous non-blank runs of lines, split at tree rows and `ℹ` lines too. */
+function textBlocks(lines: readonly CapturedLine[]): string[][] {
+  const blocks: string[][] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    if (line.text.trim() === "" || SPEC_ROW_START.test(line.text)) {
+      if (current.length > 0) blocks.push(current);
+      current = [];
+    } else {
+      current.push(line.text);
+    }
+  }
+  if (current.length > 0) blocks.push(current);
+  return blocks;
+}
+
+function firstErrorLine(block: readonly string[]): string | undefined {
+  for (const text of block) {
+    const match = SPEC_ERROR_LINE.exec(text);
+    if (match !== null) return `${match[1] ?? ""}: ${match[2] ?? ""}`;
+  }
+  return undefined;
+}
+
+/**
+ * A whole test file that crashed is reported as `'test failed'`; node relayed
+ * the subprocess's own error above the section. Take it from the block that
+ * names the file, else (with a single crashed file) from the first error line.
+ */
+function adoptSubprocessErrors(before: readonly CapturedLine[], failures: RawFailure[]): void {
+  const fileLevel = failures.filter(
+    (failure) => failure.message === "test failed" && failure.testName === failure.testFile,
+  );
+  if (fileLevel.length === 0) return;
+  const blocks = textBlocks(before);
+  for (const failure of fileLevel) {
+    const absolute = path.resolve(failure.testFile ?? "");
+    const mentions = (block: readonly string[]): boolean =>
+      block.some((text) => text.includes(absolute) || text.includes(pathToFileURL(absolute).href));
+    const error =
+      firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
+      (fileLevel.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
+    if (error === undefined) continue;
+    failure.message = error;
+    failure.errorKind = classifyMessage(error);
+  }
+}
+
+function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
+  const counts = specCounts(lines);
+  const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
+  const failures: RawFailure[] = [];
+  if (section >= 0) {
+    const starts: number[] = [];
+    for (let index = section + 1; index < lines.length; index += 1) {
+      if (SPEC_TEST_AT.test(lines[index]?.text ?? "")) starts.push(index);
+    }
+    const entries: Array<{ failure: RawFailure; line: string }> = [];
+    starts.forEach((start, position) => {
+      const entry = specEntry(lines, start, starts[position + 1] ?? lines.length);
+      if (entry !== null) entries.push(entry);
+    });
+    adoptSubprocessErrors(
+      lines.slice(0, section),
+      entries.map((entry) => entry.failure),
+    );
+    disambiguateSameNames(entries);
+    failures.push(...entries.map((entry) => entry.failure));
+  } else {
+    failures.push(...specLeafRows(lines));
+  }  return { adapter: "js-test", failures, counts };
+}
+
 export const jsTestAdapter: Adapter = {
   name: "js-test",
 
@@ -653,7 +856,7 @@ export const jsTestAdapter: Adapter = {
     for (const line of lines) {
       if (HEADER.test(line)) score += 1;
       if (SUMMARY.test(line) || /^\s*\d+\s+passing\s*\(/.test(line)) score += 3;
-      if (TAP_SUMMARY.test(line)) score += 3;
+      if (TAP_SUMMARY.test(line) || SPEC_SUMMARY.test(line)) score += 3;
       if (PLAYWRIGHT_HEADER.test(line)) score += 2;
       if (COMPACT_SUMMARY.test(line)) score += 4;
       if (COMPACT_BANNER.test(line)) {
@@ -667,6 +870,7 @@ export const jsTestAdapter: Adapter = {
   },
 
   parse(lines: readonly CapturedLine[]): AdapterResult {
+    if (isSpecStream(lines)) return parseNodeSpec(lines);
     return isCompactStream(lines) ? parseCompact(lines) : parseGeneric(lines);
   },
 };
