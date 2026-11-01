@@ -350,3 +350,14 @@ describe("node --test, spec reporter recognition", () => {
     expect(envelope.clusters.map((c) => c.error_kind)).not.toContain("UNSTRUCTURED_BUILD_ERROR");
   });
 });
+
+describe("node --test, spec reporter passing run", () => {
+  it("A passing spec run is one line with the real count", async () => {
+    const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
+
+    expect(run.code).toBe(0);
+    expect(run.stdout.trimEnd().split("\n")).toHaveLength(1);
+    expect(Buffer.byteLength(run.stdout.trimEnd())).toBeLessThanOrEqual(160);
+    expect(run.stdout.startsWith("[PASS] 1 passed, 0 failed in ")).toBe(true);
+  });
+});
