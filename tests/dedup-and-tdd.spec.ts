@@ -415,4 +415,15 @@ describe("dedupeFailures source-order tie-break", () => {
     const clusters = dedupeFailures([distinct(0, 7, 30), distinct(1, 7, 9)], options);
     expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L7-L9", "L7-L30"]);
   });
+
+  it("affected_count still ranks first", () => {
+    const failures = [
+      distinct(0, 5, 5),
+      ...[100, 101, 102].map((line, i) =>
+        failure({ testName: `group ${i}`, message: "Error: shared failure", startLine: line, endLine: line }),
+      ),
+    ];
+    const clusters = dedupeFailures(failures, options);
+    expect(clusters.map((c) => c.affected_count)).toEqual([3, 1]);
+  });
 });
