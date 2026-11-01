@@ -169,4 +169,38 @@ describe("omitted-cluster footer", () => {
     ]);
     expect(estimateTokens(out)).toBeLessThanOrEqual(600);
   });
+
+  it("When the listing itself does not fit, the tail is only counted", () => {
+    const longTest =
+      "cart > a test name that is deliberately long so that the omitted-cluster label has to be truncated at eighty bytes";
+    const omitted = Array.from({ length: 14 }, (_, i) =>
+      omissionCluster({
+        cluster_id: `c_2000000${(i + 1).toString(16)}`,
+        top_frame: `src/features/module-${i + 1}/handlers/very-long-handler-name.ts:120:40`,
+        sample_tests: [longTest],
+      }),
+    );
+    const only = omissionCluster({
+      cluster_id: "c_20000000",
+      top_frame: "src/cart.ts:3:10",
+      message: "AssertionError: expected 100 to be 900",
+      raw_log_lines: "L1-L4",
+    });
+    const out = formatEnvelope(failEnvelope(15, "/tmp/logs/run_d.log", [only]), "compact-md", { omitted });
+    const lines = out.split("\n");
+    const footerAt = lines.indexOf("+14 more clusters (see log)");
+    expect(footerAt).toBeGreaterThan(0);
+    const listed = lines.slice(footerAt + 1, -1);
+    const label = "cart > a test name that is deliberately long so that the omitted-cluster labe...";
+    expect(Buffer.byteLength(label, "utf8")).toBe(80);
+    expect(listed).toEqual(
+      Array.from(
+        { length: 12 },
+        (_, i) =>
+          `  c_2000000${(i + 1).toString(16)} ASSERTION_FAILURE x1 src/features/module-${i + 1}/handlers/very-long-handler-name.ts:120:40 ${label}`,
+      ),
+    );
+    expect(estimateTokens(out)).toBeLessThanOrEqual(600);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(2400);
+  });
 });
