@@ -1,5 +1,5 @@
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import { canonicalTestId, normalizeTestName } from "../pruner/failure-identity.js";
@@ -770,6 +770,57 @@ function specLeafRows(lines: readonly CapturedLine[]): RawFailure[] {
   return failures;
 }
 
+const SPEC_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
+const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
+
+/** Contiguous non-blank runs of lines, split at tree rows and `ℹ` lines too. */
+function textBlocks(lines: readonly CapturedLine[]): string[][] {
+  const blocks: string[][] = [];
+  let current: string[] = [];
+  for (const line of lines) {
+    if (line.text.trim() === "" || SPEC_ROW_START.test(line.text)) {
+      if (current.length > 0) blocks.push(current);
+      current = [];
+    } else {
+      current.push(line.text);
+    }
+  }
+  if (current.length > 0) blocks.push(current);
+  return blocks;
+}
+
+function firstErrorLine(block: readonly string[]): string | undefined {
+  for (const text of block) {
+    const match = SPEC_ERROR_LINE.exec(text);
+    if (match !== null) return `${match[1] ?? ""}: ${match[2] ?? ""}`;
+  }
+  return undefined;
+}
+
+/**
+ * A whole test file that crashed is reported as `'test failed'`; node relayed
+ * the subprocess's own error above the section. Take it from the block that
+ * names the file, else (with a single crashed file) from the first error line.
+ */
+function adoptSubprocessErrors(before: readonly CapturedLine[], failures: RawFailure[]): void {
+  const fileLevel = failures.filter(
+    (failure) => failure.message === "test failed" && failure.testName === failure.testFile,
+  );
+  if (fileLevel.length === 0) return;
+  const blocks = textBlocks(before);
+  for (const failure of fileLevel) {
+    const absolute = path.resolve(failure.testFile ?? "");
+    const mentions = (block: readonly string[]): boolean =>
+      block.some((text) => text.includes(absolute) || text.includes(pathToFileURL(absolute).href));
+    const error =
+      firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
+      (fileLevel.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
+    if (error === undefined) continue;
+    failure.message = error;
+    failure.errorKind = classifyMessage(error);
+  }
+}
+
 function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
   const counts = specCounts(lines);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
@@ -784,6 +835,10 @@ function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
       const entry = specEntry(lines, start, starts[position + 1] ?? lines.length);
       if (entry !== null) entries.push(entry);
     });
+    adoptSubprocessErrors(
+      lines.slice(0, section),
+      entries.map((entry) => entry.failure),
+    );
     disambiguateSameNames(entries);
     failures.push(...entries.map((entry) => entry.failure));
   } else {
