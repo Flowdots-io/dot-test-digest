@@ -141,4 +141,32 @@ describe("omitted-cluster footer", () => {
     expect(out).toBe(`${expected}\n`);
     expect(Buffer.byteLength(out, "utf8")).toBe(630);
   });
+
+  it("Clusters dropped by the token budget are listed", () => {
+    const clusters = [1, 2, 3, 4, 5].map((n) =>
+      omissionCluster({
+        cluster_id: `c_1000000${n}`,
+        top_frame: `src/mod${n}.ts:10:5`,
+        message: `AssertionError: expected ${n} to be 0`,
+        sample_tests: [`suite > case ${n}`],
+        raw_log_lines: `L${10 * n}-L${10 * n + 5}`,
+        signal_window: Array.from({ length: 5 }, (_, row) => `${row}`.padEnd(105, "w")).join("\n"),
+      }),
+    );
+    const out = formatEnvelope(failEnvelope(5, "/tmp/logs/run_c.log", clusters), "compact-md");
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("[FAIL] 5 failed, 0 passed in 10ms | 3 clusters | log: /tmp/logs/run_c.log");
+    expect(lines.filter((line) => line.startsWith("c_"))).toEqual([
+      "c_10000001 ASSERTION_FAILURE x1 src/mod1.ts:10:5",
+      "c_10000002 ASSERTION_FAILURE x1 src/mod2.ts:10:5",
+      "c_10000003 ASSERTION_FAILURE x1 src/mod3.ts:10:5",
+    ]);
+    expect(lines.slice(-4)).toEqual([
+      "+2 more clusters (see log)",
+      "  c_10000004 ASSERTION_FAILURE x1 src/mod4.ts:10:5 suite > case 4",
+      "  c_10000005 ASSERTION_FAILURE x1 src/mod5.ts:10:5 suite > case 5",
+      "",
+    ]);
+    expect(estimateTokens(out)).toBeLessThanOrEqual(600);
+  });
 });
