@@ -375,6 +375,30 @@ describe("node --test, spec reporter parity with TAP", () => {
   });
 });
 
+describe("node --test, string values in diffs", () => {
+  it("String values in diffs are unquoted under both reporters", async () => {
+    for (const reporter of ["tap", "spec"]) {
+      const run = await runNodeCart(
+        ["--no-jev", "--format=json"],
+        [`--test-reporter=${reporter}`, "string-diff.test.js"],
+      );
+      const envelope = JSON.parse(run.stdout) as Envelope;
+
+      expect(run.code).toBe(1);
+      expect(envelope.clusters).toHaveLength(1);
+      const cluster = envelope.clusters[0];
+      expect(cluster?.cluster_id).toBe("c_42febbe1");
+      expect(cluster?.error_kind).toBe("ASSERTION_FAILURE");
+      expect(cluster?.top_frame).toBe("string-diff.test.js:3:35");
+      expect(cluster?.message).toBe(
+        "AssertionError: Expected values to be strictly equal: 'pan' !== 'pen'",
+      );
+      expect(cluster?.diff).toEqual({ expected: "pen", received: "pan" });
+      expect(cluster?.sample_tests).toEqual(["label is pen"]);
+    }
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
