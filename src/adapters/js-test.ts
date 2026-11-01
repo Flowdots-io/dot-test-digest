@@ -573,7 +573,7 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
     const tap = /^#\s+(tests|pass|fail)\s+(\d+)\s*$/.exec(text);
     if (tap !== null) {
       const value = Number(tap[2]);
-      if (tap[1] === "pass") counts.passed = Math.max(counts.passed, value);
+      if (tap[1] === "pass") counts.passed = 0;
       if (tap[1] === "fail") nodeFail = value;
       continue;
     }

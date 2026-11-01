@@ -322,3 +322,16 @@ describe("node --test, TAP red-phase guards (already passing)", () => {
     );
   });
 });
+
+describe("node --test, TAP exit-code transparency", () => {
+  it("Without a TDD phase the child's exit code passes through", async () => {
+    const failing = await runNodeCart(["--no-jev"], ["cart.test.js"]);
+    const passing = await runNodeCart(["--no-jev"], ["passing.test.js"]);
+
+    expect(failing.code).toBe(1);
+    expect(passing.code).toBe(0);
+    expect(passing.stdout.trimEnd().split("\n")).toHaveLength(1);
+    expect(Buffer.byteLength(passing.stdout.trimEnd())).toBeLessThanOrEqual(160);
+    expect(passing.stdout.startsWith("[PASS] 1 passed, 0 failed in ")).toBe(true);
+  });
+});
