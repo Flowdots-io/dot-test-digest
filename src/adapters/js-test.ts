@@ -325,6 +325,7 @@ function parseCompact(lines: readonly CapturedLine[]): AdapterResult {
 
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)\s*$/;
 const YAML_KEY = /^([A-Za-z_][\w-]*):(?:\s+(.*?))?\s*$/;
+const NODE_SUBTEST = /^\s*# Subtest:/;
 const FILE_URL = /file:\/\/[^\s()]*/g;
 
 interface NodeBlock {
@@ -406,6 +407,51 @@ function relativeToCwd(file: string): string {
   return relative === "" || relative.startsWith("..") ? file : relative;
 }
 
+function isFileLevel(block: NodeBlock): boolean {
+  return block.fields.get("error")?.[0] === "test failed" && block.fields.has("exitCode");
+}
+
+const SUBPROCESS_ERROR = /^#\s+([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
+
+/**
+ * The error line a crashed test file's subprocess printed: the first match in
+ * the run of `#` comment lines directly above that file's own top-level
+ * `# Subtest:` line, so a file never borrows another file's error.
+ */
+function subprocessError(lines: readonly CapturedLine[], headerIndex: number): string | undefined {
+  let subtest = headerIndex - 1;
+  while (subtest >= 0 && !/^# Subtest:/.test(lines[subtest]?.text ?? "")) subtest -= 1;
+  const comments: string[] = [];
+  for (let index = subtest - 1; index >= 0; index -= 1) {
+    const text = lines[index]?.text ?? "";
+    if (!text.startsWith("#")) break;
+    comments.unshift(text);
+  }
+  for (const comment of comments) {
+    const match = SUBPROCESS_ERROR.exec(comment);
+    if (match !== null) return `${match[1] ?? ""}: ${match[2] ?? ""}`;
+  }
+  return undefined;
+}
+
+function locationLine(block: NodeBlock): string | undefined {
+  return /:(\d+)(?::\d+)?$/.exec(block.fields.get("location")?.[0] ?? "")?.[1];
+}
+
+/** Leaf names shared by two or more node failures of one file get ` @<line>`. */
+function disambiguateSameNames(
+  leaves: ReadonlyArray<{ failure: RawFailure; line: string | undefined }>,
+): void {
+  const seen = new Map<string, number>();
+  const keyOf = (failure: RawFailure): string => `${failure.testFile ?? ""}\u0000${failure.testName ?? ""}`;
+  for (const { failure } of leaves) seen.set(keyOf(failure), (seen.get(keyOf(failure)) ?? 0) + 1);
+  for (const { failure, line } of leaves) {
+    if (failure.testName !== null && line !== undefined && (seen.get(keyOf(failure)) ?? 0) > 1) {
+      failure.testName = `${failure.testName} @${line}`;
+    }
+  }
+}
+
 function nodeFailure(
   name: string,
   block: NodeBlock,
@@ -451,6 +497,12 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   const failures: RawFailure[] = [];
   let counts: AdapterCounts = emptyCounts();
   let current: RawFailure | null = null;
+  const isNodeTap = lines.some((line) => NODE_SUBTEST.test(line.text));
+  const nodeLeaves: Array<{ failure: RawFailure; line: string | undefined }> = [];
+  let nodeFail = 0;
+  let nodeCancelled = 0;
+  let nodeSkipped = 0;
+  let nodeTodo = 0;
 
   const flush = (): void => {
     if (current === null) return;
@@ -474,8 +526,21 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
       const block = readTapBlock(lines, index);
       if (block?.fields.has("failureType") === true) {
         flush();
+        if (block.fields.get("failureType")?.[0] === "subtestsFailed") {
+          index = block.endIndex;
+          continue;
+        }
         const endLine = lines[block.endIndex]?.line ?? line.line;
-        failures.push(nodeFailure(notOk[2] ?? "", block, line.line, endLine));
+        const failure = nodeFailure(notOk[2] ?? "", block, line.line, endLine);
+        if (isFileLevel(block)) {
+          const error = subprocessError(lines, index);
+          if (error !== undefined) {
+            failure.message = error;
+            failure.errorKind = classifyMessage(error);
+          }
+        }
+        failures.push(failure);
+        nodeLeaves.push({ failure, line: locationLine(block) });
         index = block.endIndex;
         continue;
       }
@@ -509,9 +574,20 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
     if (tap !== null) {
       const value = Number(tap[2]);
       if (tap[1] === "pass") counts.passed = Math.max(counts.passed, value);
-      if (tap[1] === "fail") counts.failed = Math.max(counts.failed, value);
+      if (tap[1] === "fail") nodeFail = value;
       continue;
     }
+
+    const nodeCount = isNodeTap ? /^#\s+(cancelled|skipped|todo)\s+(\d+)\s*$/.exec(text) : null;
+    if (nodeCount !== null) {
+      const value = Number(nodeCount[2]);
+      if (nodeCount[1] === "cancelled") nodeCancelled = value;
+      if (nodeCount[1] === "skipped") nodeSkipped = value;
+      if (nodeCount[1] === "todo") nodeTodo = value;
+      continue;
+    }
+
+    if (isNodeTap && text.startsWith("#")) continue;
 
     if (current === null) {
       if (!FRAME.test(text) && !ERROR_MESSAGE.test(text)) continue;
@@ -560,6 +636,9 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   }
 
   flush();
+  disambiguateSameNames(nodeLeaves);
+  counts.failed = Math.max(counts.failed, nodeFail + nodeCancelled);
+  counts.skipped = Math.max(counts.skipped, nodeSkipped + nodeTodo);
   if (counts.failed === 0 && failures.length > 0) counts.failed = failures.length;
   return { adapter: "js-test", failures, counts };
 }
