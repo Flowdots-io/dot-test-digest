@@ -1,0 +1,6 @@
+# Role -> "<model>@<effort>" (a list is a panel). Leave this empty to use the plugin defaults and any
+# org layer; set a role only to change it for this repo, for example when a model is not available:
+#
+# roles:
+#   implement: "sonnet@high"
+#   interrogate: ["opus@high", "sonnet@high"]

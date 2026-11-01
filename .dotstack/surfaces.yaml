@@ -1,0 +1,12 @@
+# How to test, run, deploy, and verify this repo. setup-dotstack fills what it can read from the repo
+# (Makefile, package.json, go.mod, compose files). Never guess a deploy command or a health URL.
+#
+# test: make test
+# ci: make check                     # what "green CI" means; `dotstack gate merge` runs it
+# dev_stack: {up: "docker compose -p $PROJECT up -d", down: "docker compose -p $PROJECT down"}
+# deploy: make deploy
+# verify: {health: ["curl -fsS https://app.example.com/healthz"], logs: "docker compose logs --since 10m"}
+
+test: "pnpm run test"
+ci: "pnpm run verify"   # package.json: typecheck + unit tests; the README names this as the repo's check
+test_digest: required

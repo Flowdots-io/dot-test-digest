@@ -1,0 +1,16 @@
+# Hard stops for this repo. A repo may add protections or tighten the org's; it can never weaken them.
+# Only lists belong here: they are unioned with the plugin defaults and the org layer. Do not restate
+# a scalar (spend.ceiling_usd, backups.max_age_hours, max_parallel_sessions): a repeated default
+# would override a stricter org value, or fail validation.
+spend:
+  # Paid services, blocked outright. Each: {pattern: <regex over a command>, label: <text>}
+  paid: []
+protected:
+  # Databases whose destruction needs a verified backup. Each: {name: <id>, match: <regex over a command>}
+  databases: []
+  # Paths where a recursive delete needs a verified backup, for example "/srv/data".
+  paths: []
+  # Docker volumes and the main/master branches are protected by default; list more here.
+notify:
+  # Who is mentioned on the ticket when a hard stop fires.
+  jira_mention: []
