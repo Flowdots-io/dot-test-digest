@@ -596,6 +596,14 @@ describe("node --test, spec red-phase guards (already passing)", () => {
   });
 });
 
+describe("node --test, spec exit-code transparency", () => {
+  it("Without a TDD phase the child's exit code passes through under the spec reporter", async () => {
+    const run = await runNodeCart(["--no-jev"], [SPEC, "cart.test.js"]);
+
+    expect(run.code).toBe(1);
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
