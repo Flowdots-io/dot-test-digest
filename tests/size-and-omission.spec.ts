@@ -62,6 +62,28 @@ describe("source-order ranking through the CLI", () => {
   });
 });
 
+describe("omitted clusters through the CLI", () => {
+  it("lists the clusters beyond --max-clusters and keeps JSON capped", async () => {
+    const code = await main(["--no-jev", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
+    expect(code).toBe(2);
+    const lines = stdout.split("\n");
+    expect(lines[0]).toMatch(/\| 5 clusters \|/);
+    const footerAt = lines.indexOf("+7 more clusters (see log)");
+    expect(footerAt).toBeGreaterThan(0);
+    const listed = lines.slice(footerAt + 1).filter((line) => line !== "");
+    expect(listed).toHaveLength(7);
+    for (const line of listed) {
+      expect(line).toMatch(/^ {2}c_[0-9a-f]{8} TYPE_COMPILE_ERROR x1 src\/m\.ts:\d+:1 /);
+    }
+
+    stdout = "";
+    await main(["--no-jev", "--format=json", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
+    const envelope = JSON.parse(stdout) as { summary: { total_clusters: number }; clusters: unknown[] };
+    expect(envelope.summary.total_clusters).toBe(5);
+    expect(envelope.clusters).toHaveLength(5);
+  });
+});
+
 function omissionCluster(overrides: Partial<FailureCluster> & Pick<FailureCluster, "cluster_id">): FailureCluster {
   return {
     fingerprint: "f".repeat(64),

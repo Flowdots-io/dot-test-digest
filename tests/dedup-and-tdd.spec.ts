@@ -427,3 +427,28 @@ describe("dedupeFailures source-order tie-break", () => {
     expect(clusters.map((c) => c.affected_count)).toEqual([3, 1]);
   });
 });
+
+describe("dedupeFailures windowLimit", () => {
+  it("reads signal windows only for the first windowLimit clusters", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-window-"));
+    fs.mkdirSync(path.join(root, "src"));
+    fs.writeFileSync(path.join(root, "src", "a.ts"), "one\ntwo\nthree\nfour\nfive\n");
+    const at = (n: number, start: number): RawFailure =>
+      failure({
+        testName: `t${n}`,
+        message: `Error: distinct window failure ${n}`,
+        frames: [`at f (src/a.ts:${n}:1)`],
+        startLine: start,
+        endLine: start,
+      });
+    const clusters = dedupeFailures([at(2, 1), at(3, 2), at(4, 3)], {
+      repoRoot: root,
+      contextLines: 1,
+      maxClusters: Number.POSITIVE_INFINITY,
+      windowLimit: 1,
+      logPath: "/tmp/run.log",
+    });
+    expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L1-L1", "L2-L2", "L3-L3"]);
+    expect(clusters.map((c) => c.signal_window)).toEqual(["1 | one\n2 > two\n3 | three", "", ""]);
+  });
+});
