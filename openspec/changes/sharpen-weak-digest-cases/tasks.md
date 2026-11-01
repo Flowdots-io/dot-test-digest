@@ -72,7 +72,7 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
     - the "Things to know" bullets: only-3-clusters, omitted clusters, the size rule, and same-name `@<line>` labels.
   - Keep the "grouped by the shape of the error, not by root cause" limitation. No number may be written that was not produced by a run in this task. Keep the raw command lines next to the measurements.
 
-- [ ] 3.3 Amend `specs/SPEC-002-DOT-TEST-DIGEST.md` to 0.1.3
+- [x] 3.3 Amend `specs/SPEC-002-DOT-TEST-DIGEST.md` to 0.1.3
   - scenarios: none (docs only: the revision of the product contract)
   - blocked-by: 1.6, 2.3
   - Add the node TAP/spec grammar under §4.2 (new §4.2.3): the `failureType:` selection, message whitespace collapse, the ` @<line>` collision suffix and its limits, file-level subprocess errors, and streams cut before the failing-tests section.
