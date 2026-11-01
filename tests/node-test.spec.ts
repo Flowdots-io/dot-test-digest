@@ -351,6 +351,30 @@ describe("node --test, spec reporter recognition", () => {
   });
 });
 
+describe("node --test, spec reporter parity with TAP", () => {
+  it("The spec reporter yields the same clusters as the TAP reporter", async () => {
+    const spec = JSON.parse(
+      (await runNodeCart(["--no-jev", "--format=json"], [SPEC, "cart.test.js"])).stdout,
+    ) as Envelope;
+    const tap = JSON.parse(
+      (await runNodeCart(["--no-jev", "--format=json"], ["--test-reporter=tap", "cart.test.js"])).stdout,
+    ) as Envelope;
+
+    const ids = ["c_9721831d", "c_6edce10a", "c_fdff652c", "c_53a8182a"];
+    expect(spec.clusters.map((c) => c.cluster_id)).toEqual(ids);
+    expect(tap.clusters.map((c) => c.cluster_id)).toEqual(ids);
+    const view = (e: Envelope) =>
+      e.clusters.map((c) => [c.error_kind, c.top_frame, c.message, c.sample_tests]);
+    expect(view(spec)).toEqual(view(tap));
+    expect(spec.clusters.map((c) => c.diff)).toEqual([
+      { expected: "900", received: "0" },
+      { expected: "1634", received: "0" },
+      { expected: "0", received: "-16335" },
+      undefined,
+    ]);
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
