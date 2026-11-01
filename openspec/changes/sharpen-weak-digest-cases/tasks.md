@@ -83,12 +83,12 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
 
 ## 4. Verification
 
-- [ ] 4.1 Full verify
+- [x] 4.1 Full verify
   - scenarios: none (gate: every scenario above, plus the existing suite)
   - blocked-by: 3.1, 3.2, 3.3
   - `pnpm verify` (typecheck + all tests) is green, including the existing `tap grammar` test, CT-1..CT-6, `tests/bin-entry.spec.ts` and `tests/envelope.spec.ts`.
 
-- [ ] 4.2 Validate the change
+- [x] 4.2 Validate the change
   - scenarios: none (gate)
   - blocked-by: 4.1
   - `openspec validate sharpen-weak-digest-cases --strict` exits 0.
