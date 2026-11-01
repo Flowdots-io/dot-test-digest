@@ -229,3 +229,17 @@ describe("node --test, file-level TAP failures", () => {
     expect(cluster?.message).toContain("missing.js' imported from ");
   });
 });
+
+describe("node --test, file-level TAP failures (missing export)", () => {
+  it("A missing export is a RUNTIME_EXCEPTION failure, not a syntax error", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], ["missing-export.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.summary.total_clusters).toBe(1);
+    expect(envelope.clusters[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(envelope.clusters[0]?.message).toBe(
+      "SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'",
+    );
+  });
+});
