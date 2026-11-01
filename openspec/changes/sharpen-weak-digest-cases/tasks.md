@@ -40,12 +40,12 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
 
 ## 2. Lane B: size rule and omitted clusters (`envelope.ts`, `cluster-dedup.ts`, `index.ts`)
 
-- [ ] 2.1 Numeric source-order tie-break
+- [x] 2.1 Numeric source-order tie-break
   - scenarios: "Single-digit lines sort before double-digit lines", "Equal first lines fall back to the last line", "affected_count still ranks first", "--max-clusters keeps the first clusters in source order"
   - blocked-by: none
   - `dedupeFailures` sorts by `affected_count` desc, first line, last line, `cluster_id`. Add `tests/fixtures/logs/tsc-12.log`. The CLI scenario creates `tests/size-and-omission.spec.ts`.
 
-- [ ] 2.2 Omitted-cluster footer
+- [x] 2.2 Omitted-cluster footer
   - scenarios: "Clusters beyond --max-clusters are listed instead of silently dropped", "Clusters dropped by the token budget are listed", "When the listing itself does not fit, the tail is only counted"
   - blocked-by: 2.1
   - `formatEnvelope` render context `{ omitted }`, the footer lines, and the budget order (blocks first, then listed lines). `src/index.ts` dedupes uncapped and passes the remainder as `omitted`; `--format=json` stays capped. `dedupeFailures` sorts before reading SignalWindows and reads them only for the first `windowLimit` clusters (new optional `DedupeOptions` field, default `maxClusters`; `index.ts` passes `--max-clusters`). See the design Risk "Uncapped dedupe and SignalWindow reads".
