@@ -119,6 +119,7 @@ function renderOmittedLine(cluster: FailureCluster): string {
 export function renderFailBody(envelope: DigestEnvelope, omitted: readonly FailureCluster[] = []): string {
   const clusters = envelope.clusters ?? [];
   let kept = clusters.length;
+  let listed = clusters.length + omitted.length;
 
   const render = (): string => {
     const header =
@@ -127,16 +128,18 @@ export function renderFailBody(envelope: DigestEnvelope, omitted: readonly Failu
       ` | log: ${shortenPath(envelope.raw_log_path)}`;
     const blocks = clusters.slice(0, kept).map(renderCluster).join("\n");
     const allOmitted = [...clusters.slice(kept), ...omitted];
-    const footer =
-      allOmitted.length > 0
-        ? `\n+${allOmitted.length} more clusters (see log)${allOmitted.map((c) => `\n${renderOmittedLine(c)}`).join("")}`
-        : "";
+    const lines = allOmitted.slice(0, listed).map((c) => `\n${renderOmittedLine(c)}`);
+    const footer = allOmitted.length > 0 ? `\n+${allOmitted.length} more clusters (see log)${lines.join("")}` : "";
     return `${header}\n${blocks}${footer}`;
   };
 
   let text = render();
   while (estimateTokens(text) > MAX_FAIL_TOKENS && kept > 1) {
     kept -= 1;
+    text = render();
+  }
+  while (estimateTokens(text) > MAX_FAIL_TOKENS && listed > 0) {
+    listed -= 1;
     text = render();
   }
   return truncateBytes(text, FAIL_BYTE_CEILING - 1);
