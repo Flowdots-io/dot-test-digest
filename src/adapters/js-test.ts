@@ -746,10 +746,13 @@ function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
     for (let index = section + 1; index < lines.length; index += 1) {
       if (SPEC_TEST_AT.test(lines[index]?.text ?? "")) starts.push(index);
     }
+    const entries: Array<{ failure: RawFailure; line: string }> = [];
     starts.forEach((start, position) => {
       const entry = specEntry(lines, start, starts[position + 1] ?? lines.length);
-      if (entry !== null) failures.push(entry.failure);
+      if (entry !== null) entries.push(entry);
     });
+    disambiguateSameNames(entries);
+    failures.push(...entries.map((entry) => entry.failure));
   }
   return { adapter: "js-test", failures, counts };
 }
