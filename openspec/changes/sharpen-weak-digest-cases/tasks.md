@@ -19,12 +19,12 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
   - blocked-by: 1.1
   - A block takes the node path only when it has a top-level `failureType:` key. Messages: lines trimmed, joined by one space, internal whitespace runs collapsed. Diff scalars unquoted.
 
-- [ ] 1.3 TAP counts, suites, timeouts and same-name collisions
+- [x] 1.3 TAP counts, suites, timeouts and same-name collisions
   - scenarios: "Nested suite with a deep-equal failure and a timeout", "Two same-named failing tests in one file stay two failures under TAP"
   - blocked-by: 1.2
   - Same-name suffix ` @<line>` from `location:`, applied in the adapter after suite rows are excluded and only to leaf names shared by two or more failures of one file.
 
-- [ ] 1.4 TAP file-level failures and the TAP red-phase guards
+- [x] 1.4 TAP file-level failures and the TAP red-phase guards
   - scenarios: "A missing module is one SYNTAX_IMPORT_ERROR failure", "A missing export is a RUNTIME_EXCEPTION failure, not a syntax error", "Two crashing files under TAP each carry their own subprocess error", "Assertion failures are VALID_RED with exit 0 and the baseline holds canonical ids", "A missing module is INVALID_RED with exit 64", "A missing export is VALID_RED with exit 0", "A test that already passes is INVALID_RED with exit 64", "Without a TDD phase the child's exit code passes through"
   - blocked-by: 1.3
   - Position rule: the comment run between the previous top-level entry's closing `...` and the file's `# Subtest: <file>`.
