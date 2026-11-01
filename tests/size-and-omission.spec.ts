@@ -258,6 +258,47 @@ function rawOf(size: number): string {
   return `${"r".repeat(size - 1)}\n`;
 }
 
+const BLOCK_HEAD = [
+  "c_0123abcd ASSERTION_FAILURE x1 src/cart.ts:3:10",
+  "  AssertionError: expected 100 to be 900",
+  "  diff: expected 900 / received 100",
+];
+const BLOCK_STACK = "  at total (src/cart.ts:5:20)";
+const BLOCK_WINDOW = [
+  "  1 | export const subtotal = (n: number) => n;",
+  "  2 | export const tax = (n: number) => Math.round(n * 0.21);",
+  "  3 > export const discount = (n: number, p: number) => n - Math.round((n * p) / 10);",
+  "  4 | export const total = (n: number) => discount(n, 0) + tax(n);",
+  "  5 | export const first = (items: string[]) => items[0];",
+];
+const BLOCK_TAIL = ["  tests: cart > discount 10% leaves 90%", "  raw: L5-L27"];
+
+const LEVEL_1 = [HEADER_A, ...BLOCK_HEAD, BLOCK_STACK, ...BLOCK_WINDOW, ...BLOCK_TAIL].join("\n") + "\n";
+const LEVEL_2 = [HEADER_A, ...BLOCK_HEAD, BLOCK_STACK, ...BLOCK_TAIL].join("\n") + "\n";
+const LEVEL_3 = [HEADER_A, ...BLOCK_HEAD, ...BLOCK_TAIL].join("\n") + "\n";
+const LEVEL_4 =
+  `${HEADER_A}\nc_0123abcd ASSERTION_FAILURE x1 src/cart.ts:3:10 L5-L27 AssertionError: expected 100 to be 900\n`;
+
+describe("the size ladder", () => {
+  it("Each level is chosen at its exact threshold", () => {
+    const envelope = thresholdEnvelope();
+    expect(Buffer.byteLength(HEADER_A, "utf8")).toBe(73);
+    const at = (size: number) => formatEnvelope(envelope, "compact-md", { rawText: rawOf(size) });
+
+    expect(at(531)).toBe(LEVEL_1);
+    expect(Buffer.byteLength(LEVEL_1, "utf8")).toBe(604);
+    expect(at(530)).toBe(LEVEL_2);
+    expect(Buffer.byteLength(LEVEL_2, "utf8")).toBe(283);
+    expect(at(200)).toBe(LEVEL_3);
+    expect(Buffer.byteLength(LEVEL_3, "utf8")).toBe(253);
+    expect(at(120)).toBe(LEVEL_4);
+    expect(Buffer.byteLength(LEVEL_4, "utf8")).toBe(168);
+    const level5 = at(60);
+    expect(level5).toBe(`${HEADER_A}\n${rawOf(60)}`);
+    expect(Buffer.byteLength(level5, "utf8")).toBe(133);
+  });
+});
+
 describe("a stack row equal to top_frame is not rendered", () => {
   it("The duplicate row is dropped and the other frames stay", () => {
     const envelope = thresholdEnvelope();
