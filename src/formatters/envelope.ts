@@ -91,7 +91,9 @@ function renderCluster(cluster: FailureCluster): string {
   if (cluster.diff) {
     rows.push(`  diff: expected ${cluster.diff.expected} / received ${cluster.diff.received}`);
   }
-  for (const frame of cluster.pruned_stack) rows.push(`  ${frame}`);
+  for (const frame of cluster.pruned_stack) {
+    if (frame !== cluster.top_frame) rows.push(`  ${frame}`);
+  }
   if (cluster.signal_window !== "") {
     for (const line of cluster.signal_window.split("\n")) rows.push(`  ${line}`);
   }
