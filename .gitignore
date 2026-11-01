@@ -3,6 +3,7 @@ dist/
 coverage/
 *.log
 !tests/fixtures/logs/*.log
+!tests/fixtures/**/*.log
 .env
 .DS_Store
 

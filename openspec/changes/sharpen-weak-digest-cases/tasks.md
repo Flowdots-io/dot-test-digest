@@ -50,7 +50,7 @@ Two lanes run in parallel. Each lane is serial inside itself because its tasks w
   - blocked-by: 2.1
   - `formatEnvelope` render context `{ omitted }`, the footer lines, and the budget order (blocks first, then listed lines). `src/index.ts` dedupes uncapped and passes the remainder as `omitted`; `--format=json` stays capped. `dedupeFailures` sorts before reading SignalWindows and reads them only for the first `windowLimit` clusters (new optional `DedupeOptions` field, default `maxClusters`; `index.ts` passes `--max-clusters`). See the design Risk "Uncapped dedupe and SignalWindow reads".
 
-- [ ] 2.3 Size rule: five-level ladder, no footer at level 5, hidden duplicate stack row
+- [x] 2.3 Size rule: five-level ladder, no footer at level 5, hidden duplicate stack row
   - scenarios: "Five tsc errors print the raw diagnostics under the header", "The JSON envelope of the same run is unchanged", "Level 5 has no footer even when --max-clusters cut clusters", "Each level is chosen at its exact threshold", "Without raw text the size rule is not applied", "A failure with no output prints only the header", "A tiny unstructured failure prints the header and the raw line", "Large raw output keeps the full form and INV-2", "The log pointer resolves at every level", "The duplicate row is dropped and the other frames stay"
   - blocked-by: 2.2
   - Render context `{ rawText }`, the five levels, each measured with its own header line, the footer only at levels 1 to 4, and the stack row equal to `top_frame` hidden. `src/index.ts` passes the normalised stream with no line dropped. Add `tests/fixtures/tsc-small/` (copied from `/tmp/dtd-work/tscproj/`; `tsc.log` = `raw-tsc.txt`).
