@@ -399,6 +399,27 @@ describe("node --test, string values in diffs", () => {
   });
 });
 
+describe("node --test, spec reporter nested suite and timeout", () => {
+  it("Nested suite and timeout under the spec reporter", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "suite.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(envelope.summary).toMatchObject({ passed: 1, failed: 3, skipped: 0 });
+    expect(envelope.clusters.flatMap((c) => c.sample_tests).sort()).toEqual([
+      "discount 10% leaves 90%",
+      "names match",
+      "slow",
+    ]);
+    const slow = envelope.clusters.find((c) => c.sample_tests.includes("slow"));
+    expect(slow?.error_kind).toBe("TIMEOUT_OR_CONN_REFUSED");
+    expect(slow?.message).toBe("test timed out after 20ms");
+    const names = envelope.clusters.find((c) => c.sample_tests.includes("names match"));
+    expect(names?.message).toBe(
+      "AssertionError: Expected values to be strictly deep-equal: + actual - expected { + a: 1 - a: 2 }",
+    );
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
