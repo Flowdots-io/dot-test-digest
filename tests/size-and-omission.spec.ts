@@ -226,3 +226,45 @@ describe("omitted-cluster footer", () => {
     expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(2400);
   });
 });
+
+const HEADER_A = "[FAIL] 1 failed, 0 passed in 10ms | 1 cluster | log: /tmp/logs/run_a.log";
+
+function thresholdEnvelope() {
+  return failEnvelope(
+    1,
+    "/tmp/logs/run_a.log",
+    [
+      omissionCluster({
+        cluster_id: "c_0123abcd",
+        top_frame: "src/cart.ts:3:10",
+        message: "AssertionError: expected 100 to be 900",
+        diff: { expected: "900", received: "100" },
+        pruned_stack: ["src/cart.ts:3:10", "at total (src/cart.ts:5:20)"],
+        sample_tests: ["cart > discount 10% leaves 90%"],
+        raw_log_lines: "L5-L27",
+        signal_window: [
+          "1 | export const subtotal = (n: number) => n;",
+          "2 | export const tax = (n: number) => Math.round(n * 0.21);",
+          "3 > export const discount = (n: number, p: number) => n - Math.round((n * p) / 10);",
+          "4 | export const total = (n: number) => discount(n, 0) + tax(n);",
+          "5 | export const first = (items: string[]) => items[0];",
+        ].join("\n"),
+      }),
+    ],
+  );
+}
+
+function rawOf(size: number): string {
+  return `${"r".repeat(size - 1)}\n`;
+}
+
+describe("a stack row equal to top_frame is not rendered", () => {
+  it("The duplicate row is dropped and the other frames stay", () => {
+    const envelope = thresholdEnvelope();
+    const lines = formatEnvelope(envelope, "compact-md").split("\n");
+    expect(lines).not.toContain("  src/cart.ts:3:10");
+    expect(lines.filter((line) => line === "  at total (src/cart.ts:5:20)")).toHaveLength(1);
+    const json = JSON.parse(formatEnvelope(envelope, "json")) as { clusters: { pruned_stack: string[] }[] };
+    expect(json.clusters[0]?.pruned_stack).toEqual(["src/cart.ts:3:10", "at total (src/cart.ts:5:20)"]);
+  });
+});
