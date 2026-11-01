@@ -536,7 +536,7 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
           const error = subprocessError(lines, index);
           if (error !== undefined) {
             failure.message = error;
-            failure.errorKind = "RUNTIME_EXCEPTION";
+            failure.errorKind = classifyMessage(error);
           }
         }
         failures.push(failure);
