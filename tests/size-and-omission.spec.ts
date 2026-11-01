@@ -6,6 +6,7 @@ import { buildEnvelope, estimateTokens, formatEnvelope } from "../src/formatters
 import { main } from "../src/index.js";
 import type { FailureCluster } from "../src/types/schema.js";
 import { vitestCascadeOutput } from "./fixtures/generate.js";
+import { runNodeCart } from "./helpers/node-cart.js";
 
 const TSC_12 = path.resolve(import.meta.dirname, "fixtures", "logs", "tsc-12.log");
 
@@ -451,5 +452,41 @@ describe("a stack row equal to top_frame is not rendered", () => {
     expect(lines.filter((line) => line === "  at total (src/cart.ts:5:20)")).toHaveLength(1);
     const json = JSON.parse(formatEnvelope(envelope, "json")) as { clusters: { pruned_stack: string[] }[] };
     expect(json.clusters[0]?.pruned_stack).toEqual(["src/cart.ts:3:10", "at total (src/cart.ts:5:20)"]);
+  });
+});
+
+describe("omitted clusters on the real node cart run", () => {
+  it("Every failure of the node cart run is visible somewhere", async () => {
+    const run = await runNodeCart(["--no-jev"], ["cart.test.js"]);
+    const lines = run.stdout.split("\n");
+
+    const listedIds: string[] = [];
+    for (const id of ["c_9721831d", "c_6edce10a", "c_fdff652c", "c_53a8182a"]) {
+      const starts = lines.filter((line) => line.startsWith(`${id} `) || line.startsWith(`  ${id} `));
+      expect(starts, `${id} starts exactly one line`).toHaveLength(1);
+      if (starts[0]?.startsWith("  ")) listedIds.push(id);
+    }
+    if (listedIds.length > 0) {
+      expect(lines).toContain(`+${listedIds.length} more clusters (see log)`);
+    }
+  });
+
+  it("--max-clusters on a real run lists the rest and keeps JSON capped", async () => {
+    const run = await runNodeCart(["--no-jev", "--max-clusters=2"], ["cart.test.js"]);
+    const lines = run.stdout.split("\n").filter((line) => line !== "");
+    expect(lines[0]).toContain("| 2 clusters |");
+    expect(lines.slice(-3)).toEqual([
+      "+2 more clusters (see log)",
+      "  c_fdff652c ASSERTION_FAILURE x1 cart.test.js:9:50 total with 100% off is free",
+      "  c_53a8182a RUNTIME_EXCEPTION x1 cart.js:5:42 first of an empty cart is undefined",
+    ]);
+
+    const json = await runNodeCart(["--no-jev", "--format=json", "--max-clusters=2"], ["cart.test.js"]);
+    const envelope = JSON.parse(json.stdout) as {
+      summary: { total_clusters: number };
+      clusters: { cluster_id: string }[];
+    };
+    expect(envelope.clusters.map((c) => c.cluster_id)).toEqual(["c_9721831d", "c_6edce10a"]);
+    expect(envelope.summary.total_clusters).toBe(2);
   });
 });
