@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 *.log
+!tests/fixtures/logs/*.log
 .env
 .DS_Store
 
