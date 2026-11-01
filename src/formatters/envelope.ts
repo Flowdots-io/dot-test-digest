@@ -83,7 +83,10 @@ export function renderPassLine(envelope: DigestEnvelope): string {
   return truncateBytes(line, PASS_BYTE_CEILING - 1);
 }
 
-function renderCluster(cluster: FailureCluster): string {
+/** Ladder levels 1 to 4 of the size rule; level 5 (header + raw text) is handled apart. */
+type Level = 1 | 2 | 3 | 4;
+
+function renderCluster(cluster: FailureCluster, level: Level = 1): string {
   const rows: string[] = [
     `${cluster.cluster_id} ${cluster.error_kind} x${cluster.affected_count} ${cluster.top_frame}`,
   ];
@@ -91,8 +94,12 @@ function renderCluster(cluster: FailureCluster): string {
   if (cluster.diff) {
     rows.push(`  diff: expected ${cluster.diff.expected} / received ${cluster.diff.received}`);
   }
-  for (const frame of cluster.pruned_stack) rows.push(`  ${frame}`);
-  if (cluster.signal_window !== "") {
+  if (level < 3) {
+    for (const frame of cluster.pruned_stack) {
+      if (frame !== cluster.top_frame) rows.push(`  ${frame}`);
+    }
+  }
+  if (level < 2 && cluster.signal_window !== "") {
     for (const line of cluster.signal_window.split("\n")) rows.push(`  ${line}`);
   }
   if (cluster.sample_tests.length > 0) rows.push(`  tests: ${cluster.sample_tests.join(", ")}`);
@@ -116,17 +123,52 @@ function renderOmittedLine(cluster: FailureCluster): string {
   return `  ${cluster.cluster_id} ${cluster.error_kind} x${cluster.affected_count} ${cluster.top_frame} ${omittedLabel(cluster)}`;
 }
 
-export function renderFailBody(envelope: DigestEnvelope, omitted: readonly FailureCluster[] = []): string {
+function renderOneLine(cluster: FailureCluster): string {
+  const head = `${cluster.cluster_id} ${cluster.error_kind} x${cluster.affected_count} ${cluster.top_frame} ${cluster.raw_log_lines}`;
+  return cluster.message === "" ? head : `${head} ${truncateBytes(cluster.message, MESSAGE_BYTE_CEILING)}`;
+}
+
+function headerLine(envelope: DigestEnvelope, clusterCount: number): string {
+  return (
+    `[${statusLabel(envelope)}] ${envelope.summary.failed} failed, ${envelope.summary.passed} passed` +
+    ` in ${envelope.duration_ms}ms | ${clusterCount} cluster${clusterCount === 1 ? "" : "s"}` +
+    ` | log: ${shortenPath(envelope.raw_log_path)}`
+  );
+}
+
+const LEVELS: readonly Level[] = [1, 2, 3, 4];
+
+function byteLength(text: string): number {
+  return Buffer.byteLength(text, "utf8");
+}
+
+export function renderFailBody(
+  envelope: DigestEnvelope,
+  omitted: readonly FailureCluster[] = [],
+  rawText?: string,
+): string {
+  const levels = rawText === undefined ? LEVELS.slice(0, 1) : LEVELS;
+  for (const level of levels) {
+    const text = renderLevel(envelope, omitted, level);
+    if (rawText === undefined) return text;
+    const header = text.slice(0, text.indexOf("\n"));
+    if (byteLength(text) + 1 <= byteLength(rawText) + byteLength(header) + 1) return text;
+  }
+  const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText ?? ""}`;
+  return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
+}
+
+function renderLevel(envelope: DigestEnvelope, omitted: readonly FailureCluster[], level: Level): string {
   const clusters = envelope.clusters ?? [];
   let kept = clusters.length;
   let listed = clusters.length + omitted.length;
 
   const render = (): string => {
-    const header =
-      `[${statusLabel(envelope)}] ${envelope.summary.failed} failed, ${envelope.summary.passed} passed` +
-      ` in ${envelope.duration_ms}ms | ${kept} cluster${kept === 1 ? "" : "s"}` +
-      ` | log: ${shortenPath(envelope.raw_log_path)}`;
-    const blocks = clusters.slice(0, kept).map(renderCluster).join("\n");
+    const header = headerLine(envelope, kept);
+    const blocks = clusters
+      .slice(0, kept)
+      .map((c) => (level === 4 ? renderOneLine(c) : renderCluster(c, level)))
+      .join("\n");
     const allOmitted = [...clusters.slice(kept), ...omitted];
     const lines = allOmitted.slice(0, listed).map((c) => `\n${renderOmittedLine(c)}`);
     const footer = allOmitted.length > 0 ? `\n+${allOmitted.length} more clusters (see log)${lines.join("")}` : "";
@@ -152,5 +194,5 @@ export function formatEnvelope(
 ): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED";
-  return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, context.omitted)}\n`;
+  return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, context.omitted, context.rawText)}\n`;
 }

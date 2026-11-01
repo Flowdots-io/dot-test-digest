@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildEnvelope, estimateTokens, formatEnvelope } from "../src/formatters/envelope.js";
 import { main } from "../src/index.js";
 import type { FailureCluster } from "../src/types/schema.js";
+import { vitestCascadeOutput } from "./fixtures/generate.js";
 
 const TSC_12 = path.resolve(import.meta.dirname, "fixtures", "logs", "tsc-12.log");
 
@@ -64,7 +65,15 @@ describe("source-order ranking through the CLI", () => {
 
 describe("omitted clusters through the CLI", () => {
   it("lists the clusters beyond --max-clusters and keeps JSON capped", async () => {
-    const code = await main(["--no-jev", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
+    // Build noise before the diagnostics makes the raw output larger than any clustered
+    // rendering, so the run stays on levels 1 to 4 (level 5 has no footer by design).
+    const noisy = [
+      process.execPath,
+      "-e",
+      `for (let i = 0; i < 60; i++) console.log('step ' + i + ' ' + 'x'.repeat(60));` +
+        `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(TSC_12)},'utf8')); process.exit(2)`,
+    ];
+    const code = await main(["--no-jev", "--max-clusters=5", "--", ...noisy]);
     expect(code).toBe(2);
     const lines = stdout.split("\n");
     expect(lines[0]).toMatch(/\| 5 clusters \|/);
@@ -77,7 +86,7 @@ describe("omitted clusters through the CLI", () => {
     }
 
     stdout = "";
-    await main(["--no-jev", "--format=json", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
+    await main(["--no-jev", "--format=json", "--max-clusters=5", "--", ...noisy]);
     const envelope = JSON.parse(stdout) as { summary: { total_clusters: number }; clusters: unknown[] };
     expect(envelope.summary.total_clusters).toBe(5);
     expect(envelope.clusters).toHaveLength(5);
@@ -224,5 +233,223 @@ describe("omitted-cluster footer", () => {
     );
     expect(estimateTokens(out)).toBeLessThanOrEqual(600);
     expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(2400);
+  });
+});
+
+const HEADER_A = "[FAIL] 1 failed, 0 passed in 10ms | 1 cluster | log: /tmp/logs/run_a.log";
+
+function thresholdEnvelope() {
+  return failEnvelope(
+    1,
+    "/tmp/logs/run_a.log",
+    [
+      omissionCluster({
+        cluster_id: "c_0123abcd",
+        top_frame: "src/cart.ts:3:10",
+        message: "AssertionError: expected 100 to be 900",
+        diff: { expected: "900", received: "100" },
+        pruned_stack: ["src/cart.ts:3:10", "at total (src/cart.ts:5:20)"],
+        sample_tests: ["cart > discount 10% leaves 90%"],
+        raw_log_lines: "L5-L27",
+        signal_window: [
+          "1 | export const subtotal = (n: number) => n;",
+          "2 | export const tax = (n: number) => Math.round(n * 0.21);",
+          "3 > export const discount = (n: number, p: number) => n - Math.round((n * p) / 10);",
+          "4 | export const total = (n: number) => discount(n, 0) + tax(n);",
+          "5 | export const first = (items: string[]) => items[0];",
+        ].join("\n"),
+      }),
+    ],
+  );
+}
+
+function rawOf(size: number): string {
+  return `${"r".repeat(size - 1)}\n`;
+}
+
+const BLOCK_HEAD = [
+  "c_0123abcd ASSERTION_FAILURE x1 src/cart.ts:3:10",
+  "  AssertionError: expected 100 to be 900",
+  "  diff: expected 900 / received 100",
+];
+const BLOCK_STACK = "  at total (src/cart.ts:5:20)";
+const BLOCK_WINDOW = [
+  "  1 | export const subtotal = (n: number) => n;",
+  "  2 | export const tax = (n: number) => Math.round(n * 0.21);",
+  "  3 > export const discount = (n: number, p: number) => n - Math.round((n * p) / 10);",
+  "  4 | export const total = (n: number) => discount(n, 0) + tax(n);",
+  "  5 | export const first = (items: string[]) => items[0];",
+];
+const BLOCK_TAIL = ["  tests: cart > discount 10% leaves 90%", "  raw: L5-L27"];
+
+const LEVEL_1 = [HEADER_A, ...BLOCK_HEAD, BLOCK_STACK, ...BLOCK_WINDOW, ...BLOCK_TAIL].join("\n") + "\n";
+const LEVEL_2 = [HEADER_A, ...BLOCK_HEAD, BLOCK_STACK, ...BLOCK_TAIL].join("\n") + "\n";
+const LEVEL_3 = [HEADER_A, ...BLOCK_HEAD, ...BLOCK_TAIL].join("\n") + "\n";
+const LEVEL_4 =
+  `${HEADER_A}\nc_0123abcd ASSERTION_FAILURE x1 src/cart.ts:3:10 L5-L27 AssertionError: expected 100 to be 900\n`;
+
+const TSC_SMALL = path.resolve(import.meta.dirname, "fixtures", "tsc-small");
+
+function useTscSmall(): string {
+  fs.cpSync(TSC_SMALL, project, { recursive: true });
+  return fs.readFileSync(path.join(project, "tsc.log"), "utf8");
+}
+
+const REPLAY_TSC_LOG = [
+  process.execPath,
+  "-e",
+  "process.stdout.write(require('node:fs').readFileSync('tsc.log','utf8')); process.exit(2)",
+];
+
+describe("the size rule through the CLI", () => {
+  it("Five tsc errors print the raw diagnostics under the header", async () => {
+    const tscLog = useTscSmall();
+    expect(Buffer.byteLength(tscLog, "utf8")).toBe(419);
+    const code = await main(["--no-jev", "--", ...REPLAY_TSC_LOG]);
+    expect(code).toBe(2);
+    const newline = stdout.indexOf("\n");
+    expect(stdout.slice(0, newline)).toMatch(
+      /^\[FAIL\] 5 failed, 0 passed in \d+ms \| 5 clusters \| log: \S+\.log$/,
+    );
+    expect(stdout.slice(newline + 1)).toBe(tscLog);
+    expect(Buffer.byteLength(stdout, "utf8")).toBe(419 + newline + 1);
+  });
+
+  it("Large raw output keeps the full form and INV-2", async () => {
+    fs.mkdirSync(path.join(project, "src", "auth"), { recursive: true });
+    const source = Array.from({ length: 32 }, (_, index) => `const line${index + 1} = ${index + 1};`);
+    source[27] = "  return parts.split('.');";
+    fs.writeFileSync(path.join(project, "src", "auth", "jwt.ts"), `${source.join("\n")}\n`);
+    const child = path.join(project, "cascade.mjs");
+    fs.writeFileSync(
+      child,
+      `process.stdout.write(${JSON.stringify(vitestCascadeOutput(50, 35))}); process.exit(1);`,
+    );
+    const code = await main(["--", process.execPath, child]);
+    expect(code).toBe(1);
+    expect(stdout).toContain("RUNTIME_EXCEPTION x50");
+    expect(stdout.split("\n")).toContain("  28 >   return parts.split('.');");
+    expect(estimateTokens(stdout)).toBeLessThanOrEqual(600);
+  });
+
+  it("The JSON envelope of the same run is unchanged", async () => {
+    useTscSmall();
+    const code = await main(["--no-jev", "--format=json", "--", ...REPLAY_TSC_LOG]);
+    expect(code).toBe(2);
+    const envelope = JSON.parse(stdout) as {
+      summary: { total_clusters: number };
+      clusters: { signal_window: string; top_frame: string; pruned_stack: string[] }[];
+    };
+    expect(envelope.summary.total_clusters).toBe(5);
+    expect(envelope.clusters).toHaveLength(5);
+    for (const cluster of envelope.clusters) expect(cluster.signal_window).not.toBe("");
+    expect(envelope.clusters[0]?.top_frame).toBe("src/a.ts:2:14");
+    expect(envelope.clusters[0]?.pruned_stack).toEqual(["src/a.ts:2:14"]);
+  });
+
+  it("Level 5 has no footer even when --max-clusters cut clusters", async () => {
+    const tscLog = useTscSmall();
+    const code = await main(["--no-jev", "--max-clusters=2", "--", ...REPLAY_TSC_LOG]);
+    expect(code).toBe(2);
+    const newline = stdout.indexOf("\n");
+    expect(stdout.slice(0, newline)).toMatch(
+      /^\[FAIL\] 5 failed, 0 passed in \d+ms \| 2 clusters \| log: \S+\.log$/,
+    );
+    expect(stdout.slice(newline + 1)).toBe(tscLog);
+    expect(stdout).not.toContain("more clusters");
+
+    stdout = "";
+    const jsonCode = await main(["--no-jev", "--max-clusters=2", "--format=json", "--", ...REPLAY_TSC_LOG]);
+    expect(jsonCode).toBe(2);
+    const envelope = JSON.parse(stdout) as {
+      status: string;
+      summary: unknown;
+      clusters: { cluster_id: string; top_frame: string; raw_log_lines: string }[];
+    };
+    expect(envelope.status).toBe("FAIL");
+    expect(envelope.summary).toEqual({ passed: 0, failed: 5, skipped: 0, total_clusters: 2 });
+    expect(envelope.clusters.map((c) => [c.cluster_id, c.top_frame, c.raw_log_lines])).toEqual([
+      ["c_42a23d40", "src/a.ts:2:14", "L1-L1"],
+      ["c_39d5c117", "src/a.ts:3:31", "L2-L2"],
+    ]);
+  });
+});
+
+describe("tiny failures through the CLI", () => {
+  it("A failure with no output prints only the header", async () => {
+    const code = await main(["--no-jev", "--", process.execPath, "-e", "process.exit(3)"]);
+    expect(code).toBe(3);
+    expect(stdout).toMatch(/^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log\n$/);
+
+    stdout = "";
+    const jsonCode = await main(["--no-jev", "--format=json", "--", process.execPath, "-e", "process.exit(3)"]);
+    expect(jsonCode).toBe(3);
+    const envelope = JSON.parse(stdout) as { clusters: { error_kind: string }[] };
+    expect(envelope.clusters.map((c) => c.error_kind)).toEqual(["UNSTRUCTURED_BUILD_ERROR"]);
+  });
+
+  it("A tiny unstructured failure prints the header and the raw line", async () => {
+    const code = await main(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
+    expect(code).toBe(1);
+    const [header, ...rest] = stdout.split("\n");
+    expect(header).toMatch(/^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log$/);
+    expect(rest).toEqual(["boom", ""]);
+  });
+});
+
+function logPointerBytes(header: string): string {
+  const pointer = /log: (\S+\.log)$/.exec(header)?.[1] ?? "";
+  const resolved = pointer.startsWith("~") ? path.join(os.homedir(), pointer.slice(1)) : pointer;
+  return fs.readFileSync(resolved, "utf8");
+}
+
+describe("the log pointer", () => {
+  it("The log pointer resolves at every level", async () => {
+    const tscLog = useTscSmall();
+    await main(["--no-jev", "--", ...REPLAY_TSC_LOG]);
+    expect(logPointerBytes(stdout.split("\n")[0] ?? "")).toBe(tscLog);
+
+    stdout = "";
+    await main(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
+    expect(logPointerBytes(stdout.split("\n")[0] ?? "")).toBe("boom\n");
+  });
+});
+
+describe("the size ladder", () => {
+  it("Each level is chosen at its exact threshold", () => {
+    const envelope = thresholdEnvelope();
+    expect(Buffer.byteLength(`${HEADER_A}\n`, "utf8")).toBe(73);
+    const at = (size: number) => formatEnvelope(envelope, "compact-md", { rawText: rawOf(size) });
+
+    expect(at(531)).toBe(LEVEL_1);
+    expect(Buffer.byteLength(LEVEL_1, "utf8")).toBe(604);
+    expect(at(530)).toBe(LEVEL_2);
+    expect(Buffer.byteLength(LEVEL_2, "utf8")).toBe(283);
+    expect(at(200)).toBe(LEVEL_3);
+    expect(Buffer.byteLength(LEVEL_3, "utf8")).toBe(253);
+    expect(at(120)).toBe(LEVEL_4);
+    expect(Buffer.byteLength(LEVEL_4, "utf8")).toBe(168);
+    const level5 = at(60);
+    expect(level5).toBe(`${HEADER_A}\n${rawOf(60)}`);
+    expect(Buffer.byteLength(level5, "utf8")).toBe(133);
+  });
+});
+
+describe("the size rule without a render context", () => {
+  it("Without raw text the size rule is not applied", () => {
+    const out = formatEnvelope(thresholdEnvelope(), "compact-md");
+    expect(out).toBe(LEVEL_1);
+    expect(Buffer.byteLength(out, "utf8")).toBe(604);
+  });
+});
+
+describe("a stack row equal to top_frame is not rendered", () => {
+  it("The duplicate row is dropped and the other frames stay", () => {
+    const envelope = thresholdEnvelope();
+    const lines = formatEnvelope(envelope, "compact-md").split("\n");
+    expect(lines).not.toContain("  src/cart.ts:3:10");
+    expect(lines.filter((line) => line === "  at total (src/cart.ts:5:20)")).toHaveLength(1);
+    const json = JSON.parse(formatEnvelope(envelope, "json")) as { clusters: { pruned_stack: string[] }[] };
+    expect(json.clusters[0]?.pruned_stack).toEqual(["src/cart.ts:3:10", "at total (src/cart.ts:5:20)"]);
   });
 });
