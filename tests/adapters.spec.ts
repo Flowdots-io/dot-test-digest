@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADAPTERS, classifyMessage, runGear0, selectAdapter } from "../src/adapters/index.js";
 import type { CapturedLine } from "../src/runner/capture.js";
@@ -253,5 +255,53 @@ describe("tap grammar", () => {
     expect(result?.counts.failed).toBe(1);
     expect(result?.failures).toHaveLength(1);
     expect(result?.failures[0]?.errorKind).toBe("ASSERTION_FAILURE");
+  });
+});
+
+describe("node TAP diagnostic blocks", () => {
+  it("A recorded TAP log parses to the same records at the adapter seam", () => {
+    const root = path.join(process.cwd(), "tests", "fixtures", "node-cart");
+    const text = fs
+      .readFileSync(path.join("tests", "fixtures", "logs", "node-tap-cart.log"), "utf8")
+      .replaceAll("__ROOT__", root)
+      .replace(/\n$/, "");
+    const result = runGear0(lines(text));
+
+    expect(result?.adapter).toBe("js-test");
+    expect(result?.counts).toEqual({ passed: 2, failed: 4, skipped: 0 });
+    expect(result?.failures).toHaveLength(4);
+    expect(result?.failures.map((f) => f.testFile)).toEqual([
+      "tests/fixtures/node-cart/cart.test.js",
+      "tests/fixtures/node-cart/cart.test.js",
+      "tests/fixtures/node-cart/cart.test.js",
+      "tests/fixtures/node-cart/cart.test.js",
+    ]);
+    expect(result?.failures.map((f) => [f.startLine, f.endLine])).toEqual([
+      [15, 39],
+      [41, 65],
+      [67, 91],
+      [93, 111],
+    ]);
+  });
+
+  it("A TAP block without a failureType key keeps the v0.1.2 behavior", () => {
+    const stream = [
+      "not ok 1 - cart totals",
+      "  ---",
+      "  error: |-",
+      "    AssertionError: expected 99 to be 100",
+      "  ...",
+      "1..1",
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+    ].join("\n");
+    const result = runGear0(lines(stream));
+
+    expect(result?.adapter).toBe("js-test");
+    expect(result?.counts.failed).toBe(1);
+    expect(result?.failures).toHaveLength(1);
+    expect(result?.failures[0]?.errorKind).toBe("ASSERTION_FAILURE");
+    expect(result?.failures[0]?.message).toBe("AssertionError: expected 99 to be 100");
   });
 });
