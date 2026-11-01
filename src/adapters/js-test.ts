@@ -481,7 +481,7 @@ function nodeFailure(
 
   const frames = field("stack").map(nodePath);
   return {
-    testName: name === "" ? null : name,
+    testName: name === "" ? null : `${name}!`,
     testFile,
     errorKind: classifyMessage(`${message}\n${frames.join("\n")}`),
     message: message === "" ? "Unknown test failure" : message,
