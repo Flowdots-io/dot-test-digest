@@ -283,4 +283,25 @@ describe("node TAP diagnostic blocks", () => {
       [93, 111],
     ]);
   });
+
+  it("A TAP block without a failureType key keeps the v0.1.2 behavior", () => {
+    const stream = [
+      "not ok 1 - cart totals",
+      "  ---",
+      "  error: |-",
+      "    AssertionError: expected 99 to be 100",
+      "  ...",
+      "1..1",
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+    ].join("\n");
+    const result = runGear0(lines(stream));
+
+    expect(result?.adapter).toBe("js-test");
+    expect(result?.counts.failed).toBe(1);
+    expect(result?.failures).toHaveLength(1);
+    expect(result?.failures[0]?.errorKind).toBe("ASSERTION_FAILURE");
+    expect(result?.failures[0]?.message).toBe("AssertionError: expected 99 to be 100");
+  });
 });
