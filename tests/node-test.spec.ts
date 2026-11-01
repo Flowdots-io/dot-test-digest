@@ -506,6 +506,21 @@ describe("node --test, spec run cut before the failing-tests section", () => {
   });
 });
 
+describe("node --test, file-level spec failures", () => {
+  it("A missing module under the spec reporter is one SYNTAX_IMPORT_ERROR failure", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "missing-module.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(envelope.status).toBe("FAIL");
+    expect(envelope.summary.failed).toBe(1);
+    expect(envelope.summary.total_clusters).toBe(1);
+    const cluster = envelope.clusters[0];
+    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(cluster?.sample_tests).toEqual(["missing-module.test.js"]);
+    expect(cluster?.message.startsWith("Error: Cannot find module '")).toBe(true);
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
