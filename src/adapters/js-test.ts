@@ -407,6 +407,24 @@ function relativeToCwd(file: string): string {
   return relative === "" || relative.startsWith("..") ? file : relative;
 }
 
+function locationLine(block: NodeBlock): string | undefined {
+  return /:(\d+)(?::\d+)?$/.exec(block.fields.get("location")?.[0] ?? "")?.[1];
+}
+
+/** Leaf names shared by two or more node failures of one file get ` @<line>`. */
+function disambiguateSameNames(
+  leaves: ReadonlyArray<{ failure: RawFailure; line: string | undefined }>,
+): void {
+  const seen = new Map<string, number>();
+  const keyOf = (failure: RawFailure): string => `${failure.testFile ?? ""}\u0000${failure.testName ?? ""}`;
+  for (const { failure } of leaves) seen.set(keyOf(failure), (seen.get(keyOf(failure)) ?? 0) + 1);
+  for (const { failure, line } of leaves) {
+    if (failure.testName !== null && line !== undefined && (seen.get(keyOf(failure)) ?? 0) > 1) {
+      failure.testName = `${failure.testName} @${line}`;
+    }
+  }
+}
+
 function nodeFailure(
   name: string,
   block: NodeBlock,
@@ -453,6 +471,7 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   let counts: AdapterCounts = emptyCounts();
   let current: RawFailure | null = null;
   const isNodeTap = lines.some((line) => NODE_SUBTEST.test(line.text));
+  const nodeLeaves: Array<{ failure: RawFailure; line: string | undefined }> = [];
   let nodeFail = 0;
   let nodeCancelled = 0;
   let nodeSkipped = 0;
@@ -485,7 +504,9 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
           continue;
         }
         const endLine = lines[block.endIndex]?.line ?? line.line;
-        failures.push(nodeFailure(notOk[2] ?? "", block, line.line, endLine));
+        const failure = nodeFailure(notOk[2] ?? "", block, line.line, endLine);
+        failures.push(failure);
+        nodeLeaves.push({ failure, line: locationLine(block) });
         index = block.endIndex;
         continue;
       }
@@ -579,6 +600,7 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   }
 
   flush();
+  disambiguateSameNames(nodeLeaves);
   counts.failed = Math.max(counts.failed, nodeFail + nodeCancelled);
   counts.skipped = Math.max(counts.skipped, nodeSkipped + nodeTodo);
   if (counts.failed === 0 && failures.length > 0) counts.failed = failures.length;
