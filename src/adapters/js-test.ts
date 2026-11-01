@@ -407,6 +407,33 @@ function relativeToCwd(file: string): string {
   return relative === "" || relative.startsWith("..") ? file : relative;
 }
 
+function isFileLevel(block: NodeBlock): boolean {
+  return block.fields.get("error")?.[0] === "test failed" && block.fields.has("exitCode");
+}
+
+const SUBPROCESS_ERROR = /^#\s+([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
+
+/**
+ * The error line a crashed test file's subprocess printed: the first match in
+ * the run of `#` comment lines directly above that file's own top-level
+ * `# Subtest:` line, so a file never borrows another file's error.
+ */
+function subprocessError(lines: readonly CapturedLine[], headerIndex: number): string | undefined {
+  let subtest = headerIndex - 1;
+  while (subtest >= 0 && !/^# Subtest:/.test(lines[subtest]?.text ?? "")) subtest -= 1;
+  const comments: string[] = [];
+  for (let index = subtest - 1; index >= 0; index -= 1) {
+    const text = lines[index]?.text ?? "";
+    if (!text.startsWith("#")) break;
+    comments.unshift(text);
+  }
+  for (const comment of comments) {
+    const match = SUBPROCESS_ERROR.exec(comment);
+    if (match !== null) return `${match[1] ?? ""}: ${match[2] ?? ""}`;
+  }
+  return undefined;
+}
+
 function locationLine(block: NodeBlock): string | undefined {
   return /:(\d+)(?::\d+)?$/.exec(block.fields.get("location")?.[0] ?? "")?.[1];
 }
@@ -505,6 +532,13 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
         }
         const endLine = lines[block.endIndex]?.line ?? line.line;
         const failure = nodeFailure(notOk[2] ?? "", block, line.line, endLine);
+        if (isFileLevel(block)) {
+          const error = subprocessError(lines, index);
+          if (error !== undefined) {
+            failure.message = error;
+            failure.errorKind = classifyMessage(error);
+          }
+        }
         failures.push(failure);
         nodeLeaves.push({ failure, line: locationLine(block) });
         index = block.endIndex;
@@ -552,6 +586,8 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
       if (nodeCount[1] === "todo") nodeTodo = value;
       continue;
     }
+
+    if (isNodeTap && text.startsWith("#")) continue;
 
     if (current === null) {
       if (!FRAME.test(text) && !ERROR_MESSAGE.test(text)) continue;
