@@ -192,16 +192,7 @@ export function formatEnvelope(
   format: OutputFormat,
   context: RenderContext = {},
 ): string {
-  if (format === "json") {
-    const pruned = {
-      ...envelope,
-      clusters: (envelope.clusters ?? []).map((c) => ({
-        ...c,
-        pruned_stack: c.pruned_stack.filter((frame) => frame !== c.top_frame),
-      })),
-    };
-    return `${JSON.stringify(pruned, null, 2)}\n`;
-  }
+  if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED";
   return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, context.omitted, context.rawText)}\n`;
 }
