@@ -16,11 +16,11 @@ The runtime SHALL emit `D <= R + H`, and `D <= 2400` (INV-2) MUST keep holding. 
 Level 5 is reached only when the raw text is smaller than every clustered rendering; its header reports the number of clusters in the envelope (at most `--max-clusters`). Omitted-cluster footers (see `omitted-cluster-visibility`) apply, and count toward `D`, at levels 1 to 4 only. Level 5 shows every failure in the raw text, so it has no `+N more clusters (see log)` line and no listed lines, also when `--max-clusters` cut clusters from the envelope. At levels 2 to 4 compact-md omits every cluster's SignalWindow, and at levels 3 and 4 its stack rows; a cluster still shows them at most once and never repeats them, and `--format=json` always carries `pruned_stack` and `signal_window` (SPEC-002 0.1.3 amends INV-2's "exactly once" to "at most once" for compact-md). The header line and its `log:` pointer are present at every level, and every `raw:` range that is printed MUST resolve to lines of that log file. `PASS` and `VALID_RED` one-liners stay governed by INV-1 only. The size rule MUST NOT change `--format=json` output.
 
 #### Scenario: Five tsc errors print the raw diagnostics under the header
-- **GIVEN** the working directory is a fresh copy of `tests/fixtures/tsc-small/` (`src/a.ts`, `src/b.ts`, `tsconfig.json` and `tsc.log`, all copied byte for byte from `/tmp/dtd-work/tscproj/`; `tsc.log` is that directory's `raw-tsc.txt`, 5 lines, 419 bytes, the first being `src/a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.`)
+- **GIVEN** the working directory is a fresh copy of `tests/fixtures/tsc-small/` (`src/a.ts`, `src/b.ts`, `tsconfig.json` and `tsc.log`, with the exact contents quoted in `design.md` "Fixtures"; `tsc.log` is the exact output of `tsc -p .` there, 5 lines, 419 bytes, the first being `src/a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.`)
 - **WHEN** `dot-test-digest --no-jev -- node -e "process.stdout.write(require('node:fs').readFileSync('tsc.log','utf8')); process.exit(2)"` runs
 - **THEN** the exit code is `2`
 - **AND** the first stdout line matches `^\[FAIL\] 5 failed, 0 passed in \d+ms \| 5 clusters \| log: \S+\.log$`
-- **AND** the rest of stdout is exactly the 419 bytes of `tsc.log`, so stdout is `419 + H` bytes (v0.1.2 printed 1,538 bytes)
+- **AND** the rest of stdout is exactly the 419 bytes of `tsc.log`, so stdout is `419 + H` bytes (v0.1.2 printed about 1,540 bytes, path dependent)
 
 #### Scenario: The JSON envelope of the same run is unchanged
 - **GIVEN** the same working directory
@@ -56,7 +56,7 @@ Level 5 is reached only when the raw text is smaller than every clustered render
 
 #### Scenario: A tiny unstructured failure prints the header and the raw line
 - **WHEN** `dot-test-digest --no-jev -- node -e "console.log('boom'); process.exit(1)"` runs
-- **THEN** the exit code is `1` and stdout is exactly the header line, `\n`, `boom`, `\n` (v0.1.2 printed `boom` twice inside a cluster block)
+- **THEN** the exit code is `1` and stdout is exactly the header line, `\n`, `boom`, `\n`, where the header line matches `^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log$` (v0.1.2 printed `boom` twice inside a cluster block)
 
 #### Scenario: Large raw output keeps the full form and INV-2
 - **GIVEN** the CT-2 cascade child of `tests/cli.spec.ts` (`vitestCascadeOutput(50, 35)`, more than 1,900 raw lines, exit 1) with that test's setup, so `src/auth/jwt.ts` is readable

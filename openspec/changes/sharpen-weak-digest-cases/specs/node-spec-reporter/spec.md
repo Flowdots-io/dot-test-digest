@@ -33,7 +33,7 @@ Tree rows (`✔`/`✖`/`▶` before the summary), including a failed suite row s
 - **THEN** the first stdout line starts with `[FAIL] 4 failed, 2 passed in `, stdout contains `ASSERTION_FAILURE x1 cart.test.js:7:46` and is at most 2,400 bytes, and stdout contains neither `BUILD_ERROR`, `UNSTRUCTURED_BUILD_ERROR` nor `file://`
 
 #### Scenario: A recorded spec log parses at the adapter seam
-- **GIVEN** `tests/fixtures/logs/node-spec-cart.log`, the README run's spec output (`/tmp/dtd-work/nodetest/raw-spec.txt`, 3,396 bytes, 91 lines) with every `/tmp/dtd-work/nodetest` replaced by `__ROOT__`, and the test replaces `__ROOT__` with `<cwd>/tests/fixtures/node-cart`
+- **GIVEN** `tests/fixtures/logs/node-spec-cart.log`, the recorded spec-reporter output of the `node-cart` fixture (91 lines, 3,396 bytes when recorded; regeneration and the values that must survive it are in `design.md` "Fixtures") with the copy's absolute path replaced by `__ROOT__`, and the test replaces `__ROOT__` with `<cwd>/tests/fixtures/node-cart`
 - **WHEN** `runGear0` parses its lines
 - **THEN** the adapter is `js-test`, counts are `{ passed: 2, failed: 4, skipped: 0 }`, and there are 4 failures named `discount 10% leaves 90%`, `total with 10% off`, `total with 100% off is free`, `first of an empty cart is undefined`, with test file `cart.test.js` and raw ranges `18-37`, `39-58`, `60-79`, `81-91`
 

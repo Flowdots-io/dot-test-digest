@@ -1,4 +1,4 @@
-Ticket: none (request text: "Read README.md and identify improvements from the test disclosed in there (the 'Example' and 'Where it works well, and where it does not' sections). Draft a spec.")
+Ticket: none (request text: "Read README.md and identify improvements from the test disclosed in there (the 'Example' and 'Where it works well, and where it does not' sections). Draft a spec and implement using dotstack's procedures.")
 
 ## Why
 
@@ -6,7 +6,7 @@ The README's own measurements, reproduced on 2026-11-01 with the built binary (N
 
 1. `node --test` (default reporter when piped = TAP), cart project with 4 of 6 tests failing: all four failures collapse into one cluster `c_11eac407 RUNTIME_EXCEPTION x4 unknown:0:0 "Unknown test failure"` with `diff: expected 900 / received ` (empty). The adapter reads only the `not ok N - name` header and ignores node's YAML diagnostic block (`location:`, `error:`, `name:`, `expected:`/`actual:`, `stack:` with `file://` URLs).
 2. `node --test --test-reporter=spec`: not recognised at all; reported as `[BUILD_ERROR] 0 failed, 0 passed` with the log tail and a malformed `top_frame` (`(file:/tmp/dtd-work/nodetest/cart.test.js:10:64`). With a missing export under test the red gate even returns `INVALID_RED` (exit 64), contradicting INV-5, where the TAP reporter correctly returns `VALID_RED`.
-3. `tsc` with 5 errors in 2 files: raw 419 B, digest 1,538 B. Source windows plus a stack row that repeats `top_frame` make the digest 3.7x the raw output.
+3. `tsc` with 5 errors in 2 files: raw 419 B, digest about 1,540 B (path dependent). Source windows plus a stack row that repeats `top_frame` make the digest 3.7x the raw output.
 4. vitest with 5 failing tests: only 3 clusters are shown and the other 2 are only counted (`+2 more clusters (see log)`); clusters beyond `--max-clusters` are dropped with no mention at all (5 tsc errors with `--max-clusters=2` print `2 clusters` and no omission line). Ties in `affected_count` are ordered by `raw_log_lines.localeCompare`, so `L11` sorts before `L5`.
 
 ## What Changes
@@ -38,6 +38,6 @@ The README's own measurements, reproduced on 2026-11-01 with the built binary (N
 
 - Code: `src/adapters/js-test.ts` (TAP YAML, spec reporter, file-level failures, same-name suffix, counts), `src/formatters/envelope.ts` (size ladder, omitted-cluster footer, `formatEnvelope` gains an optional render context), `src/pruner/cluster-dedup.ts` (tie-break, windows read only for kept clusters), `src/index.ts` (uncapped dedupe, passes omitted clusters and normalised raw text to the formatter).
 - Tests: new `tests/helpers/node-cart.ts` (shared CLI runner over a temp copy of `tests/fixtures/node-cart/`), new `tests/node-test.spec.ts` (lane A, CLI over real `node --test` runs), new `tests/size-and-omission.spec.ts` (lane B and integration), additions to `tests/adapters.spec.ts`, `tests/envelope.spec.ts`, `tests/dedup-and-tdd.spec.ts`; the existing `tap grammar` describe and CT-1..CT-6 keep passing.
-- Fixtures: `tests/fixtures/node-cart/` (copied from the README measurement project, plus `suite.test.js`, `same-name.test.js`, `string-diff.test.js` and three red-phase files), `tests/fixtures/tsc-small/`, `tests/fixtures/logs/` (`node-tap-cart.log`, `node-spec-cart.log`, `node-spec-truncated.log`, `tsc-12.log`), and `tests/fixtures/vitest-cart/` if task 3.2 has to recreate the README's vitest example project.
+- Fixtures: `tests/fixtures/node-cart/` (the project quoted in design.md "Fixtures", plus `suite.test.js`, `same-name.test.js`, `string-diff.test.js` and three red-phase files), `tests/fixtures/tsc-small/`, `tests/fixtures/logs/` (`node-tap-cart.log`, `node-spec-cart.log`, `node-spec-truncated.log`, `tsc-12.log`), and `tests/fixtures/vitest-cart/` if task 3.2 has to recreate the README's vitest example project.
 - Docs: `README.md` measured rows and notes; `specs/SPEC-002-DOT-TEST-DIGEST.md` revision 0.1.3 (including the INV-2 and §4.2 amendments).
 - Consumers: compact-md readers see more failures and smaller output; JSON readers see correct node clusters and the corrected tie order.

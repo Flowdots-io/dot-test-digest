@@ -40,7 +40,7 @@ A `not ok` entry without a diagnostic block, or whose block has no top-level `fa
 - **AND** stdout contains `diff: expected 900 / received 0` and contains neither `unknown:0:0`, `Unknown test failure`, `file://`, nor any line ending in `received ` (an empty received value)
 
 #### Scenario: A recorded TAP log parses to the same records at the adapter seam
-- **GIVEN** `tests/fixtures/logs/node-tap-cart.log`, the README run's TAP output (`/tmp/dtd-work/nodetest/raw-default.txt`, 3,710 bytes) with every `/tmp/dtd-work/nodetest` replaced by `__ROOT__`, and the test replaces `__ROOT__` with `<cwd>/tests/fixtures/node-cart`
+- **GIVEN** `tests/fixtures/logs/node-tap-cart.log`, the recorded TAP output of the `node-cart` fixture (3,710 bytes when recorded; regeneration and the values that must survive it are in `design.md` "Fixtures") with the copy's absolute path replaced by `__ROOT__`, and the test replaces `__ROOT__` with `<cwd>/tests/fixtures/node-cart`
 - **WHEN** `runGear0` parses its lines
 - **THEN** the adapter is `js-test`, counts are `{ passed: 2, failed: 4, skipped: 0 }`, and there are 4 failures with test files `tests/fixtures/node-cart/cart.test.js` and raw ranges `15-39`, `41-65`, `67-91` and `93-111`
 

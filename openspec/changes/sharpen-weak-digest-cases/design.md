@@ -7,7 +7,7 @@
 | `node --test` piped (TAP), cart, 4 of 6 failing | `c_11eac407 RUNTIME_EXCEPTION x4 unknown:0:0`, `Unknown test failure`, `diff: expected 900 / received ` | `parseGeneric` in `src/adapters/js-test.ts` treats `not ok N - name` as a header and reads only `Expected`/`Received`-shaped lines; node's YAML keys (`error: \|-`, `location:`, `name:`, `expected:`, `actual:`, `stack: \|-`) are ignored. `expected: 900` matches the loose `Expected\s*:?` regex, which is where the half-empty diff comes from. The four failures have no frames and no message, so they share one fingerprint. |
 | `node --test --test-reporter=spec`, cart | `[BUILD_ERROR] 0 failed, 0 passed`, heuristic tail, `top_frame` `(file:/tmp/dtd-work/nodetest/cart.test.js:10:64` | No adapter scores the `✔`/`✖`/`ℹ` grammar (`HEADER` knows `✕ × ✗`, not `✖`); `file://` URLs are parsed as a path starting with `file:`. |
 | same, `--tdd-phase=red`, missing export | `INVALID_RED`, exit `64` (TAP gives `VALID_RED`, exit `0`) | The heuristic window misses the `does not provide an export named` line that node relayed (on its stdout, measured by splitting the streams) before the summary. INV-5 says a missing export is a valid red. |
-| `tsc`, 5 errors in 2 files | raw 419 B, digest 1,538 B | Every cluster carries a 3 to 5 row SignalWindow and a stack row equal to `top_frame`; nothing compares the digest with the raw size. |
+| `tsc`, 5 errors in 2 files | raw 419 B, digest about 1,540 B (path dependent: the log path is part of the header) | Every cluster carries a 3 to 5 row SignalWindow and a stack row equal to `top_frame`; nothing compares the digest with the raw size. |
 | vitest, 5 failing (README) and tsc with `--max-clusters=2` | `+2 more clusters (see log)` only; with `--max-clusters=2` no omission line at all | `renderFailBody` only counts budget drops; `dedupeFailures` slices to `maxClusters` before the formatter sees the rest, which breaks INV-2's "never silent". Ties sort with `raw_log_lines.localeCompare` (`L11` < `L5`). |
 
 Two more defects found while answering the round 1 review, both on v0.1.2 with Node 22.23.4: `node --test missing-module.test.js missing-export.test.js` (TAP) gives 3 clusters for 2 failures and attributes the `Cannot find module` error to `missing-export.test.js`; and two failing tests with the same leaf name in one file (`describe("add") > it("handles empty")`, `describe("remove") > it("handles empty")`) would be one identity under a leaf-name rule, so one of them would vanish.
@@ -57,6 +57,84 @@ Constraints: no ceiling is raised (INV-1's 160 bytes, INV-2's 600 EstimatedToken
 - **Footer**: `+N more clusters (see log)` (INV-2's exact wording) then one line per omitted cluster, `  <id> <kind> x<n> <top_frame> <label>`, label = first sample test else message, 80-byte cap. Budget order: drop full blocks (keep 1), then listed lines from the end. (alternatives rejected: listing omitted clusters before shrinking full blocks, which would change how many full blocks today's runs show.)
 - **Tie-break** in `dedupeFailures`: `affected_count` desc, first line asc, last line asc, `cluster_id` asc, comparing the numbers already computed (`startLine`/`endLine`), not the string.
 
+## Fixtures (authoritative contents)
+
+The scenarios' exact values (cluster ids, `top_frame` columns, window rows, byte counts, raw line ranges) are fixed by the bytes below. These are the contract for the fixture files; `/tmp/dtd-work/` is only where they were first measured and is not needed to rebuild them. The projects are smaller than the README's (6 tests, 5 tsc errors; the README's are 26 tests and 6 errors).
+
+### `tests/fixtures/node-cart/`
+
+`cart.js` (355 bytes, ends with a newline):
+
+```js
+export const subtotal = (items) => items.reduce((s, i) => s + i.price * i.qty, 0);
+export const tax = (n) => Math.round(n * 0.21);
+export const discount = (n, p) => n - Math.round(n * p / 10); // bug: /10
+export const total = (items, p = 0) => { const d = discount(subtotal(items), p); return d + tax(d); };
+export const first = (items) => items[0].name;
+```
+
+`cart.test.js` (636 bytes, ends with a newline):
+
+```js
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { subtotal, tax, discount, total, first } from "./cart.js";
+const items = [{ name: "pen", price: 500, qty: 3 }];
+test("subtotal adds up", () => assert.equal(subtotal(items), 1500));
+test("tax is 21%", () => assert.equal(tax(1000), 210));
+test("discount 10% leaves 90%", () => assert.equal(discount(1000, 10), 900));
+test("total with 10% off", () => assert.equal(total(items, 10), 1634));
+test("total with 100% off is free", () => assert.equal(total(items, 100), 0));
+test("first of an empty cart is undefined", () => assert.equal(first([]), undefined));
+```
+
+`package.json` (18 bytes, ends with a newline):
+
+```json
+{"type":"module"}
+```
+
+### `tests/fixtures/tsc-small/`
+
+`tsconfig.json` (133 bytes, ends with a newline):
+
+```json
+{"compilerOptions":{"strict":true,"noEmit":true,"target":"es2022","module":"es2022","moduleResolution":"bundler"},"include":["src"]}
+```
+
+`src/a.ts` (162 bytes, ends with a newline):
+
+```ts
+export const add = (a: number, b: number): number => a + b;
+export const r1: string = add(1, 2);
+export const r2: number = add("1", 2);
+export const r3 = add(1);
+```
+
+`src/b.ts` (104 bytes, ends with a newline):
+
+```ts
+import { add } from "./a";
+export const x: boolean = add(1, 2);
+export const y: number = undefinedName;
+```
+
+`tsc.log (the exact stdout of `tsc -p .` in this project; the tool under test is not run to make it)` (419 bytes, ends with a newline):
+
+```
+src/a.ts(2,14): error TS2322: Type 'number' is not assignable to type 'string'.
+src/a.ts(3,31): error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.
+src/a.ts(4,19): error TS2554: Expected 2 arguments, but got 1.
+src/b.ts(2,14): error TS2322: Type 'number' is not assignable to type 'boolean'.
+src/b.ts(3,26): error TS2552: Cannot find name 'undefinedName'. Did you mean 'undefined'?
+```
+
+### Recorded logs
+
+`tests/fixtures/logs/node-tap-cart.log` and `node-spec-cart.log` are produced once, in a fresh copy of `tests/fixtures/node-cart/`, by `node --test cart.test.js` (piped, so the TAP reporter) and `node --test --test-reporter=spec cart.test.js` on Node v22.23.4, with the absolute path of that copy replaced by `__ROOT__` (the test replaces `__ROOT__` with the real copy path before parsing). Values the scenarios assert that MUST survive a regeneration: the test names, assertion values and statuses, the counts (`tests 6`, `pass 2`, `fail 4`), and the raw line ranges (TAP `15-39`, `41-65`, `67-91`, `93-111`; spec `18-37`, `39-58`, `60-79`, `81-91`). Values that are only descriptive and may differ on another Node patch version: the byte totals (3,710 and 3,396), durations, and the `node:internal` frame lines. If a regeneration changes a MUST-survive value, the log is wrong for these scenarios, not the scenario.
+
+The other fixture files (`suite.test.js`, `same-name.test.js`, `string-diff.test.js`, `missing-module.test.js`, `missing-export.test.js`, `passing.test.js`, `tsc-12.log`, `node-spec-truncated.log`) are quoted or fully described in the scenarios that use them.
+
 ## Test seams
 
 - **The CLI** (`main(argv)` in-process with a real child process, cwd set to a temporary copy of a fixture project and `DOT_TEST_DIGEST_HOME` set to a temp directory, exactly as `tests/compliance.spec.ts` does; same argv, stdout and exit-code contract as the built bin, which `tests/bin-entry.spec.ts` already ties to `main`) because it is the highest seam that sees adapter selection, counts, clusters, the gate verdict, the exit code and the rendered size together. Used for every `node --test` scenario (real `node --test` runs of `tests/fixtures/node-cart/` via `process.execPath`), the red-phase guards, the tsc-small and tsc-12 replays, the truncated spec log replay, and the empty/`boom` cases. The node-cart runner lives in a shared module, `tests/helpers/node-cart.ts` (copy the fixture to a temp dir, chdir, run `main([...flags, "--", process.execPath, "--test", ...args])`), used by `tests/node-test.spec.ts` (lane A) and `tests/size-and-omission.spec.ts` (task 3.1), so no test file imports another test file. The lanes do not edit the same test file.
@@ -71,7 +149,7 @@ Constraints: no ceiling is raised (INV-1's 160 bytes, INV-2's 600 EstimatedToken
 - `summary.failed` for node = `fail + cancelled`; `summary.skipped` = `skipped + todo`. Change by: "report cancelled separately" (needs a schema field, so a JSON change).
 - Node messages, under both reporters, drop the ` [CODE]` tag, join continuation lines with one space and collapse every internal run of whitespace to one space. Change by: "keep the code tag" (the two reporters would then fingerprint differently) or "keep internal whitespace" (the deep-equal scenario's expected message changes to `{ +   a: 1 -   a: 2 }`).
 - Diff values are the printed scalar with surrounding quotes removed (`'pen'` gives `pen`, under both reporters); a TAP mapping value is its trimmed lines joined with `, ` (`a: 2`), a spec object value stays as printed (`{ a: 2 }`). Change by: "render objects as `{ a: 2 }` under TAP too" or "keep the quotes".
-- Parity between the two reporters is promised for `cluster_id`, `error_kind`, `top_frame`, `message` and `sample_tests` only. The diff of an object value (`a: 2` in TAP, `{ a: 2 }` in spec) and the `pruned_stack` entries (`at ` prefix under spec, none under TAP) may differ. Change by: "make diffs and stacks identical too" (normalise objects and add `at ` to TAP frames).
+- At the adapter seam the recorded TAP log yields the test file `tests/fixtures/node-cart/cart.test.js` (after `__ROOT__` substitution) while the recorded spec log yields `cart.test.js`; both follow the file rule as written, and cross-reporter parity is asserted only for CLI runs of the real fixture. Parity between the two reporters is promised for `cluster_id`, `error_kind`, `top_frame`, `message` and `sample_tests` only. The diff of an object value (`a: 2` in TAP, `{ a: 2 }` in spec) and the `pruned_stack` entries (`at ` prefix under spec, none under TAP) may differ. Change by: "make diffs and stacks identical too" (normalise objects and add `at ` to TAP frames).
 - The TAP node path is chosen by a top-level `failureType:` key in the block. Change by: "also accept blocks with only `location:`".
 - A spec stream with an `ℹ` summary but no failing-tests section yields one `Unknown test failure` per failing leaf row (one `c_11eac407`-style cluster at `unknown:0:0`); a rows-only stream (runner killed before the summary) keeps v0.1.2's `BUILD_ERROR`. Change by: "treat rows-only `✖ name (Nms)` streams as spec output too" (risk: other tools' `✖` lines).
 - Size rule allowance = the candidate level's header line; `R` = every captured line after ANSI stripping and CR collapsing, no line dropped. Change by: "use a fixed allowance of N bytes" or "compare with the unnormalised raw log".
@@ -81,7 +159,7 @@ Constraints: no ceiling is raised (INV-1's 160 bytes, INV-2's 600 EstimatedToken
 - Stack rows equal to `top_frame` are always hidden in compact-md, not only under the size rule. Change by: "only hide them at level 2+".
 - Omitted-cluster line = `  <id> <kind> x<n> <top_frame> <label>` with an 80-byte label, no per-line `raw:` pointer. Change by: "add the raw range to each listed line".
 - Clusters dropped by `--max-clusters` are counted and listed in compact-md at levels 1 to 4 (previously silent), while JSON stays capped with `total_clusters` = emitted count. Change by: "make `total_clusters` the uncapped count" (a JSON semantics change).
-- Fixture projects are verbatim copies of the README measurement projects (`/tmp/dtd-work/nodetest`, `/tmp/dtd-work/tscproj`) plus `suite.test.js`, `same-name.test.js`, `string-diff.test.js`, three small red-phase files and the logs `node-tap-cart.log`, `node-spec-cart.log`, `node-spec-truncated.log`, `tsc-12.log`. Change by: naming other fixtures.
+- Fixture projects are the smaller projects quoted under "Fixtures (authoritative contents)" (not the README's own, larger, projects) plus `suite.test.js`, `same-name.test.js`, `string-diff.test.js`, three small red-phase files and the logs `node-tap-cart.log`, `node-spec-cart.log`, `node-spec-truncated.log`, `tsc-12.log`. Change by: naming other fixtures.
 - SPEC-002 is amended to 0.1.3 in this change (docs task), including the INV-2 and §4.2 wording above. Change by: "keep SPEC-002 frozen; the openspec change is enough".
 
 ## Risks / Trade-offs
