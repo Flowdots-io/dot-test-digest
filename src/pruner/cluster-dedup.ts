@@ -95,10 +95,21 @@ export function dedupeFailures(
     });
   }
 
-  return clusters
-    .sort(
-      (a, b) =>
-        b.affected_count - a.affected_count || a.raw_log_lines.localeCompare(b.raw_log_lines),
-    )
-    .slice(0, options.maxClusters);
+  return clusters.sort(compareClusters).slice(0, options.maxClusters);
+}
+
+function lineRange(rawLogLines: string): [number, number] {
+  const match = /^L(\d+)-L(\d+)$/.exec(rawLogLines);
+  return match ? [Number(match[1]), Number(match[2])] : [0, 0];
+}
+
+function compareClusters(a: FailureCluster, b: FailureCluster): number {
+  const [aFirst, aLast] = lineRange(a.raw_log_lines);
+  const [bFirst, bLast] = lineRange(b.raw_log_lines);
+  return (
+    b.affected_count - a.affected_count ||
+    aFirst - bFirst ||
+    aLast - bLast ||
+    (a.cluster_id < b.cluster_id ? -1 : a.cluster_id > b.cluster_id ? 1 : 0)
+  );
 }
