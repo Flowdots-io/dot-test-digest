@@ -282,7 +282,7 @@ const LEVEL_4 =
 describe("the size ladder", () => {
   it("Each level is chosen at its exact threshold", () => {
     const envelope = thresholdEnvelope();
-    expect(Buffer.byteLength(HEADER_A, "utf8")).toBe(73);
+    expect(Buffer.byteLength(`${HEADER_A}\n`, "utf8")).toBe(73);
     const at = (size: number) => formatEnvelope(envelope, "compact-md", { rawText: rawOf(size) });
 
     expect(at(531)).toBe(LEVEL_1);
