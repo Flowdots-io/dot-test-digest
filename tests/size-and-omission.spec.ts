@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildEnvelope, estimateTokens, formatEnvelope } from "../src/formatters/envelope.js";
 import { main } from "../src/index.js";
 import type { FailureCluster } from "../src/types/schema.js";
+import { vitestCascadeOutput } from "./fixtures/generate.js";
 
 const TSC_12 = path.resolve(import.meta.dirname, "fixtures", "logs", "tsc-12.log");
 
@@ -312,6 +313,23 @@ describe("the size rule through the CLI", () => {
     );
     expect(stdout.slice(newline + 1)).toBe(tscLog);
     expect(Buffer.byteLength(stdout, "utf8")).toBe(419 + newline + 1);
+  });
+
+  it("Large raw output keeps the full form and INV-2", async () => {
+    fs.mkdirSync(path.join(project, "src", "auth"), { recursive: true });
+    const source = Array.from({ length: 32 }, (_, index) => `const line${index + 1} = ${index + 1};`);
+    source[27] = "  return parts.split('.');";
+    fs.writeFileSync(path.join(project, "src", "auth", "jwt.ts"), `${source.join("\n")}\n`);
+    const child = path.join(project, "cascade.mjs");
+    fs.writeFileSync(
+      child,
+      `process.stdout.write(${JSON.stringify(vitestCascadeOutput(50, 35))}); process.exit(1);`,
+    );
+    const code = await main(["--", process.execPath, child]);
+    expect(code).toBe(1);
+    expect(stdout).toContain("RUNTIME_EXCEPTION x50");
+    expect(stdout.split("\n")).toContain("  28 >   return parts.split('.');");
+    expect(estimateTokens(stdout)).toBeLessThanOrEqual(600);
   });
 
   it("The JSON envelope of the same run is unchanged", async () => {
