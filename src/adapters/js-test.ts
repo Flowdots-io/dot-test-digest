@@ -454,7 +454,7 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
 
   const flush = (): void => {
     if (current === null) return;
-    current.errorKind = classifyMessage(`${current.message}\n${current.frames.join("\n")}`);
+    current.errorKind = "RUNTIME_EXCEPTION"; // DELIBERATE BREAK (pin red), reverted in the next commit
     if (current.message === "") current.message = "Unknown test failure";
     failures.push(current);
     current = null;
