@@ -287,3 +287,16 @@ describe("node --test, TAP red-phase guards (assertion failures)", () => {
     ]);
   });
 });
+
+describe("node --test, TAP red-phase guards (missing module)", () => {
+  it("A missing module is INVALID_RED with exit 64", async () => {
+    const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], ["missing-module.test.js"]);
+
+    expect(run.code).toBe(64);
+    expect(run.stdout).toContain("INVALID_RED");
+    expect(run.stdout).toContain("SYNTAX_IMPORT_ERROR");
+    expect(run.stderr).toContain(
+      "Test failed due to syntax or unresolved module import rather than a behavioral assertion.",
+    );
+  });
+});
