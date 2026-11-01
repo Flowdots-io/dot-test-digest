@@ -305,6 +305,33 @@ describe("the size rule through the CLI", () => {
     expect(stdout.slice(newline + 1)).toBe(tscLog);
     expect(Buffer.byteLength(stdout, "utf8")).toBe(419 + newline + 1);
   });
+
+  it("Level 5 has no footer even when --max-clusters cut clusters", async () => {
+    const tscLog = useTscSmall();
+    const code = await main(["--no-jev", "--max-clusters=2", "--", ...REPLAY_TSC_LOG]);
+    expect(code).toBe(2);
+    const newline = stdout.indexOf("\n");
+    expect(stdout.slice(0, newline)).toMatch(
+      /^\[FAIL\] 5 failed, 0 passed in \d+ms \| 2 clusters \| log: \S+\.log$/,
+    );
+    expect(stdout.slice(newline + 1)).toBe(tscLog);
+    expect(stdout).not.toContain("more clusters");
+
+    stdout = "";
+    const jsonCode = await main(["--no-jev", "--max-clusters=2", "--format=json", "--", ...REPLAY_TSC_LOG]);
+    expect(jsonCode).toBe(2);
+    const envelope = JSON.parse(stdout) as {
+      status: string;
+      summary: unknown;
+      clusters: { cluster_id: string; top_frame: string; raw_log_lines: string }[];
+    };
+    expect(envelope.status).toBe("FAIL");
+    expect(envelope.summary).toEqual({ passed: 0, failed: 5, skipped: 0, total_clusters: 2 });
+    expect(envelope.clusters.map((c) => [c.cluster_id, c.top_frame, c.raw_log_lines])).toEqual([
+      ["c_42a23d40", "src/a.ts:2:14", "L1-L1"],
+      ["c_39d5c117", "src/a.ts:3:31", "L2-L2"],
+    ]);
+  });
 });
 
 describe("the size ladder", () => {
