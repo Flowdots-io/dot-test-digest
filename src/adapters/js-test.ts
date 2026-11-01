@@ -737,6 +737,39 @@ function specEntry(
   return { failure, line: at[2] ?? "" };
 }
 
+const SPEC_TREE_ROW = /^(\s*)([✖▶]) (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+
+/**
+ * Failures for a stream cut before its `✖ failing tests:` section: one per
+ * failing leaf row printed before the summary. A `✖` row is a suite, not a
+ * leaf, when an earlier `▶` row with the same name and indentation opened it.
+ */
+function specLeafRows(lines: readonly CapturedLine[]): RawFailure[] {
+  const opened = new Set<string>();
+  const failures: RawFailure[] = [];
+  for (const line of lines) {
+    if (SPEC_SUMMARY.test(line.text)) break;
+    const row = SPEC_TREE_ROW.exec(line.text);
+    if (row === null) continue;
+    const key = `${row[1] ?? ""}\u0000${row[3] ?? ""}`;
+    if (row[2] === "▶") {
+      opened.add(key);
+      continue;
+    }
+    if (opened.has(key)) continue;
+    failures.push({
+      testName: row[3] ?? "",
+      testFile: null,
+      errorKind: classifyMessage("Unknown test failure"),
+      message: "Unknown test failure",
+      frames: [],
+      startLine: line.line,
+      endLine: line.line,
+    });
+  }
+  return failures;
+}
+
 function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
   const counts = specCounts(lines);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
@@ -753,6 +786,8 @@ function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
     });
     disambiguateSameNames(entries);
     failures.push(...entries.map((entry) => entry.failure));
+  } else {
+    failures.push(...specLeafRows(lines));
   }
   return { adapter: "js-test", failures, counts };
 }
