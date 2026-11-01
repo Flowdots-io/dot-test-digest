@@ -28,12 +28,15 @@ interface Attempt {
   gear: ExecutionGear;
   failures: RawFailure[];
   clusters: FailureCluster[];
+  omitted: FailureCluster[];
   counts: { passed: number; failed: number; skipped: number };
   exitCode: number;
   signal: string | null;
   durationMs: number;
   retryWanted: boolean;
   logPath: string;
+  /** Every captured line after normalisation, one `\n` each: the `R` of the size rule. */
+  rawText: string;
 }
 
 export interface MainDeps {
@@ -84,15 +87,18 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     const lines = capture.lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
     const gear0 = runGear0(lines);
 
-    let clusters: FailureCluster[] =
+    const ranked: FailureCluster[] =
       gear0 === null
         ? []
         : dedupeFailures(gear0.failures, {
             repoRoot,
             contextLines: options.contextLines,
-            maxClusters: options.maxClusters,
+            maxClusters: Number.POSITIVE_INFINITY,
+            windowLimit: options.maxClusters,
             logPath: rawLog.path,
           });
+    let clusters = ranked.slice(0, options.maxClusters);
+    let omitted = ranked.slice(options.maxClusters);
     let gear: ExecutionGear = gear0 === null ? "GEAR_0_HEURISTIC_FALLBACK" : "GEAR_0_GRAMMAR";
     let retryWanted = false;
 
@@ -110,6 +116,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       });
       gear = outcome.gear;
       clusters = [outcome.cluster];
+      omitted = [];
       retryWanted = outcome.retry;
     }
 
@@ -118,12 +125,14 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       gear,
       failures: uniqueFailures(gear0?.failures ?? []),
       clusters,
+      omitted,
       counts: gear0?.counts ?? { passed: 0, failed: 0, skipped: 0 },
       exitCode: capture.exitCode,
       signal: capture.signal,
       durationMs: capture.durationMs,
       retryWanted,
       logPath: rawLog.path,
+      rawText: lines.map((line) => `${line.text}\n`).join(""),
     };
   };
 
@@ -185,12 +194,12 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       gear: run.gear,
       durationMs: run.durationMs,
       counts: run.counts,
-      clusters: run.clusters.slice(0, options.maxClusters),
+      clusters: run.clusters,
       ...(decision.delta ? { delta: decision.delta } : {}),
       rawLogPath: run.logPath,
     });
 
-    process.stdout.write(formatEnvelope(envelope, options.format));
+    process.stdout.write(formatEnvelope(envelope, options.format, { omitted: run.omitted, rawText: run.rawText }));
     if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
     rawLog.close();
     return decision.exitCode;
