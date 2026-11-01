@@ -1,68 +1,86 @@
 ---
-verdict: reject
+verdict: approve
 reviewer_model: "opus"
 author_model: "opus"
-reviewer_run: "review-20261101T1520-m2xz"
+reviewer_run: "review-20261101T1600-p9wt"
 author_run: "spec-20261101T1450-rev1"
-spec_hash: "ac2ced02577a0381b81585db1655ce88b3487a6846d3b1b1c9ca8c481a720955"
-reviewed_at: "2026-11-01T14:05:14Z"
-round: 2
+spec_hash: "441a147fe9cd561c278331e691aafb67c8b77d3efa16d3dfeb85ae1048067469"
+reviewed_at: "2026-11-01T14:11:13Z"
+round: 3
 ---
 
 ## Intent
 
-Fix the weak cases that the README's own measurements expose, so the digest is never worse than the raw output it replaces: `node --test` failures merged into one cluster or not recognised at all, a digest larger than the raw output for a small `tsc` run, and clusters past the first few hidden or silently dropped. The work follows dotstack's spec-then-implement procedure.
+Fix the weak cases that the README's own measurements expose, so the digest is never worse than the raw output it replaces, then implement through dotstack's procedure. The cases are `node --test` failures merged into one cluster or not recognised at all, a `tsc` digest larger than the raw output, and clusters past the first few that are only counted or silently dropped.
 
 ## Reasons
 
-1. **The fixtures behind the hard-coded scenario values live only in `/tmp`, are not in the spec, and the task's fallback points at sources that do not exist.**
-   - **Where.** Five scenarios depend on fixture contents that are defined only by reference to `/tmp/dtd-work/`:
-     - `specs/node-tap-diagnostics/spec.md`: the requirement text (line 13), "The cart run with the default (TAP) reporter yields four distinct clusters", "Each node failure gets a SignalWindow from the right file" and "A recorded TAP log parses to the same records at the adapter seam".
-     - `specs/node-spec-reporter/spec.md`: every cart scenario, and "A recorded spec log parses at the adapter seam".
-     - `specs/bounded-vs-raw-size/spec.md`: "Five tsc errors print the raw diagnostics under the header", "The JSON envelope of the same run is unchanged" and "Level 5 has no footer even when --max-clusters cut clusters".
-   - **What they depend on.** All of these scenarios assert exact values that are fixed by the bytes of `cart.js`, `cart.test.js`, `src/a.ts`, `src/b.ts` and `tsc.log`: the cluster ids (`c_9721831d`, `c_42a23d40`, ...), the `top_frame` columns (`cart.test.js:7:46`, `cart.js:5:42`), the window rows, the 419 bytes, the 589-byte level-4 body, and the raw ranges `15-39` / `18-37`. The spec defines those files only as "copied byte for byte from `/tmp/dtd-work/...`".
-   - **Why that blocks.** `/tmp/dtd-work` is a volatile scratch directory outside the repository.
-     - Task 1.1 says "If `/tmp/dtd-work` is gone, regenerate the project from the sources quoted in the spec". That is false. The spec quotes only `cart.js` lines 3 to 5, `cart.test.js` line 7 and the first line of `tsc.log`. It does not quote `cart.js` lines 1 and 2, the rest of `cart.test.js`, `src/a.ts`, `src/b.ts`, `tsconfig.json`, or `tsc.log` lines 2 to 5.
-     - Task 2.3 has the same dependency on `/tmp/dtd-work/tscproj/`.
-     - Once that directory is gone, nobody can rebuild the GIVEN of these scenarios from the contract, so a test cannot be written to the stated values.
-   - **Related wording error.** The requirement text, both log scenarios, the proposal's Impact and the design's Defaults chosen still call these files "the README measurement project" and "the README run". The proposal and the design's Context correctly say they are smaller scratch projects (6 tests, 5 tsc errors), not the README's (26 tests, 6 errors).
-   - **Fix.**
-     - Quote the exact contents in the spec, as is already done for `suite.test.js` and `same-name.test.js`. That means `cart.js` (355 B), `cart.test.js` (636 B), `package.json`, `tsc-small/src/a.ts`, `src/b.ts`, `tsconfig.json` and all 5 lines of `tsc.log`.
-     - For the two recorded logs, either quote them, or state the command that regenerates them (`node --test [--test-reporter=spec] cart.test.js` in the fixture copy, Node 22.23.4, path replaced by `__ROOT__`). In the second case, say which asserted values must survive regeneration (raw ranges and counts) and which are only descriptive (the byte totals).
-     - Correct task 1.1's fallback sentence and the "README measurement project/run" wording.
+1. **Mechanical gate.** `openspec validate sharpen-weak-digest-cases --strict` exits 0.
+2. **Ticket intent.** Each weak case in the README's "Example" and "Where it works well" sections maps to a capability:
+   - node TAP merged into one cluster: `node-tap-diagnostics`;
+   - spec reporter not recognised: `node-spec-reporter`;
+   - tsc digest larger than raw: `bounded-vs-raw-size`;
+   - only 3 clusters shown: `omitted-cluster-visibility`;
+   - weak node red-phase labels: covered by the node capabilities.
+
+   Task 3.2 re-measures the README. Root-cause grouping and the untested grammars are named non-goals. I found no scope creep.
+3. **Testability.** All 51 scenarios have concrete triggers and exact observable values at the four seams named in design.md (the CLI, `formatEnvelope`, `dedupeFailures`, `runGear0`). None could pass with a stub.
+4. **Round 2 reason (fixtures only in `/tmp`) is resolved.** I rebuilt the fixtures in `/tmp/rv3/fx` from the text quoted in design.md "Fixtures" alone:
+   - **Byte counts.** All 7 quoted files have the stated sizes: 355, 636, 18, 133, 162, 104 and 419 B.
+   - **tsc.** Real `tsc` 5.9.3 on the quoted `src/a.ts`, `src/b.ts` and `tsconfig.json` reproduces `tsc.log` byte for byte, with exit 2.
+   - **node.** `node --test` on Node 22.23.4 of the quoted cart project gives:
+     - TAP `not ok` to `...` ranges of 15-39, 41-65, 67-91 and 93-111;
+     - spec `test at` ranges of 18-37, 39-58, 60-79 and 81-91;
+     - counts of 6, 2 and 4;
+     - the stack columns 7:46, 8:41, 9:50 and cart.js:5:42.
+
+     The total byte counts differ (3,611 and 3,347 B here). The design marks those as descriptive, so that is expected.
+   - **Spec-quoted fixtures.** The spec-quoted node fixtures (`suite`, `same-name`, `string-diff`, `missing-module`, `missing-export`, `passing`) reproduce the asserted shapes:
+     - `failureType` keys, including `subtestsFailed` and `testTimeoutFailure`;
+     - fail 2 + cancelled 1 for the suite test;
+     - `location` lines 4 and 7, with stack columns 4:36 and 7:36;
+     - `expected: 'pen'`;
+     - the deep-equal text;
+     - the two-file subprocess blocks on stdout, with stderr empty, under both reporters, matching the position rule and the path rule.
+5. **Values recomputed.**
+   - **Cluster ids.** `computeFingerprint` from dist gives every asserted id: `c_9721831d`, `c_6edce10a`, `c_fdff652c`, `c_53a8182a`, `c_11eac407`, `c_42febbe1`, `c_20e326b9` and `c_0044f190`.
+   - **tsc JSON on v0.1.2.** It gives `c_42a23d40` with `L1-L1` and `c_39d5c117` with `L2-L2`, and a 1,533 B digest.
+   - **Level-4 bodies.** 589 B with `--max-clusters=2` and 574 B for all 5 clusters, so both runs land on level 5.
+   - **Ladder thresholds.** H = 73, and the levels render 604, 283, 253, 168 and 133 B, which matches the scenario.
+   - **Footer scenarios.** The footer scenario is exactly 630 B. In the 14-omitted scenario, exactly 12 listed lines fit (2,356 B, 589 tokens). In the budget scenario, 3 blocks plus the listing take 557 tokens and 4 blocks take 707.
+   - **v0.1.2 baselines.** The tie order is `L1,L10,L11,L12,L2`. `boom` is printed twice, and empty output gives 1 cluster.
+6. **Coverage.** The sad paths are specified:
+   - empty output and a one-line output;
+   - a cut spec stream and a rows-only stream;
+   - a non-node TAP block;
+   - suite rows, timeouts and same-name collisions;
+   - one or two crashing files under each reporter;
+   - large raw output (CT-2);
+   - a missing raw text;
+   - an over-long listing.
+7. **Consistency.** I found no contradiction between the requirements, the design and SPEC-002. The INV-2 "exactly once" to "at most once" amendment is stated in four places and owned by task 3.3. Defaults chosen records every product call I found.
+8. **Principles.** `spec-is-the-contract` holds. Three repo principles were checked against the work:
+   - `exit-code-transparency`: passthrough scenarios under both reporters, and the tsc and empty-output runs keep exit codes 2 and 3.
+   - `pass-state-ceiling`: one-line PASS and VALID_RED scenarios with a 160 B limit; the size rule excludes PASS and VALID_RED.
+   - `invalid-red-exits-64`: missing-module, already-passing and two-file red runs exit 64 under both reporters.
+9. **Blast radius.** I grepped `formatEnvelope`, `renderFailBody`, `dedupeFailures`, `more clusters`, `localeCompare`, `ℹ` and `✖` across `src`, `tests` and `scripts`:
+   - The only production caller is `src/index.ts`.
+   - The `tests/envelope.spec.ts` cases pass no context, so they render at level 1.
+   - The CT-3 broken-import run measured 399 B of digest against 770 B of raw output, so it stays at level 1 and keeps `SYNTAX_IMPORT_ERROR`.
+   - The `tests/cli.spec.ts` red test asserts only `INVALID_RED` and stderr.
+   - The `dedupeFailures` signature is kept.
+10. **Tasks.** The graph is well formed:
+    - every task has a `blocked-by` line and every referenced id exists;
+    - there are no cycles, and the roots are 1.1 and 2.1;
+    - all 51 scenarios are owned exactly once (checked by diff);
+    - tasks that share a file are serialised within their lane, and 3.1 depends on 2.3 because both write `tests/size-and-omission.spec.ts`.
+11. **Principle proof.** Not applicable: no file under `.dotstack/principles/` and no check is added or edited.
 
 ## Notes
 
-The checklist and the round 1 reasons:
+- **Stale provenance wording.** One clause of the round 2 fix list is still undone. `specs/node-tap-diagnostics/spec.md` (requirement "One failure per failing node test...", last paragraph) still says the fixture is "copied byte for byte from the README measurement project (`/tmp/dtd-work/nodetest/`)". The proposal and design correctly say these projects are smaller than the README's. Tasks 1.1 ("from `raw-default.txt` / `raw-spec.txt`") and 2.3 ("copied from `/tmp/dtd-work/tscproj/`") also still point at `/tmp`.
 
-- **Gate.** `openspec validate sharpen-weak-digest-cases --strict` exits 0.
-- **Round 1 reasons.** All five are genuinely resolved:
-  1. The footer applies at levels 1 to 4 only. A new `--max-clusters=2` tsc scenario pins level 5 with no footer. I recomputed the level-4 body at exactly 589 B, which is more than R = 419.
-  2. Whitespace collapse is now in both message rules and in the design. Under both reporters, the deep-equal text normalises to the expected message.
-  3. Each reporter has a two-crashing-file scenario. I checked the real Node 22.23.4 output: the TAP position rule and the spec path rule each pick the right error line for each file, both error blocks are on stdout, and stderr is empty.
-  4. Colliding leaf names get the `@<line>` suffix. `c_20e326b9` and `c_0044f190` match `computeFingerprint`, and the `location:` / `test at` lines give 4 and 7.
-  5. The INV-2 "exactly once" to "at most once" amendment is stated in the proposal, in a design decision, in Defaults chosen and in task 3.3. The claim "no invariant is relaxed" is gone.
-- **Claims checked by running code** (Node v22.23.4, built v0.1.2 binary, copies of `/tmp/dtd-work`):
-  - **Cluster ids.** `c_42febbe1`, `c_11eac407` and the four cart ids match `computeFingerprint`.
-  - **Byte counts.** `string-diff.test.js` is 131 B and `same-name.test.js` is 256 B. The truncated log is 14 lines and 348 B. `raw-spec.txt` is 91 lines and 3,396 B, and `raw-default.txt` is 3,710 B. The TAP ranges 15-39 through 93-111 and the spec ranges 18-37 through 81-91 hold.
-  - **Ladder.** H = 73, then 604, 283, 253, 168 and 133 B. The thresholds pick the stated levels.
-  - **Budget scenario.** 3 blocks plus the 2 listed lines take 557 tokens and 4 blocks take 707, for any `duration_ms`.
-  - **tsc v0.1.2 JSON.** With `--max-clusters=2` it gives `c_42a23d40`/`L1-L1` and `c_39d5c117`/`L2-L2`. The level-4 body for 5 clusters is 574 B, more than 419, so the run lands on level 5.
-  - **v0.1.2 behaviours quoted in the spec.** TAP with two crashing files gives 3 clusters and misattributes the error. The spec reporter with two files gives `INVALID_RED`, `0 failed`, `UNSTRUCTURED_BUILD_ERROR`. A failure with no output gives 1 cluster. `boom` is printed twice. The raw log for `boom` is exactly `boom\n`.
-  - **Non-node TAP block.** The block without `failureType:` gives `AssertionError: expected 99 to be 100` and `ASSERTION_FAILURE`.
-  - **Classifier and gate.** The classifier checks missing export before the syntax tokens, so the two-file red run is INVALID_RED in `tdd-gate.ts`.
-- **Testability and seams.** All 51 scenarios have concrete triggers and values at the four seams named in design.md: the CLI, `formatEnvelope`, `dedupeFailures` and `runGear0`. Apart from reason 1, none could be passed by a stub.
-- **Coverage and consistency.** Sad paths are covered: empty output, a tiny raw output, a cut stream, non-node TAP, collisions, timeouts and suites. Defaults chosen records every product call I found.
-- **Principles.** `spec-is-the-contract` is respected except for reason 1. `exit-code-transparency`, `pass-state-ceiling` and `invalid-red-exits-64` are covered by passthrough, one-liner and red-phase scenarios under both reporters. The INVALID_RED red-phase runs keep `SYNTAX_IMPORT_ERROR` visible: their R (1,064 to 2,062 B) keeps them at levels 1 to 4. No principle file is added, so the proof check does not apply.
-- **Blast radius.** I grepped `formatEnvelope`, `renderFailBody`, `dedupeFailures`, `maxClusters`, `more clusters`, `pruned_stack` and `top_frame` in `tests/`, `scripts/acceptance/` and `src/`. The existing compact-md assertions survive:
-  - envelope.spec's blocks, the budget test and the INVALID_RED test have no `rawText`, so they render at level 1.
-  - The `tests/cli.spec.ts` unresolved-import test asserts only `INVALID_RED`, which the header keeps at every level.
-  - The CT-2 and CT-3 raw outputs are large.
-  - Hiding the duplicate stack row breaks no assertion.
-- **Tasks.** The graph is well formed: every id exists, there are no cycles, and 1.1 and 2.1 are the roots. All 51 scenarios are owned exactly once. The shared test file `tests/size-and-omission.spec.ts` has the edge 3.1 to 2.3.
-
-Non-blocking:
-- **Request text.** The proposal's quoted request text ends "Draft a spec." The verbatim request ends "Draft a spec and implement using dotstack's procedures." Quote it exactly.
-- **`boom` header.** "A tiny unstructured failure prints the header and the raw line" does not pin the header with a regex, unlike the empty-output scenario. Add `^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log$`.
-- **Path-dependent byte counts.** The design table's "digest 1,538 B" depends on the log path. `dig-tsc.txt` is 1,540 B. Task 3.2 re-measures anyway.
-- **Adapter-seam test files.** At the adapter seam, the TAP log yields the test file `tests/fixtures/node-cart/cart.test.js` and the spec log yields `cart.test.js`. Both follow the rule as written. Parity is only claimed for CLI runs, but a sentence saying so would help.
+  This is non-blocking: design.md declares the quoted bytes authoritative, and I confirmed the `/tmp` files are byte-identical to the quoted text, so no test outcome depends on which source is used. Still, the next spec edit should replace that sentence with "with the exact contents quoted in `design.md` 'Fixtures'". The two task lines should say to regenerate with the commands in design.md.
+- **Truncated-log GIVEN.** It quotes "348 bytes" and specific row durations. Both depend on the recorded log, not on the contract, so a regenerated log will differ (I got 352 B). Tests should assert the 14 lines and the row names, not the byte count.
+- **Level 5 in compact-md for tiny INVALID_RED runs.** A very small INVALID_RED raw output could reach level 5, which shows the header and the raw text but not the `SYNTAX_IMPORT_ERROR` label. INV-5 requires only the status, the exit code and the stderr diagnosis, which stay. No scenario covers this. It could go in SPEC-002 0.1.3 as a known trade-off.
+- **Design formatting.** design.md line 122 has stray backticks around the `tsc.log` heading. This is cosmetic, but it makes the heading harder to extract mechanically.
