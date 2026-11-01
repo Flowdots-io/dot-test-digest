@@ -390,3 +390,29 @@ describe("scope isolation (CT-5)", () => {
     expect(loadState("broken", base)).toBeNull();
   });
 });
+
+describe("dedupeFailures source-order tie-break", () => {
+  const options = { repoRoot: REPO, contextLines: 2, maxClusters: 5, logPath: "/tmp/run.log" };
+
+  function distinct(n: number, startLine: number, endLine: number): RawFailure {
+    return failure({
+      testName: `t${n}`,
+      message: `Error: distinct failure ${"abcdefgh"[n]}`,
+      startLine,
+      endLine,
+    });
+  }
+
+  it("Single-digit lines sort before double-digit lines", () => {
+    const clusters = dedupeFailures(
+      [distinct(0, 13, 20), distinct(1, 5, 9), distinct(2, 11, 12)],
+      options,
+    );
+    expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L5-L9", "L11-L12", "L13-L20"]);
+  });
+
+  it("Equal first lines fall back to the last line", () => {
+    const clusters = dedupeFailures([distinct(0, 7, 30), distinct(1, 7, 9)], options);
+    expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L7-L9", "L7-L30"]);
+  });
+});
