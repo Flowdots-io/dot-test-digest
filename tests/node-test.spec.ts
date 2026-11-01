@@ -575,6 +575,15 @@ describe("node --test, spec red-phase guards (missing module)", () => {
   });
 });
 
+describe("node --test, spec red-phase guards (missing export)", () => {
+  it("A missing export is VALID_RED with exit 0 under the spec reporter", async () => {
+    const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [SPEC, "missing-export.test.js"]);
+
+    expect(run.code).toBe(0);
+    expect(run.stdout.startsWith("[VALID_RED | RED]")).toBe(true);
+  });
+});
+
 describe("node --test, spec reporter passing run", () => {
   it("A passing spec run is one line with the real count", async () => {
     const run = await runNodeCart(["--no-jev"], [SPEC, "passing.test.js"]);
