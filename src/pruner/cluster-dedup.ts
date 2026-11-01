@@ -19,6 +19,8 @@ export interface DedupeOptions {
   repoRoot: string;
   contextLines: number;
   maxClusters: number;
+  /** How many of the ranked clusters get a SignalWindow read from disk; defaults to maxClusters. */
+  windowLimit?: number;
   logPath: string;
 }
 
@@ -66,7 +68,7 @@ export function dedupeFailures(
     else groups.set(fingerprint, [failure]);
   }
 
-  const clusters: FailureCluster[] = [];
+  const entries: { cluster: FailureCluster; top: ReturnType<typeof topRepoFrame> }[] = [];
 
   for (const [fingerprint, bucket] of groups) {
     const first = bucket[0];
@@ -78,7 +80,7 @@ export function dedupeFailures(
     const startLine = Math.min(...bucket.map((item) => item.startLine));
     const endLine = Math.max(...bucket.map((item) => item.endLine));
 
-    clusters.push({
+    const cluster: FailureCluster = {
       cluster_id: `c_${fingerprint.slice(0, 8)}`,
       fingerprint,
       error_kind: first.errorKind,
@@ -88,14 +90,24 @@ export function dedupeFailures(
       message: first.message,
       top_frame: top?.location ?? "unknown:0:0",
       pruned_stack: pruneStack(first.frames, options.repoRoot),
-      signal_window: top
-        ? readSignalWindow(top.file, top.line, options.contextLines, options.repoRoot)
-        : "",
+      signal_window: "",
       raw_log_lines: `L${startLine}-L${endLine}`,
-    });
+    };
+    entries.push({ cluster, top });
   }
 
-  return clusters.sort(compareClusters).slice(0, options.maxClusters);
+  const ranked = entries
+    .sort((a, b) => compareClusters(a.cluster, b.cluster))
+    .slice(0, options.maxClusters);
+  const windowLimit = options.windowLimit ?? options.maxClusters;
+  return ranked.map(({ cluster, top }, index) =>
+    top && index < windowLimit
+      ? {
+          ...cluster,
+          signal_window: readSignalWindow(top.file, top.line, options.contextLines, options.repoRoot),
+        }
+      : cluster,
+  );
 }
 
 function lineRange(rawLogLines: string): [number, number] {
