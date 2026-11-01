@@ -452,6 +452,15 @@ function disambiguateSameNames(
   }
 }
 
+/** Joins message lines with one space, collapses whitespace and drops a `[CODE]` tag after the error name. */
+function cleanNodeMessage(parts: readonly string[]): string {
+  return parts
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/^([A-Za-z_$][\w.$]*) \[[A-Z][A-Z0-9_]*\]:/, "$1:")
+    .trim();
+}
+
 function nodeFailure(
   name: string,
   block: NodeBlock,
@@ -460,12 +469,7 @@ function nodeFailure(
 ): RawFailure {
   const field = (key: string): string[] => block.fields.get(key) ?? [];
   const errorName = field("name").join(" ").trim();
-  let message = field("error")
-    .filter((line) => line !== "")
-    .join(" ")
-    .replace(/\s+/g, " ")
-    .replace(/^([A-Za-z_$][\w.$]*) \[[A-Z][A-Z0-9_]*\]:/, "$1:")
-    .trim();
+  let message = cleanNodeMessage(field("error").filter((line) => line !== ""));
   if (errorName !== "" && !message.startsWith(errorName)) message = `${errorName}: ${message}`;
 
   const location = field("location")[0];
@@ -670,6 +674,16 @@ function specCounts(lines: readonly CapturedLine[]): AdapterCounts {
   return counts;
 }
 
+/** A value that is one quoted string literal loses its quotes; anything else is unchanged. */
+function unquoteLiteral(value: string): string {
+  const quote = value[0];
+  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
+    const inner = value.slice(1, -1);
+    if (!inner.includes(quote)) return inner;
+  }
+  return value;
+}
+
 /** One `test at ...` entry of the `✖ failing tests:` section. */
 function specEntry(
   lines: readonly CapturedLine[],
@@ -680,28 +694,43 @@ function specEntry(
   const nameRow = SPEC_NAME_ROW.exec(lines[start + 1]?.text ?? "");
   if (at === null || nameRow === null) return null;
 
-  const message: string[] = [];
+  const messageLines: string[] = [];
   const frames: string[] = [];
+  const properties = new Map<string, string>();
   let inFrames = false;
+  let propertyIndent: number | null = null;
   let last = start + 1;
   for (let index = start + 2; index < end; index += 1) {
-    const text = (lines[index]?.text ?? "").trim();
+    const raw = lines[index]?.text ?? "";
+    const text = raw.trim();
     if (text === "") continue;
     last = index;
     if (/^at /.test(text)) inFrames = true;
-    if (inFrames) {
-      if (/^at /.test(text)) frames.push(text.slice(3).replace(/ \{$/, ""));
-    } else {
-      message.push(text);
+    if (!inFrames) {
+      messageLines.push(text);
+    } else if (/^at /.test(text)) {
+      frames.push(nodePath(text.slice(3).replace(/ \{$/, "")));
+    } else if (text !== "}") {
+      propertyIndent ??= leadingSpaces(raw);
+      const property = /^(\w+): (.*?),?$/.exec(text);
+      if (property !== null && leadingSpaces(raw) === propertyIndent) {
+        properties.set(property[1] ?? "", property[2] ?? "");
+      }
     }
   }
 
+  const message = unquoteLiteral(cleanNodeMessage(messageLines));
+  const expected = properties.get("expected");
+  const actual = properties.get("actual");
   const failure: RawFailure = {
     testName: nameRow[1] ?? "",
     testFile: relativeToCwd(path.resolve(at[1] ?? "")),
-    errorKind: classifyMessage(`${message.join(" ")}\n${frames.join("\n")}`),
-    message: message.join(" ") === "" ? "Unknown test failure" : message.join(" "),
+    errorKind: classifyMessage(`${message}\n${frames.join("\n")}`),
+    message: message === "" ? "Unknown test failure" : message,
     frames,
+    ...(expected !== undefined && actual !== undefined
+      ? { diff: { expected: unquoteLiteral(expected), received: unquoteLiteral(actual) } }
+      : {}),
     startLine: lines[start]?.line ?? 0,
     endLine: lines[last]?.line ?? 0,
   };
