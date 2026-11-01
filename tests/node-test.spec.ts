@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { runNodeCart } from "./helpers/node-cart.js";
 
@@ -18,6 +20,11 @@ interface Envelope {
   execution_gear: string;
   summary: { passed: number; failed: number; skipped: number; total_clusters: number };
   clusters: Cluster[];
+}
+
+function baselineOf(home: string, scope: string): string[] {
+  const raw = fs.readFileSync(path.join(home, `state-${scope}.json`), "utf8");
+  return (JSON.parse(raw) as { baseline: string[] }).baseline;
 }
 
 describe("node --test, TAP diagnostic blocks", () => {
@@ -123,5 +130,37 @@ describe("node --test, TAP diagnostic blocks", () => {
     for (const line of run.stdout.split("\n")) {
       expect(line.endsWith("received ")).toBe(false);
     }
+  });
+});
+
+describe("node --test, TAP counts, suites and timeouts", () => {
+  it("Nested suite with a deep-equal failure and a timeout", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json"], ["suite.test.js"]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.summary.passed).toBe(1);
+    expect(envelope.summary.failed).toBe(3);
+    expect(envelope.summary.skipped).toBe(0);
+    expect(envelope.clusters.flatMap((c) => c.sample_tests).sort()).toEqual([
+      "discount 10% leaves 90%",
+      "names match",
+      "slow",
+    ]);
+    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(3);
+
+    const names = envelope.clusters.find((c) => c.sample_tests.includes("names match"));
+    expect(names?.error_kind).toBe("ASSERTION_FAILURE");
+    expect(names?.top_frame).toBe("suite.test.js:7:34");
+    expect(names?.message).toBe(
+      "AssertionError: Expected values to be strictly deep-equal: + actual - expected { + a: 1 - a: 2 }",
+    );
+    expect(names?.diff).toEqual({ expected: "a: 2", received: "a: 1" });
+
+    const slow = envelope.clusters.find((c) => c.sample_tests.includes("slow"));
+    expect(slow?.error_kind).toBe("TIMEOUT_OR_CONN_REFUSED");
+    expect(slow?.message).toBe("test timed out after 20ms");
+    expect(slow?.top_frame).toBe("unknown:0:0");
+    expect(slow?.signal_window).toBe("");
   });
 });
