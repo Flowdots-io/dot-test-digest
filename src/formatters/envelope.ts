@@ -126,10 +126,10 @@ export function renderFailBody(envelope: DigestEnvelope, omitted: readonly Failu
       ` in ${envelope.duration_ms}ms | ${kept} cluster${kept === 1 ? "" : "s"}` +
       ` | log: ${shortenPath(envelope.raw_log_path)}`;
     const blocks = clusters.slice(0, kept).map(renderCluster).join("\n");
-    const omissionCount = clusters.length - kept + omitted.length;
+    const allOmitted = [...clusters.slice(kept), ...omitted];
     const footer =
-      omissionCount > 0
-        ? `\n+${omissionCount} more clusters (see log)${omitted.map((c) => `\n${renderOmittedLine(c)}`).join("")}`
+      allOmitted.length > 0
+        ? `\n+${allOmitted.length} more clusters (see log)${allOmitted.map((c) => `\n${renderOmittedLine(c)}`).join("")}`
         : "";
     return `${header}\n${blocks}${footer}`;
   };
