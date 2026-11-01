@@ -64,7 +64,15 @@ describe("source-order ranking through the CLI", () => {
 
 describe("omitted clusters through the CLI", () => {
   it("lists the clusters beyond --max-clusters and keeps JSON capped", async () => {
-    const code = await main(["--no-jev", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
+    // Build noise before the diagnostics makes the raw output larger than any clustered
+    // rendering, so the run stays on levels 1 to 4 (level 5 has no footer by design).
+    const noisy = [
+      process.execPath,
+      "-e",
+      `for (let i = 0; i < 60; i++) console.log('step ' + i + ' ' + 'x'.repeat(60));` +
+        `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(TSC_12)},'utf8')); process.exit(2)`,
+    ];
+    const code = await main(["--no-jev", "--max-clusters=5", "--", ...noisy]);
     expect(code).toBe(2);
     const lines = stdout.split("\n");
     expect(lines[0]).toMatch(/\| 5 clusters \|/);
@@ -77,7 +85,7 @@ describe("omitted clusters through the CLI", () => {
     }
 
     stdout = "";
-    await main(["--no-jev", "--format=json", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
+    await main(["--no-jev", "--format=json", "--max-clusters=5", "--", ...noisy]);
     const envelope = JSON.parse(stdout) as { summary: { total_clusters: number }; clusters: unknown[] };
     expect(envelope.summary.total_clusters).toBe(5);
     expect(envelope.clusters).toHaveLength(5);

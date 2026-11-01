@@ -35,6 +35,8 @@ interface Attempt {
   durationMs: number;
   retryWanted: boolean;
   logPath: string;
+  /** Every captured line after normalisation, one `\n` each: the `R` of the size rule. */
+  rawText: string;
 }
 
 export interface MainDeps {
@@ -130,6 +132,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       durationMs: capture.durationMs,
       retryWanted,
       logPath: rawLog.path,
+      rawText: lines.map((line) => `${line.text}\n`).join(""),
     };
   };
 
@@ -196,7 +199,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       rawLogPath: run.logPath,
     });
 
-    process.stdout.write(formatEnvelope(envelope, options.format, { omitted: run.omitted }));
+    process.stdout.write(formatEnvelope(envelope, options.format, { omitted: run.omitted, rawText: run.rawText }));
     if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
     rawLog.close();
     return decision.exitCode;
