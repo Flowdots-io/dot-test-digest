@@ -309,3 +309,15 @@ describe("node --test, TAP red-phase guards (missing export)", () => {
     expect(run.stdout.startsWith("[VALID_RED | RED]")).toBe(true);
   });
 });
+
+describe("node --test, TAP red-phase guards (already passing)", () => {
+  it("A test that already passes is INVALID_RED with exit 64", async () => {
+    const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], ["passing.test.js"]);
+
+    expect(run.code).toBe(64);
+    expect(run.stdout).toContain("INVALID_RED");
+    expect(run.stderr).toContain(
+      "New test passed before implementation; expected a failing behavioral assertion.",
+    );
+  });
+});
