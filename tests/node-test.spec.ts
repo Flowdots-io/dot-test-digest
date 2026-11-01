@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { runNodeCart } from "./helpers/node-cart.js";
+import { runInCart, runNodeCart } from "./helpers/node-cart.js";
 
 interface Cluster {
   cluster_id: string;
@@ -475,6 +475,34 @@ describe("node --test, same-named failures under the spec reporter", () => {
       "same-name.test.js::handles empty @4",
       "same-name.test.js::handles empty @7",
     ]);
+  });
+});
+
+describe("node --test, spec run cut before the failing-tests section", () => {
+  it("A spec run cut before the failing-tests section still yields its failures", async () => {
+    const log = path.join(process.cwd(), "tests", "fixtures", "logs", "node-spec-truncated.log");
+    expect(fs.readFileSync(log, "utf8").trimEnd().split("\n")).toHaveLength(14);
+    const script = `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(log)},'utf8')); process.exit(1)`;
+    const run = await runInCart(["--no-jev", "--format=json"], [process.execPath, "-e", script]);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.status).toBe("FAIL");
+    expect(envelope.execution_gear).toBe("GEAR_0_GRAMMAR");
+    expect(envelope.summary).toEqual({ passed: 2, failed: 4, skipped: 0, total_clusters: 1 });
+    expect(envelope.clusters).toHaveLength(1);
+    const cluster = envelope.clusters[0] as Cluster & { raw_log_lines: string };
+    expect(cluster.cluster_id).toBe("c_11eac407");
+    expect(cluster.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(cluster.affected_count).toBe(4);
+    expect(cluster.top_frame).toBe("unknown:0:0");
+    expect(cluster.message).toBe("Unknown test failure");
+    expect(cluster.sample_tests).toEqual([
+      "discount 10% leaves 90%",
+      "total with 10% off",
+      "total with 100% off is free",
+    ]);
+    expect(cluster.raw_log_lines).toBe("L3-L6");
   });
 });
 

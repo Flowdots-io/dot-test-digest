@@ -27,6 +27,14 @@ export async function runNodeCart(
   flags: readonly string[],
   args: readonly string[],
 ): Promise<CartRun> {
+  return runInCart(flags, [process.execPath, "--test", ...args]);
+}
+
+/** Like `runNodeCart` but wraps an arbitrary child command, e.g. one that replays a recorded log. */
+export async function runInCart(
+  flags: readonly string[],
+  command: readonly string[],
+): Promise<CartRun> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-node-cart-"));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-node-cart-home-"));
   fs.cpSync(FIXTURE, dir, { recursive: true });
@@ -47,7 +55,7 @@ export async function runNodeCart(
   process.chdir(dir);
   process.env["DOT_TEST_DIGEST_HOME"] = home;
   try {
-    const code = await main([...flags, "--", process.execPath, "--test", ...args]);
+    const code = await main([...flags, "--", ...command]);
     return { stdout, stderr, code, dir: fs.realpathSync(dir), home };
   } finally {
     outSpy.mockRestore();
