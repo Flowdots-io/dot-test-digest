@@ -305,3 +305,29 @@ describe("node TAP diagnostic blocks", () => {
     expect(result?.failures[0]?.message).toBe("AssertionError: expected 99 to be 100");
   });
 });
+
+describe("node spec reporter at the adapter seam", () => {
+  it("A recorded spec log parses at the adapter seam", () => {
+    const root = path.join(process.cwd(), "tests", "fixtures", "node-cart");
+    const log = fs
+      .readFileSync(path.join(process.cwd(), "tests", "fixtures", "logs", "node-spec-cart.log"), "utf8")
+      .replaceAll("__ROOT__", root);
+    const result = runGear0(lines(log.replace(/\n$/, "")));
+
+    expect(result?.adapter).toBe("js-test");
+    expect(result?.counts).toEqual({ passed: 2, failed: 4, skipped: 0 });
+    expect(result?.failures.map((f) => f.testName)).toEqual([
+      "discount 10% leaves 90%",
+      "total with 10% off",
+      "total with 100% off is free",
+      "first of an empty cart is undefined",
+    ]);
+    expect(result?.failures.map((f) => f.testFile)).toEqual(Array(4).fill("cart.test.js"));
+    expect(result?.failures.map((f) => [f.startLine, f.endLine])).toEqual([
+      [18, 37],
+      [39, 58],
+      [60, 79],
+      [81, 91],
+    ]);
+  });
+});
