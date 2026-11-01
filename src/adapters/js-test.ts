@@ -817,7 +817,7 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], failures: RawFai
       (fileLevel.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
     if (error === undefined) continue;
     failure.message = error;
-    failure.errorKind = "SYNTAX_IMPORT_ERROR";
+    failure.errorKind = classifyMessage(error);
   }
 }
 
