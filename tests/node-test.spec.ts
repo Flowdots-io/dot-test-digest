@@ -243,3 +243,30 @@ describe("node --test, file-level TAP failures (missing export)", () => {
     );
   });
 });
+
+describe("node --test, two crashing files under TAP", () => {
+  it("Two crashing files under TAP each carry their own subprocess error", async () => {
+    const files = ["missing-module.test.js", "missing-export.test.js"];
+    const run = await runNodeCart(["--no-jev", "--format=json"], files);
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.summary).toEqual({ passed: 0, failed: 2, skipped: 0, total_clusters: 2 });
+    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
+    const moduleCluster = envelope.clusters.find((c) => c.sample_tests[0] === "missing-module.test.js");
+    const exportCluster = envelope.clusters.find((c) => c.sample_tests[0] === "missing-export.test.js");
+    expect(moduleCluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(moduleCluster?.message.startsWith("Error: Cannot find module '")).toBe(true);
+    expect(moduleCluster?.message).toContain("missing.js' imported from ");
+    expect(moduleCluster?.message.endsWith("/missing-module.test.js")).toBe(true);
+    expect(exportCluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(exportCluster?.message).toBe(
+      "SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'",
+    );
+
+    const red = await runNodeCart(["--no-jev", "--tdd-phase=red"], files);
+    expect(red.code).toBe(64);
+    expect(red.stdout).toContain("INVALID_RED");
+    expect(red.stdout).toContain("SYNTAX_IMPORT_ERROR");
+  });
+});
