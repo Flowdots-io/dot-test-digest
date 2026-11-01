@@ -361,3 +361,23 @@ describe("node --test, spec reporter passing run", () => {
     expect(run.stdout.startsWith("[PASS] 1 passed, 0 failed in ")).toBe(true);
   });
 });
+
+describe("node --test, spec red-phase guards (assertion failures)", () => {
+  it("Assertion failures are VALID_RED with the real counts", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--tdd-phase=red", "--scope-id=spec-red"],
+      [SPEC, "cart.test.js"],
+    );
+
+    expect(run.code).toBe(0);
+    expect(run.stdout.trimEnd().split("\n")).toHaveLength(1);
+    expect(Buffer.byteLength(run.stdout.trimEnd())).toBeLessThanOrEqual(160);
+    expect(run.stdout.startsWith("[VALID_RED | RED] 2 passed, 4 failed in ")).toBe(true);
+    expect(baselineOf(run.home, "spec-red").sort()).toEqual([
+      "cart.test.js::discount 10% leaves 90%",
+      "cart.test.js::first of an empty cart is undefined",
+      "cart.test.js::total with 10% off",
+      "cart.test.js::total with 100% off is free",
+    ]);
+  });
+});
