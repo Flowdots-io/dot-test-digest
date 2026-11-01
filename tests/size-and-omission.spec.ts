@@ -314,6 +314,21 @@ describe("the size rule through the CLI", () => {
     expect(Buffer.byteLength(stdout, "utf8")).toBe(419 + newline + 1);
   });
 
+  it("The JSON envelope of the same run is unchanged", async () => {
+    useTscSmall();
+    const code = await main(["--no-jev", "--format=json", "--", ...REPLAY_TSC_LOG]);
+    expect(code).toBe(2);
+    const envelope = JSON.parse(stdout) as {
+      summary: { total_clusters: number };
+      clusters: { signal_window: string; top_frame: string; pruned_stack: string[] }[];
+    };
+    expect(envelope.summary.total_clusters).toBe(5);
+    expect(envelope.clusters).toHaveLength(5);
+    for (const cluster of envelope.clusters) expect(cluster.signal_window).not.toBe("");
+    expect(envelope.clusters[0]?.top_frame).toBe("src/a.ts:2:14");
+    expect(envelope.clusters[0]?.pruned_stack).toEqual(["src/a.ts:2:14"]);
+  });
+
   it("Level 5 has no footer even when --max-clusters cut clusters", async () => {
     const tscLog = useTscSmall();
     const code = await main(["--no-jev", "--max-clusters=2", "--", ...REPLAY_TSC_LOG]);
