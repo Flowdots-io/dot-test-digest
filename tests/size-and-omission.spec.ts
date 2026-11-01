@@ -2,7 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildEnvelope, estimateTokens, formatEnvelope } from "../src/formatters/envelope.js";
 import { main } from "../src/index.js";
+import type { FailureCluster } from "../src/types/schema.js";
 
 const TSC_12 = path.resolve(import.meta.dirname, "fixtures", "logs", "tsc-12.log");
 
@@ -57,5 +59,86 @@ describe("source-order ranking through the CLI", () => {
       "L5-L5",
     ]);
     expect(stderr).toBe("");
+  });
+});
+
+function omissionCluster(overrides: Partial<FailureCluster> & Pick<FailureCluster, "cluster_id">): FailureCluster {
+  return {
+    fingerprint: "f".repeat(64),
+    error_kind: "ASSERTION_FAILURE",
+    affected_count: 1,
+    sample_tests: [],
+    message: "",
+    top_frame: "unknown:0:0",
+    pruned_stack: [],
+    signal_window: "",
+    raw_log_lines: "L1-L1",
+    ...overrides,
+  };
+}
+
+function failEnvelope(failed: number, logPath: string, clusters: FailureCluster[], durationMs = 10) {
+  return buildEnvelope({
+    status: "FAIL",
+    phase: "none",
+    exitCode: 1,
+    signal: null,
+    gear: "GEAR_0_GRAMMAR",
+    durationMs,
+    counts: { passed: 0, failed, skipped: 0 },
+    clusters,
+    rawLogPath: logPath,
+  });
+}
+
+describe("omitted-cluster footer", () => {
+  it("Clusters beyond --max-clusters are listed instead of silently dropped", () => {
+    const envelope = failEnvelope(4, "/tmp/logs/run_b.log", [
+      omissionCluster({
+        cluster_id: "c_aaaaaaa1",
+        top_frame: "tests/cart.test.ts:7:66",
+        message: "AssertionError: expected 100 to be 900",
+        sample_tests: ["cart > discount 10% leaves 90%"],
+        raw_log_lines: "L5-L27",
+      }),
+      omissionCluster({
+        cluster_id: "c_bbbbbbb2",
+        error_kind: "RUNTIME_EXCEPTION",
+        top_frame: "src/cart.ts:10:50",
+        message: "TypeError: Cannot read properties of undefined (reading 'name')",
+        sample_tests: ["cart > first of an empty cart is undefined"],
+        raw_log_lines: "L28-L40",
+      }),
+    ]);
+    const omitted = [
+      omissionCluster({
+        cluster_id: "c_ccccccc3",
+        top_frame: "tests/cart.test.ts:9:58",
+        sample_tests: ["cart > total without discount"],
+      }),
+      omissionCluster({
+        cluster_id: "c_ddddddd4",
+        error_kind: "TYPE_COMPILE_ERROR",
+        top_frame: "src/a.ts:2:14",
+        message: "TS2322: Type 'number' is not assignable to type 'string'.",
+      }),
+    ];
+    const expected = [
+      "[FAIL] 4 failed, 0 passed in 10ms | 2 clusters | log: /tmp/logs/run_b.log",
+      "c_aaaaaaa1 ASSERTION_FAILURE x1 tests/cart.test.ts:7:66",
+      "  AssertionError: expected 100 to be 900",
+      "  tests: cart > discount 10% leaves 90%",
+      "  raw: L5-L27",
+      "c_bbbbbbb2 RUNTIME_EXCEPTION x1 src/cart.ts:10:50",
+      "  TypeError: Cannot read properties of undefined (reading 'name')",
+      "  tests: cart > first of an empty cart is undefined",
+      "  raw: L28-L40",
+      "+2 more clusters (see log)",
+      "  c_ccccccc3 ASSERTION_FAILURE x1 tests/cart.test.ts:9:58 cart > total without discount",
+      "  c_ddddddd4 TYPE_COMPILE_ERROR x1 src/a.ts:2:14 TS2322: Type 'number' is not assignable to type 'string'.",
+    ].join("\n");
+    const out = formatEnvelope(envelope, "compact-md", { omitted });
+    expect(out).toBe(`${expected}\n`);
+    expect(Buffer.byteLength(out, "utf8")).toBe(630);
   });
 });
