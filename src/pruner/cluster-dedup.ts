@@ -95,9 +95,7 @@ export function dedupeFailures(
     });
   }
 
-  return clusters
-    .sort((a, b) => b.affected_count - a.affected_count || a.raw_log_lines.localeCompare(b.raw_log_lines))
-    .slice(0, options.maxClusters);
+  return clusters.sort(compareClusters).slice(0, options.maxClusters);
 }
 
 function lineRange(rawLogLines: string): [number, number] {
