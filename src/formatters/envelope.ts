@@ -154,7 +154,7 @@ export function renderFailBody(
     const header = text.slice(0, text.indexOf("\n"));
     if (byteLength(text) + 1 <= byteLength(rawText) + byteLength(header) + 1) return text;
   }
-  const raw = `${headerLine(envelope, (envelope.clusters ?? []).length).replace(/\.log$/, ".log.gone")}\n${rawText ?? ""}`;
+  const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText ?? ""}`;
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
