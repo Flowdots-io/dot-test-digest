@@ -147,7 +147,6 @@ export function renderFailBody(
   omitted: readonly FailureCluster[] = [],
   rawText?: string,
 ): string {
-  rawText ??= "";
   const levels = rawText === undefined ? LEVELS.slice(0, 1) : LEVELS;
   for (const level of levels) {
     const text = renderLevel(envelope, omitted, level);
