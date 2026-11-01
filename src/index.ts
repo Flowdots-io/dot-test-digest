@@ -97,8 +97,8 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
             windowLimit: options.maxClusters,
             logPath: rawLog.path,
           });
-    let clusters = ranked.slice(0, 2);
-    let omitted = ranked.slice(99);
+    let clusters = ranked.slice(0, options.maxClusters);
+    let omitted = ranked.slice(options.maxClusters);
     let gear: ExecutionGear = gear0 === null ? "GEAR_0_HEURISTIC_FALLBACK" : "GEAR_0_GRAMMAR";
     let retryWanted = false;
 
