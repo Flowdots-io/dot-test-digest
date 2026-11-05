@@ -804,7 +804,11 @@ function firstErrorLine(block: readonly string[]): string | undefined {
  */
 function adoptSubprocessErrors(before: readonly CapturedLine[], failures: RawFailure[]): void {
   const fileLevel = failures.filter(
-    (failure) => failure.message === "test failed" && failure.testName === failure.testFile,
+    (failure) =>
+      failure.message === "test failed" &&
+      failure.testName !== null &&
+      failure.testFile !== null &&
+      path.resolve(failure.testName) === path.resolve(failure.testFile),
   );
   if (fileLevel.length === 0) return;
   const blocks = textBlocks(before);
