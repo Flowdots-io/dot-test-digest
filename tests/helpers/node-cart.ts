@@ -67,6 +67,8 @@ export type CartArgs = readonly string[] | ((dir: string) => readonly string[]);
 export interface CartOptions {
   /** Run from this subdirectory of the cart copy (created if missing). */
   subdir?: string;
+  /** Extra files written into the cart copy before the run: relative path to literal contents. */
+  files?: Readonly<Record<string, string>>;
 }
 
 export interface CartRun {
@@ -107,6 +109,10 @@ export async function runInCart(
   const dir = tempDir("dtd-node-cart-");
   const home = tempDir("dtd-node-cart-home-");
   fs.cpSync(FIXTURE, dir, { recursive: true });
+  for (const [relative, contents] of Object.entries(options.files ?? {})) {
+    fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
+    fs.writeFileSync(path.join(dir, relative), contents);
+  }
 
   const realDir = fs.realpathSync(dir);
   const cwd = options.subdir === undefined ? dir : path.join(dir, options.subdir);
