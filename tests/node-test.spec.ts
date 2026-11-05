@@ -375,6 +375,26 @@ describe("node --test, spec reporter parity with TAP", () => {
   });
 });
 
+describe("node --test, test names containing a hash", () => {
+  it("The spec reporter yields the same clusters as the TAP reporter (names containing #)", async () => {
+    const view = async (reporter: string): Promise<Envelope> =>
+      JSON.parse(
+        (
+          await runNodeCart(
+            ["--no-jev", "--format=json"],
+            [`--test-reporter=${reporter}`, "hash-name.test.js"],
+          )
+        ).stdout,
+      ) as Envelope;
+    const spec = await view("spec");
+    const tap = await view("tap");
+
+    expect(spec.clusters.map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
+    expect(tap.clusters.map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
+    expect(tap.clusters.map((c) => c.cluster_id)).toEqual(spec.clusters.map((c) => c.cluster_id));
+  });
+});
+
 describe("node --test, string values in diffs", () => {
   it("String values in diffs are unquoted under both reporters", async () => {
     for (const reporter of ["tap", "spec"]) {
