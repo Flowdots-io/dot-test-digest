@@ -285,7 +285,8 @@ To keep the codebase modular and self-contained, the implementation SHALL follow
 | `src/pruner/stack-pruner.ts` | Strips `node_modules`, `/nix/store`, `.venv`, and stdlib frames (`INV-4`) and reads ±2-line `SignalWindow` snippets from disk. |
 | `src/pruner/cluster-dedup.ts` | Computes `RootCauseFingerprint` hashes, collapses cascading failures into `FailureCluster` records, ranks them (§4.1.1), and reads `SignalWindow`s for the clusters that reach the envelope (`INV-2`). |
 | `src/pruner/failure-identity.ts` | Canonical test identity (normalisation, `file::name` keys, deduplication) shared by the adapters, the pruner and the TDD gate (§4.2.2, §4.3). |
-| `src/adapters/js-test.ts` | The JavaScript / TypeScript grammar: vitest/jest compact and summary forms, TAP, Playwright, and `node --test` under the TAP and spec reporters (§4.2.1, §4.2.3). |
+| `src/adapters/js-test.ts` | The JavaScript / TypeScript grammar: vitest/jest compact and summary forms, TAP, Playwright; it also selects the `node --test` grammar (§4.2.1). |
+| `src/adapters/node-test.ts` | The `node --test` grammar under the TAP and spec reporters: failure entries, counts, file-level subprocess errors, same-name labels (§4.2.3). |
 | `src/adapters/index.ts` | Gear 0 deterministic grammar parsers for `vitest`/`jest`, `tsc`/`eslint`, `pytest`/`ruff`, and `cargo`/`go test`. |
 | `src/gears/gear1-jev.ts` | Unstructured log window chunker (`<= 255` options, budgeted request `INV-6`), multi-question assembly, and transient flake retry trigger. |
 | `src/state/tdd-gate.ts` | Manages `${DOT_TEST_DIGEST_HOME:-~/.cache/dot-test-digest}/state-<scope_id>.json`, enforces `INV-5` (`VALID_RED` vs `INVALID_RED`), and computes `RedGreenDelta`. |
