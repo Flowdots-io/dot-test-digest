@@ -6,6 +6,14 @@ import { main } from "../../src/index.js";
 
 const FIXTURE = path.join(process.cwd(), "tests", "fixtures", "node-cart");
 
+/** Child arguments, or a function of the cart copy's absolute directory (for absolute paths). */
+export type CartArgs = readonly string[] | ((dir: string) => readonly string[]);
+
+export interface CartOptions {
+  /** Run from this subdirectory of the cart copy (created if missing). */
+  subdir?: string;
+}
+
 export interface CartRun {
   stdout: string;
   stderr: string;
@@ -25,15 +33,21 @@ export interface CartRun {
  */
 export async function runNodeCart(
   flags: readonly string[],
-  args: readonly string[],
+  args: CartArgs,
+  options: CartOptions = {},
 ): Promise<CartRun> {
-  return runInCart(flags, [process.execPath, "--test", ...args]);
+  return runInCart(
+    flags,
+    (dir) => [process.execPath, "--test", ...(typeof args === "function" ? args(dir) : args)],
+    options,
+  );
 }
 
 /** Like `runNodeCart` but wraps an arbitrary child command, e.g. one that replays a recorded log. */
 export async function runInCart(
   flags: readonly string[],
-  command: readonly string[],
+  command: CartArgs,
+  options: CartOptions = {},
 ): Promise<CartRun> {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-node-cart-"));
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-node-cart-home-"));
@@ -52,11 +66,15 @@ export async function runInCart(
     return true;
   });
 
-  process.chdir(dir);
+  const realDir = fs.realpathSync(dir);
+  const cwd = options.subdir === undefined ? dir : path.join(dir, options.subdir);
+  fs.mkdirSync(cwd, { recursive: true });
+  process.chdir(cwd);
   process.env["DOT_TEST_DIGEST_HOME"] = home;
   try {
-    const code = await main([...flags, "--", ...command]);
-    return { stdout, stderr, code, dir: fs.realpathSync(dir), home };
+    const argv = typeof command === "function" ? command(realDir) : command;
+    const code = await main([...flags, "--", ...argv]);
+    return { stdout, stderr, code, dir: realDir, home };
   } finally {
     outSpy.mockRestore();
     errSpy.mockRestore();

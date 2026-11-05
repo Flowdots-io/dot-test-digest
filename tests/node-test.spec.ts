@@ -575,6 +575,53 @@ describe("node --test, spec red-phase guards (missing module)", () => {
   });
 });
 
+describe("node --test, spec red-phase guards (missing module, path forms)", () => {
+  const SYNTAX_MESSAGE =
+    "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (absolute path)", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      (dir) => [SPEC, path.join(dir, "missing-module.test.js")],
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(envelope.clusters[0]?.message).toContain("Cannot find module");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (parent-relative path)", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      [SPEC, "../missing-module.test.js"],
+      { subdir: "sub" },
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(envelope.clusters[0]?.message).toContain("Cannot find module");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (absolute path to a file with a syntax error)", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      (dir) => [SPEC, path.join(dir, "syntax-error.test.js")],
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+});
+
 describe("node --test, spec red-phase guards (missing export)", () => {
   it("A missing export is VALID_RED with exit 0 under the spec reporter", async () => {
     const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [SPEC, "missing-export.test.js"]);
