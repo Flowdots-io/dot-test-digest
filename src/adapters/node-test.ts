@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
+import type { ErrorKind } from "../types/schema.js";
 import {
   classifyMessage,
   emptyCounts,
@@ -29,6 +30,8 @@ interface NodeEntry {
   fileLevel: boolean;
   /** The error the crashed file's own subprocess printed. */
   subprocessError?: string;
+  /** Overrides the kind classified from the message, e.g. a crashed file that printed no error. */
+  errorKind?: ErrorKind;
   startLine: number;
   endLine: number;
 }
@@ -81,7 +84,8 @@ function toRawFailure(entry: NodeEntry): RawFailure {
   return {
     testName: entry.name === "" ? null : entry.name,
     testFile: entry.file === null ? null : relativeToCwd(entry.file),
-    errorKind: classifyMessage(entry.subprocessError ?? `${entry.message}\n${entry.stack.join("\n")}`),
+    errorKind:
+      entry.errorKind ?? classifyMessage(entry.subprocessError ?? `${entry.message}\n${entry.stack.join("\n")}`),
     message: message === "" ? UNKNOWN_FAILURE : message,
     frames: entry.stack,
     ...(diff !== undefined ? { diff } : {}),
@@ -450,6 +454,8 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: readonl
       firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
       (crashed.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
     if (error !== undefined) entry.subprocessError = error;
+    // A file that died with no error we can attribute to it is a startup crash, never a behavioural failure.
+    else entry.errorKind = "SYNTAX_IMPORT_ERROR";
   }
 }
 
