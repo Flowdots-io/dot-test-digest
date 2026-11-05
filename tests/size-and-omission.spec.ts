@@ -1,44 +1,32 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { buildEnvelope, estimateTokens, formatEnvelope } from "../src/formatters/envelope.js";
-import { main } from "../src/index.js";
 import type { FailureCluster } from "../src/types/schema.js";
 import { vitestCascadeOutput } from "./fixtures/generate.js";
-import { runNodeCart } from "./helpers/node-cart.js";
+import { runMain, runNodeCart, tempDir } from "./helpers/node-cart.js";
 
 const TSC_12 = path.resolve(import.meta.dirname, "fixtures", "logs", "tsc-12.log");
 
-let originalCwd: string;
 let home: string;
 let project: string;
 let stdout: string;
 let stderr: string;
 
 beforeEach(() => {
-  originalCwd = process.cwd();
-  home = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-home-"));
-  project = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-project-"));
-  process.env["DOT_TEST_DIGEST_HOME"] = home;
-  process.chdir(project);
+  home = tempDir("dtd-home-");
+  project = tempDir("dtd-project-");
   stdout = "";
   stderr = "";
-  vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
-    stdout += String(chunk);
-    return true;
-  });
-  vi.spyOn(process.stderr, "write").mockImplementation((chunk: string | Uint8Array) => {
-    stderr += String(chunk);
-    return true;
-  });
 });
 
-afterEach(() => {
-  vi.restoreAllMocks();
-  process.chdir(originalCwd);
-  delete process.env["DOT_TEST_DIGEST_HOME"];
-});
+/** `main` in the project dir; the output lands in `stdout` and `stderr`, replacing the previous run's. */
+async function run(argv: readonly string[]): Promise<number> {
+  const result = await runMain(argv, { cwd: project, home });
+  ({ stdout, stderr } = result);
+  return result.code;
+}
 
 function replayLog(logPath: string): string[] {
   return [
@@ -50,7 +38,7 @@ function replayLog(logPath: string): string[] {
 
 describe("source-order ranking through the CLI", () => {
   it("--max-clusters keeps the first clusters in source order", async () => {
-    const code = await main(["--no-jev", "--format=json", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
+    const code = await run(["--no-jev", "--format=json", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
     expect(code).toBe(2);
     const envelope = JSON.parse(stdout) as { clusters: { raw_log_lines: string }[] };
     expect(envelope.clusters.map((c) => c.raw_log_lines)).toEqual([
@@ -74,7 +62,7 @@ describe("omitted clusters through the CLI", () => {
       `for (let i = 0; i < 60; i++) console.log('step ' + i + ' ' + 'x'.repeat(60));` +
         `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(TSC_12)},'utf8')); process.exit(2)`,
     ];
-    const code = await main(["--no-jev", "--max-clusters=5", "--", ...noisy]);
+    const code = await run(["--no-jev", "--max-clusters=5", "--", ...noisy]);
     expect(code).toBe(2);
     const lines = stdout.split("\n");
     expect(lines[0]).toMatch(/\| 5 clusters \|/);
@@ -87,7 +75,7 @@ describe("omitted clusters through the CLI", () => {
     }
 
     stdout = "";
-    await main(["--no-jev", "--format=json", "--max-clusters=5", "--", ...noisy]);
+    await run(["--no-jev", "--format=json", "--max-clusters=5", "--", ...noisy]);
     const envelope = JSON.parse(stdout) as { summary: { total_clusters: number }; clusters: unknown[] };
     expect(envelope.summary.total_clusters).toBe(5);
     expect(envelope.clusters).toHaveLength(5);
@@ -306,7 +294,7 @@ describe("the size rule through the CLI", () => {
   it("Five tsc errors print the raw diagnostics under the header", async () => {
     const tscLog = useTscSmall();
     expect(Buffer.byteLength(tscLog, "utf8")).toBe(419);
-    const code = await main(["--no-jev", "--", ...REPLAY_TSC_LOG]);
+    const code = await run(["--no-jev", "--", ...REPLAY_TSC_LOG]);
     expect(code).toBe(2);
     const newline = stdout.indexOf("\n");
     expect(stdout.slice(0, newline)).toMatch(
@@ -326,7 +314,7 @@ describe("the size rule through the CLI", () => {
       child,
       `process.stdout.write(${JSON.stringify(vitestCascadeOutput(50, 35))}); process.exit(1);`,
     );
-    const code = await main(["--", process.execPath, child]);
+    const code = await run(["--", process.execPath, child]);
     expect(code).toBe(1);
     expect(stdout).toContain("RUNTIME_EXCEPTION x50");
     expect(stdout.split("\n")).toContain("  28 >   return parts.split('.');");
@@ -335,7 +323,7 @@ describe("the size rule through the CLI", () => {
 
   it("The JSON envelope of the same run is unchanged", async () => {
     useTscSmall();
-    const code = await main(["--no-jev", "--format=json", "--", ...REPLAY_TSC_LOG]);
+    const code = await run(["--no-jev", "--format=json", "--", ...REPLAY_TSC_LOG]);
     expect(code).toBe(2);
     const envelope = JSON.parse(stdout) as {
       summary: { total_clusters: number };
@@ -350,7 +338,7 @@ describe("the size rule through the CLI", () => {
 
   it("Level 5 has no footer even when --max-clusters cut clusters", async () => {
     const tscLog = useTscSmall();
-    const code = await main(["--no-jev", "--max-clusters=2", "--", ...REPLAY_TSC_LOG]);
+    const code = await run(["--no-jev", "--max-clusters=2", "--", ...REPLAY_TSC_LOG]);
     expect(code).toBe(2);
     const newline = stdout.indexOf("\n");
     expect(stdout.slice(0, newline)).toMatch(
@@ -360,7 +348,7 @@ describe("the size rule through the CLI", () => {
     expect(stdout).not.toContain("more clusters");
 
     stdout = "";
-    const jsonCode = await main(["--no-jev", "--max-clusters=2", "--format=json", "--", ...REPLAY_TSC_LOG]);
+    const jsonCode = await run(["--no-jev", "--max-clusters=2", "--format=json", "--", ...REPLAY_TSC_LOG]);
     expect(jsonCode).toBe(2);
     const envelope = JSON.parse(stdout) as {
       status: string;
@@ -378,19 +366,19 @@ describe("the size rule through the CLI", () => {
 
 describe("tiny failures through the CLI", () => {
   it("A failure with no output prints only the header", async () => {
-    const code = await main(["--no-jev", "--", process.execPath, "-e", "process.exit(3)"]);
+    const code = await run(["--no-jev", "--", process.execPath, "-e", "process.exit(3)"]);
     expect(code).toBe(3);
     expect(stdout).toMatch(/^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log\n$/);
 
     stdout = "";
-    const jsonCode = await main(["--no-jev", "--format=json", "--", process.execPath, "-e", "process.exit(3)"]);
+    const jsonCode = await run(["--no-jev", "--format=json", "--", process.execPath, "-e", "process.exit(3)"]);
     expect(jsonCode).toBe(3);
     const envelope = JSON.parse(stdout) as { clusters: { error_kind: string }[] };
     expect(envelope.clusters.map((c) => c.error_kind)).toEqual(["UNSTRUCTURED_BUILD_ERROR"]);
   });
 
   it("A tiny unstructured failure prints the header and the raw line", async () => {
-    const code = await main(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
+    const code = await run(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
     expect(code).toBe(1);
     const [header, ...rest] = stdout.split("\n");
     expect(header).toMatch(/^\[BUILD_ERROR\] 0 failed, 0 passed in \d+ms \| 1 cluster \| log: \S+\.log$/);
@@ -407,11 +395,11 @@ function logPointerBytes(header: string): string {
 describe("the log pointer", () => {
   it("The log pointer resolves at every level", async () => {
     const tscLog = useTscSmall();
-    await main(["--no-jev", "--", ...REPLAY_TSC_LOG]);
+    await run(["--no-jev", "--", ...REPLAY_TSC_LOG]);
     expect(logPointerBytes(stdout.split("\n")[0] ?? "")).toBe(tscLog);
 
     stdout = "";
-    await main(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
+    await run(["--no-jev", "--", process.execPath, "-e", "console.log('boom'); process.exit(1)"]);
     expect(logPointerBytes(stdout.split("\n")[0] ?? "")).toBe("boom\n");
   });
 });

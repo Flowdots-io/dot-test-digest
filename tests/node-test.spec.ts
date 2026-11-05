@@ -375,6 +375,26 @@ describe("node --test, spec reporter parity with TAP", () => {
   });
 });
 
+describe("node --test, test names containing a hash", () => {
+  it("The spec reporter yields the same clusters as the TAP reporter (names containing #)", async () => {
+    const view = async (reporter: string): Promise<Envelope> =>
+      JSON.parse(
+        (
+          await runNodeCart(
+            ["--no-jev", "--format=json"],
+            [`--test-reporter=${reporter}`, "hash-name.test.js"],
+          )
+        ).stdout,
+      ) as Envelope;
+    const spec = await view("spec");
+    const tap = await view("tap");
+
+    expect(spec.clusters.map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
+    expect(tap.clusters.map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
+    expect(tap.clusters.map((c) => c.cluster_id)).toEqual(spec.clusters.map((c) => c.cluster_id));
+  });
+});
+
 describe("node --test, string values in diffs", () => {
   it("String values in diffs are unquoted under both reporters", async () => {
     for (const reporter of ["tap", "spec"]) {
@@ -572,6 +592,53 @@ describe("node --test, spec red-phase guards (missing module)", () => {
     expect(run.stderr).toContain(
       "Test failed due to syntax or unresolved module import rather than a behavioral assertion.",
     );
+  });
+});
+
+describe("node --test, spec red-phase guards (missing module, path forms)", () => {
+  const SYNTAX_MESSAGE =
+    "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (absolute path)", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      (dir) => [SPEC, path.join(dir, "missing-module.test.js")],
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(envelope.clusters[0]?.message).toContain("Cannot find module");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (parent-relative path)", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      [SPEC, "../missing-module.test.js"],
+      { subdir: "sub" },
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(envelope.clusters[0]?.message).toContain("Cannot find module");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (absolute path to a file with a syntax error)", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      (dir) => [SPEC, path.join(dir, "syntax-error.test.js")],
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 });
 

@@ -54,13 +54,13 @@ describe("computeFingerprint", () => {
 });
 
 describe("dedupeFailures", () => {
-  const options = { repoRoot: REPO, contextLines: 2, maxClusters: 5, logPath: "/tmp/run.log" };
+  const options = { repoRoot: REPO, contextLines: 2, keep: 5, logPath: "/tmp/run.log" };
 
   it("collapses 50 identical cascading failures into one cluster", () => {
     const failures = Array.from({ length: 50 }, (_, i) =>
       failure({ testName: `integration > case ${i}`, startLine: 400 + i * 40, endLine: 448 + i * 40 }),
     );
-    const clusters = dedupeFailures(failures, options);
+    const { kept: clusters } = dedupeFailures(failures, options);
     expect(clusters).toHaveLength(1);
     const [cluster] = clusters;
     expect(cluster?.affected_count).toBe(50);
@@ -73,7 +73,7 @@ describe("dedupeFailures", () => {
     expect(cluster?.signal_window).toBe("");
   });
 
-  it("keeps distinct root causes apart and honours maxClusters", () => {
+  it("keeps distinct root causes apart and honours keep", () => {
     const failures = [
       failure({ testName: "a", startLine: 10, endLine: 20 }),
       failure({
@@ -93,8 +93,8 @@ describe("dedupeFailures", () => {
         endLine: 60,
       }),
     ];
-    expect(dedupeFailures(failures, { ...options, maxClusters: 2 })).toHaveLength(2);
-    expect(dedupeFailures(failures, options)).toHaveLength(3);
+    expect(dedupeFailures(failures, { ...options, keep: 2 }).kept).toHaveLength(2);
+    expect(dedupeFailures(failures, options).kept).toHaveLength(3);
   });
 
   it("orders clusters by affected_count descending", () => {
@@ -111,7 +111,7 @@ describe("dedupeFailures", () => {
         }),
       ),
     ];
-    const clusters = dedupeFailures(failures, options);
+    const { kept: clusters } = dedupeFailures(failures, options);
     expect(clusters.map((c) => c.affected_count)).toEqual([3, 1]);
   });
 
@@ -119,7 +119,7 @@ describe("dedupeFailures", () => {
     const [cluster] = dedupeFailures(
       [failure({ testName: "diff", diff: { expected: "401", received: "200" } })],
       options,
-    );
+    ).kept;
     expect(cluster?.diff).toEqual({ expected: "401", received: "200" });
   });
 
@@ -138,7 +138,7 @@ describe("dedupeFailures", () => {
         endLine: 22,
       }),
     ];
-    const clusters = dedupeFailures(failures, options);
+    const { kept: clusters } = dedupeFailures(failures, options);
     expect(clusters).toHaveLength(1);
     expect(clusters[0]?.affected_count).toBe(1);
     expect(canonicalTestId("failing.spec.ts", "ACCEPTANCE red case 8ms")).toBe(
@@ -150,7 +150,7 @@ describe("dedupeFailures", () => {
     const [cluster] = dedupeFailures(
       [failure({ testName: "external", frames: ["at node_modules/x/index.js:1:1"] })],
       options,
-    );
+    ).kept;
     expect(cluster?.top_frame).toBe("unknown:0:0");
     expect(cluster?.pruned_stack).toEqual([]);
   });
@@ -392,7 +392,7 @@ describe("scope isolation (CT-5)", () => {
 });
 
 describe("dedupeFailures source-order tie-break", () => {
-  const options = { repoRoot: REPO, contextLines: 2, maxClusters: 5, logPath: "/tmp/run.log" };
+  const options = { repoRoot: REPO, contextLines: 2, keep: 5, logPath: "/tmp/run.log" };
 
   function distinct(n: number, startLine: number, endLine: number): RawFailure {
     return failure({
@@ -404,7 +404,7 @@ describe("dedupeFailures source-order tie-break", () => {
   }
 
   it("Single-digit lines sort before double-digit lines", () => {
-    const clusters = dedupeFailures(
+    const { kept: clusters } = dedupeFailures(
       [distinct(0, 13, 20), distinct(1, 5, 9), distinct(2, 11, 12)],
       options,
     );
@@ -412,7 +412,7 @@ describe("dedupeFailures source-order tie-break", () => {
   });
 
   it("Equal first lines fall back to the last line", () => {
-    const clusters = dedupeFailures([distinct(0, 7, 30), distinct(1, 7, 9)], options);
+    const { kept: clusters } = dedupeFailures([distinct(0, 7, 30), distinct(1, 7, 9)], options);
     expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L7-L9", "L7-L30"]);
   });
 
@@ -423,13 +423,13 @@ describe("dedupeFailures source-order tie-break", () => {
         failure({ testName: `group ${i}`, message: "Error: shared failure", startLine: line, endLine: line }),
       ),
     ];
-    const clusters = dedupeFailures(failures, options);
+    const { kept: clusters } = dedupeFailures(failures, options);
     expect(clusters.map((c) => c.affected_count)).toEqual([3, 1]);
   });
 });
 
-describe("dedupeFailures windowLimit", () => {
-  it("reads signal windows only for the first windowLimit clusters", () => {
+describe("dedupeFailures keep", () => {
+  it("reads signal windows only for the kept clusters", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "dtd-window-"));
     fs.mkdirSync(path.join(root, "src"));
     fs.writeFileSync(path.join(root, "src", "a.ts"), "one\ntwo\nthree\nfour\nfive\n");
@@ -441,13 +441,13 @@ describe("dedupeFailures windowLimit", () => {
         startLine: start,
         endLine: start,
       });
-    const clusters = dedupeFailures([at(2, 1), at(3, 2), at(4, 3)], {
+    const { kept, omitted } = dedupeFailures([at(2, 1), at(3, 2), at(4, 3)], {
       repoRoot: root,
       contextLines: 1,
-      maxClusters: Number.POSITIVE_INFINITY,
-      windowLimit: 1,
+      keep: 1,
       logPath: "/tmp/run.log",
     });
+    const clusters = [...kept, ...omitted];
     expect(clusters.map((c) => c.raw_log_lines)).toEqual(["L1-L1", "L2-L2", "L3-L3"]);
     expect(clusters.map((c) => c.signal_window)).toEqual(["1 | one\n2 > two\n3 | three", "", ""]);
   });
