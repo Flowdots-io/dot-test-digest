@@ -18,10 +18,16 @@ export interface RawFailure {
 export interface DedupeOptions {
   repoRoot: string;
   contextLines: number;
-  maxClusters: number;
-  /** How many of the ranked clusters get a SignalWindow read from disk; defaults to maxClusters. */
-  windowLimit?: number;
+  /** How many of the ranked clusters are kept (and get a SignalWindow read from disk). */
+  keep: number;
   logPath: string;
+}
+
+export interface DedupeResult {
+  /** The top `keep` clusters, each with its SignalWindow. */
+  kept: FailureCluster[];
+  /** Every cluster beyond `keep`, ranked, without a window. */
+  omitted: FailureCluster[];
 }
 
 /**
@@ -54,7 +60,7 @@ export function computeFingerprint(
 export function dedupeFailures(
   failures: readonly RawFailure[],
   options: DedupeOptions,
-): FailureCluster[] {
+): DedupeResult {
   const groups = new Map<string, RawFailure[]>();
 
   // SPEC-002 §4.2.2: one failure record per canonical test identity, even if
@@ -96,18 +102,16 @@ export function dedupeFailures(
     entries.push({ cluster, top });
   }
 
-  const ranked = entries
-    .sort((a, b) => compareClusters(a.cluster, b.cluster))
-    .slice(0, options.maxClusters);
-  const windowLimit = options.windowLimit ?? options.maxClusters;
-  return ranked.map(({ cluster, top }, index) =>
-    top && index < windowLimit
+  const ranked = entries.sort((a, b) => compareClusters(a.cluster, b.cluster));
+  const kept = ranked.slice(0, options.keep).map(({ cluster, top }) =>
+    top
       ? {
           ...cluster,
           signal_window: readSignalWindow(top.file, top.line, options.contextLines, options.repoRoot),
         }
       : cluster,
   );
+  return { kept, omitted: ranked.slice(options.keep).map(({ cluster }) => cluster) };
 }
 
 function lineRange(rawLogLines: string): [number, number] {

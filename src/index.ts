@@ -87,18 +87,17 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     const lines = capture.lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
     const gear0 = runGear0(lines);
 
-    const ranked: FailureCluster[] =
+    const ranked =
       gear0 === null
-        ? []
+        ? { kept: [], omitted: [] }
         : dedupeFailures(gear0.failures, {
             repoRoot,
             contextLines: options.contextLines,
-            maxClusters: Number.POSITIVE_INFINITY,
-            windowLimit: options.maxClusters,
+            keep: options.maxClusters,
             logPath: rawLog.path,
           });
-    let clusters = ranked.slice(0, options.maxClusters);
-    let omitted = ranked.slice(options.maxClusters);
+    let clusters: FailureCluster[] = ranked.kept;
+    let omitted: FailureCluster[] = ranked.omitted;
     let gear: ExecutionGear = gear0 === null ? "GEAR_0_HEURISTIC_FALLBACK" : "GEAR_0_GRAMMAR";
     let retryWanted = false;
 
