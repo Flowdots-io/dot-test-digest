@@ -535,7 +535,7 @@ function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
           continue;
         }
         const endLine = lines[block.endIndex]?.line ?? line.line;
-        const failure = nodeFailure(notOk[2] ?? "", block, line.line, endLine);
+        const failure = nodeFailure((notOk[2] ?? "").replaceAll("\\#", "#"), block, line.line, endLine);
         if (isFileLevel(block)) {
           const error = subprocessError(lines, index);
           if (error !== undefined) {
