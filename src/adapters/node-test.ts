@@ -296,6 +296,7 @@ const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
 const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
 const SPEC_NAME_ROW = /^✖ (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
 const SPEC_TREE_ROW = /^(\s*)([✖▶]) (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+const SPEC_ENTRY_INDENT = 2;
 const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
 
 export function isSpecStream(lines: readonly CapturedLine[]): boolean {
@@ -346,6 +347,8 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
     const raw = lines[index]?.text ?? "";
     const text = raw.trim();
     if (text === "") continue;
+    // node indents every line of an entry by two spaces; anything shallower is output of a wrapper.
+    if (leadingSpaces(raw) < SPEC_ENTRY_INDENT) break;
     last = index;
     if (/^at /.test(text)) inFrames = true;
     if (!inFrames) {
