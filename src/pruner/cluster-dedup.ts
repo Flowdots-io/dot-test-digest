@@ -57,6 +57,13 @@ export function computeFingerprint(
   return createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
+interface RankedCluster {
+  cluster: FailureCluster;
+  top: ReturnType<typeof topRepoFrame>;
+  startLine: number;
+  endLine: number;
+}
+
 export function dedupeFailures(
   failures: readonly RawFailure[],
   options: DedupeOptions,
@@ -74,7 +81,7 @@ export function dedupeFailures(
     else groups.set(fingerprint, [failure]);
   }
 
-  const entries: { cluster: FailureCluster; top: ReturnType<typeof topRepoFrame> }[] = [];
+  const entries: RankedCluster[] = [];
 
   for (const [fingerprint, bucket] of groups) {
     const first = bucket[0];
@@ -99,10 +106,10 @@ export function dedupeFailures(
       signal_window: "",
       raw_log_lines: `L${startLine}-L${endLine}`,
     };
-    entries.push({ cluster, top });
+    entries.push({ cluster, top, startLine, endLine });
   }
 
-  const ranked = entries.sort((a, b) => compareClusters(a.cluster, b.cluster));
+  const ranked = entries.sort(compareClusters);
   const kept = ranked.slice(0, options.keep).map(({ cluster, top }) =>
     top
       ? {
@@ -114,18 +121,11 @@ export function dedupeFailures(
   return { kept, omitted: ranked.slice(options.keep).map(({ cluster }) => cluster) };
 }
 
-function lineRange(rawLogLines: string): [number, number] {
-  const match = /^L(\d+)-L(\d+)$/.exec(rawLogLines);
-  return match ? [Number(match[1]), Number(match[2])] : [0, 0];
-}
-
-function compareClusters(a: FailureCluster, b: FailureCluster): number {
-  const [aFirst, aLast] = lineRange(a.raw_log_lines);
-  const [bFirst, bLast] = lineRange(b.raw_log_lines);
+function compareClusters(a: RankedCluster, b: RankedCluster): number {
   return (
-    b.affected_count - a.affected_count ||
-    aFirst - bFirst ||
-    aLast - bLast ||
-    (a.cluster_id < b.cluster_id ? -1 : a.cluster_id > b.cluster_id ? 1 : 0)
+    b.cluster.affected_count - a.cluster.affected_count ||
+    a.startLine - b.startLine ||
+    a.endLine - b.endLine ||
+    (a.cluster.cluster_id < b.cluster.cluster_id ? -1 : a.cluster.cluster_id > b.cluster.cluster_id ? 1 : 0)
   );
 }
