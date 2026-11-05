@@ -807,7 +807,7 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], failures: RawFai
     (failure) =>
       failure.message === "test failed" &&
       failure.testName !== null &&
-      failure.testFile !== null &&
+      failure.testFile != null &&
       path.resolve(failure.testName) === path.resolve(failure.testFile),
   );
   if (fileLevel.length === 0) return;
