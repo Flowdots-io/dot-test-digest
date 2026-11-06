@@ -6,7 +6,7 @@ import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
 import { buildEnvelope, formatEnvelope } from "./formatters/envelope.js";
 import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gears/gear1-jev.js";
 import { normalizeLine } from "./pruner/ansi-stripper.js";
-import { dedupeFailures, type RawFailure } from "./pruner/cluster-dedup.js";
+import { dedupeFailures, type DedupeResult, type RawFailure } from "./pruner/cluster-dedup.js";
 import { canonicalTestId, uniqueFailures } from "./pruner/failure-identity.js";
 import { runChild, type CapturedLine } from "./runner/capture.js";
 import { RawLogWriter } from "./runner/raw-log.js";
@@ -17,7 +17,7 @@ import {
   saveState,
   type RunState,
 } from "./state/tdd-gate.js";
-import type { ExecutionGear, FailureCluster } from "./types/schema.js";
+import type { ExecutionGear } from "./types/schema.js";
 import { VERSION } from "./version.js";
 
 const COMMAND_NOT_FOUND = 127;
@@ -27,8 +27,8 @@ interface Attempt {
   lines: CapturedLine[];
   gear: ExecutionGear;
   failures: RawFailure[];
-  clusters: FailureCluster[];
-  omitted: FailureCluster[];
+  /** The clusters to print and, after them, the ones only listed. */
+  ranked: DedupeResult;
   counts: { passed: number; failed: number; skipped: number };
   exitCode: number;
   signal: string | null;
@@ -87,7 +87,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     const lines = capture.lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
     const gear0 = runGear0(lines);
 
-    const ranked =
+    let ranked: DedupeResult =
       gear0 === null
         ? { kept: [], omitted: [] }
         : dedupeFailures(gear0.failures, {
@@ -96,12 +96,10 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
             keep: options.maxClusters,
             logPath: rawLog.path,
           });
-    let clusters: FailureCluster[] = ranked.kept;
-    let omitted: FailureCluster[] = ranked.omitted;
     let gear: ExecutionGear = gear0 === null ? "GEAR_0_HEURISTIC_FALLBACK" : "GEAR_0_GRAMMAR";
     let retryWanted = false;
 
-    if (capture.exitCode !== 0 && clusters.length === 0) {
+    if (capture.exitCode !== 0 && ranked.kept.length === 0) {
       const outcome = await triageUnstructured({
         lines,
         command,
@@ -114,8 +112,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
         ...(deps.client ? { client: deps.client } : {}),
       });
       gear = outcome.gear;
-      clusters = [outcome.cluster];
-      omitted = [];
+      ranked = { kept: [outcome.cluster], omitted: [] };
       retryWanted = outcome.retry;
     }
 
@@ -123,8 +120,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       lines,
       gear,
       failures: uniqueFailures(gear0?.failures ?? []),
-      clusters,
-      omitted,
+      ranked,
       counts: gear0?.counts ?? { passed: 0, failed: 0, skipped: 0 },
       exitCode: capture.exitCode,
       signal: capture.signal,
@@ -158,7 +154,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       failedTests,
       passed: run.counts.passed,
       // A runner we cannot parse may still leave behavioral evidence in the log.
-      evidence: run.clusters
+      evidence: run.ranked.kept
         .map((cluster) => `${cluster.message}\n${cluster.signal_window}`)
         .join("\n"),
     });
@@ -193,12 +189,12 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       gear: run.gear,
       durationMs: run.durationMs,
       counts: run.counts,
-      clusters: run.clusters,
+      clusters: run.ranked.kept,
       ...(decision.delta ? { delta: decision.delta } : {}),
       rawLogPath: run.logPath,
     });
 
-    process.stdout.write(formatEnvelope(envelope, options.format, { omitted: run.omitted, rawText: run.rawText }));
+    process.stdout.write(formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText }));
     if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
     rawLog.close();
     return decision.exitCode;
