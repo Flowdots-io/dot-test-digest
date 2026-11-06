@@ -304,6 +304,29 @@ describe("node TAP diagnostic blocks", () => {
     expect(result?.failures[0]?.errorKind).toBe("ASSERTION_FAILURE");
     expect(result?.failures[0]?.message).toBe("AssertionError: expected 99 to be 100");
   });
+
+  it("A TAP block without a failureType key keeps the v0.1.2 behavior (inside a stream with a Subtest line)", () => {
+    const stream = [
+      "# Subtest: cart totals",
+      "not ok 1 - cart totals",
+      "  ---",
+      "  error: |-",
+      "    AssertionError: expected 99 to be 100",
+      "  ...",
+      "1..1",
+      "# tests 1",
+      "# pass 0",
+      "# fail 1",
+    ].join("\n");
+    const result = runGear0(lines(stream));
+
+    expect(result?.adapter).toBe("js-test");
+    expect(result?.counts.failed).toBe(1);
+    expect(result?.failures).toHaveLength(1);
+    expect(result?.failures[0]?.errorKind).toBe("ASSERTION_FAILURE");
+    expect(result?.failures[0]?.message).toBe("AssertionError: expected 99 to be 100");
+    expect(result?.failures[0]?.diff).toEqual({ expected: "100", received: "99" });
+  });
 });
 
 describe("node spec reporter at the adapter seam", () => {
