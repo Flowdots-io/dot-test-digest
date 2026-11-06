@@ -158,6 +158,13 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
+/** `sums[i]` is the byte length of the first `i` texts. */
+function byteSums(texts: readonly string[]): number[] {
+  const sums = [0];
+  for (const text of texts) sums.push((sums.at(-1) ?? 0) + byteLength(text));
+  return sums;
+}
+
 interface FailBodyInput {
   rawText: string | undefined;
   omitted: readonly FailureCluster[];
@@ -183,31 +190,33 @@ function renderLevel(
   level: Level,
 ): { text: string; header: string } {
   const clusters = envelope.clusters ?? [];
-  let kept = clusters.length;
-  let listed = clusters.length + omitted.length;
+  const all = [...clusters, ...omitted];
+  const blocks = clusters.map((c) => (level.oneLine ? renderOneLine(c) : renderCluster(c, level)));
+  const lines = all.map((c) => `\n${renderOmittedLine(c)}`);
+  const footerHead = (count: number): string => `\n+${count} more clusters (see log)`;
 
-  const render = (): { text: string; header: string } => {
-    const header = headerLine(envelope, kept);
-    const blocks = clusters
-      .slice(0, kept)
-      .map((c) => (level.oneLine ? renderOneLine(c) : renderCluster(c, level)))
-      .join("\n");
-    const allOmitted = [...clusters.slice(kept), ...omitted];
-    const lines = allOmitted.slice(0, listed).map((c) => `\n${renderOmittedLine(c)}`);
-    const footer = allOmitted.length > 0 ? `\n+${allOmitted.length} more clusters (see log)${lines.join("")}` : "";
-    return { text: `${header}\n${blocks}${footer}`, header };
+  // Every size below is a byte count measured once per piece, so choosing what
+  // fits is arithmetic over prefix sums instead of re-rendering the whole text.
+  const blockEnds = byteSums(blocks);
+  const lineEnds = byteSums(lines);
+  const fits = (kept: number, listed: number): boolean => {
+    const count = all.length - kept;
+    const footer = count > 0 ? byteLength(footerHead(count)) + (lineEnds[kept + listed] ?? 0) - (lineEnds[kept] ?? 0) : 0;
+    const bytes =
+      byteLength(headerLine(envelope, kept)) + 1 + (blockEnds[kept] ?? 0) + Math.max(0, kept - 1) + footer;
+    return Math.ceil(bytes / BYTES_PER_TOKEN) <= MAX_FAIL_TOKENS;
   };
 
-  let rendered = render();
-  while (estimateTokens(rendered.text) > MAX_FAIL_TOKENS && kept > 1) {
-    kept -= 1;
-    rendered = render();
-  }
-  while (estimateTokens(rendered.text) > MAX_FAIL_TOKENS && listed > 0) {
-    listed -= 1;
-    rendered = render();
-  }
-  return { text: truncateBytes(rendered.text, FAIL_BYTE_CEILING - 1), header: rendered.header };
+  let kept = clusters.length;
+  while (kept > 1 && !fits(kept, all.length - kept)) kept -= 1;
+  let listed = all.length - kept;
+  while (listed > 0 && !fits(kept, listed)) listed -= 1;
+
+  const header = headerLine(envelope, kept);
+  const footer =
+    all.length > kept ? `${footerHead(all.length - kept)}${lines.slice(kept, kept + listed).join("")}` : "";
+  const text = `${header}\n${blocks.slice(0, kept).join("\n")}${footer}`;
+  return { text: truncateBytes(text, FAIL_BYTE_CEILING - 1), header };
 }
 
 export function formatEnvelope(
