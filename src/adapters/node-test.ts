@@ -26,8 +26,6 @@ interface NodeEntry {
   expected?: string;
   actual?: string;
   stack: string[];
-  /** A whole test file that crashed rather than one test inside it. */
-  fileLevel: boolean;
   /** The error the crashed file's own subprocess printed. */
   subprocessError?: string;
   /** Overrides the kind classified from the message, e.g. a crashed file that printed no error. */
@@ -55,6 +53,10 @@ function nodePath(text: string): string {
   });
 }
 
+/**
+ * Failures carry paths relative to where the digest runs, so this reads
+ * `process.cwd()`: `Adapter.parse(lines)` has no other context to take it from.
+ */
 function relativeToCwd(file: string): string {
   const relative = path.relative(process.cwd(), file).split(path.sep).join("/");
   return relative === "" || relative.startsWith("..") ? file : relative;
@@ -83,7 +85,6 @@ function nameOnlyEntry(name: string, line: number): NodeEntry {
     line: undefined,
     message: "",
     stack: [],
-    fileLevel: false,
     startLine: line,
     endLine: line,
   };
@@ -109,7 +110,7 @@ function toRawFailure(entry: NodeEntry): RawFailure {
 }
 
 /** Names shared by two or more failures of one file get ` @<line>`. */
-function disambiguateSameNames(entries: readonly NodeEntry[]): void {
+function disambiguateSameNames(entries: NodeEntry[]): void {
   const keyOf = (entry: NodeEntry): string => `${entry.file ?? ""}\u0000${entry.name}`;
   const seen = new Map<string, number>();
   for (const entry of entries) seen.set(keyOf(entry), (seen.get(keyOf(entry)) ?? 0) + 1);
@@ -267,7 +268,6 @@ function readTapEntry(
       ? { expected: expected.join(", "), actual: actual.join(", ") }
       : {}),
     stack: field("stack").map(nodePath),
-    fileLevel,
     ...(subprocessError !== undefined ? { subprocessError } : {}),
     startLine,
     endLine: lines[block.endIndex]?.line ?? startLine,
@@ -390,7 +390,6 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
       ? { expected: inspectedString(expected), actual: inspectedString(actual) }
       : {}),
     stack,
-    fileLevel: message === "test failed" && path.resolve(name) === file,
     startLine: lines[start]?.line ?? 0,
     endLine: lines[last]?.line ?? 0,
   };
@@ -443,13 +442,18 @@ function firstErrorLine(block: readonly string[]): string | undefined {
   return undefined;
 }
 
+/** node names a crashed test file's entry after the file, as given on the command line. */
+function isCrashedFile(entry: NodeEntry): boolean {
+  return entry.message === "test failed" && entry.file !== null && path.resolve(entry.name) === entry.file;
+}
+
 /**
  * A whole test file that crashed is reported as `'test failed'`; node relayed
  * the subprocess's own error above the section. Take it from the block that
  * names the file, else (with a single crashed file) from the first error line.
  */
-function adoptSubprocessErrors(before: readonly CapturedLine[], entries: readonly NodeEntry[]): void {
-  const crashed = entries.filter((entry) => entry.fileLevel);
+function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEntry[]): void {
+  const crashed = entries.filter(isCrashedFile);
   if (crashed.length === 0) return;
   const blocks = textBlocks(before);
   for (const entry of crashed) {
