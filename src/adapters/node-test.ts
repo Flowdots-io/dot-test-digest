@@ -106,9 +106,17 @@ function disambiguateSameNames(entries: readonly NodeEntry[]): void {
   }
 }
 
-function finish(entries: readonly NodeEntry[], counts: AdapterCounts): AdapterResult {
-  disambiguateSameNames(entries);
-  return { adapter: "js-test", failures: entries.map(toRawFailure), counts };
+/** What a reader found: one node entry, or failures the generic grammar read from a block that is not node's. */
+type Slot = NodeEntry | readonly RawFailure[];
+
+function isEntry(slot: Slot): slot is NodeEntry {
+  return !Array.isArray(slot);
+}
+
+function finish(slots: readonly Slot[], counts: AdapterCounts): AdapterResult {
+  disambiguateSameNames(slots.filter(isEntry));
+  const failures = slots.flatMap((slot) => (isEntry(slot) ? [toRawFailure(slot)] : slot));
+  return { adapter: "js-test", failures, counts };
 }
 
 /* ------------------------------ TAP ------------------------------ */
@@ -200,20 +208,21 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
 }
 
 /**
- * The entry of the `not ok` line at `index`, and the index of the last line it
+ * The slot of the `not ok` line at `index`, and the index of the last line it
  * consumed. A suite whose only fault is its failing subtests is a roll-up, not
- * a failure (entry null). A `not ok` with no readable diagnostic block (a
- * stream cut short) is kept by name alone.
+ * a failure (slot null). A block with no `failureType:` key is not node's: the
+ * generic grammar reads it, as it did before node TAP had its own. A `not ok`
+ * with no readable diagnostic block (a stream cut short) is kept by name alone.
  */
 function readTapEntry(
   lines: readonly CapturedLine[],
   index: number,
   name: string,
-): { entry: NodeEntry | null; next: number } {
+  generic: GenericReader,
+): { entry: Slot | null; next: number } {
   const startLine = lines[index]?.line ?? 0;
   const block = readTapBlock(lines, index);
-  const failureType = block?.fields.get("failureType")?.[0];
-  if (block === null || failureType === undefined) {
+  if (block === null) {
     const entry: NodeEntry = {
       name,
       file: null,
@@ -225,6 +234,10 @@ function readTapEntry(
       endLine: startLine,
     };
     return { entry, next: index };
+  }
+  const failureType = block.fields.get("failureType")?.[0];
+  if (failureType === undefined) {
+    return { entry: generic(lines.slice(index, block.endIndex + 1)), next: block.endIndex };
   }
   if (failureType === "subtestsFailed") return { entry: null, next: block.endIndex };
 
@@ -277,16 +290,19 @@ export function isNodeTapStream(lines: readonly CapturedLine[]): boolean {
   return lines.some((line) => NODE_SUBTEST.test(line.text));
 }
 
-export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
-  const entries: NodeEntry[] = [];
+/** Reads a stretch of lines with the generic (v0.1.2) grammar; the adapter supplies it so this module imports nothing from it. */
+export type GenericReader = (span: readonly CapturedLine[]) => readonly RawFailure[];
+
+export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericReader): AdapterResult {
+  const entries: Slot[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
-    const read = readTapEntry(lines, index, (notOk[2] ?? "").replaceAll("\\#", "#"));
+    const read = readTapEntry(lines, index, (notOk[2] ?? "").replaceAll("\\#", "#"), generic);
     if (read.entry !== null) entries.push(read.entry);
     index = read.next;
   }
-  return finish(entries, tapCounts(lines, entries.length));
+  return finish(entries, tapCounts(lines, entries.flat().length));
 }
 
 /* ------------------------------ spec ------------------------------ */

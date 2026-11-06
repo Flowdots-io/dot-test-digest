@@ -451,6 +451,8 @@ export const jsTestAdapter: Adapter = {
   parse(lines: readonly CapturedLine[]): AdapterResult {
     if (isSpecStream(lines)) return parseNodeSpec(lines);
     if (isCompactStream(lines)) return parseCompact(lines);
-    return isNodeTapStream(lines) ? parseNodeTap(lines) : parseGeneric(lines);
+    return isNodeTapStream(lines)
+      ? parseNodeTap(lines, (span) => parseGeneric(span).failures)
+      : parseGeneric(lines);
   },
 };
