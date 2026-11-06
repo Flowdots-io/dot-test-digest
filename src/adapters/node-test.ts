@@ -75,6 +75,20 @@ function errorLine(text: string): string | undefined {
   return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
 }
 
+/** A failure known by its name alone: the stream was cut before its details. */
+function nameOnlyEntry(name: string, line: number): NodeEntry {
+  return {
+    name,
+    file: null,
+    line: undefined,
+    message: "",
+    stack: [],
+    fileLevel: false,
+    startLine: line,
+    endLine: line,
+  };
+}
+
 function toRawFailure(entry: NodeEntry): RawFailure {
   const message = entry.subprocessError ?? entry.message;
   const diff =
@@ -122,7 +136,8 @@ function finish(slots: readonly Slot[], counts: AdapterCounts): AdapterResult {
 /* ------------------------------ TAP ------------------------------ */
 
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)\s*$/;
-const TAP_COUNT = /^#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/;
+const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
+const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
 const YAML_KEY = /^([A-Za-z_][\w-]*):(?:\s+(.*?))?\s*$/;
 const NODE_SUBTEST = /^\s*# Subtest:/;
 
@@ -132,15 +147,23 @@ interface TapBlock {
   endIndex: number;
 }
 
-/** A YAML scalar loses one pair of quotes and its escapes; anything else is trimmed. */
-function yamlScalar(value: string): string {
-  const trimmed = value.trim();
-  const quote = trimmed[0];
-  if ((quote === "'" || quote === '"') && trimmed.length >= 2 && trimmed.endsWith(quote)) {
-    const inner = trimmed.slice(1, -1);
-    return quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1");
+/**
+ * One pair of matching quotes removed. `unescape` turns what is inside into the
+ * value, or returns undefined when the text is not one literal and keeps its quotes.
+ */
+function unquote(value: string, unescape: (inner: string, quote: string) => string | undefined): string {
+  const quote = value[0];
+  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
+    return unescape(value.slice(1, -1), quote) ?? value;
   }
-  return trimmed;
+  return value;
+}
+
+/** A YAML scalar loses its quotes and their escapes; anything else is trimmed. */
+function yamlScalar(value: string): string {
+  return unquote(value.trim(), (inner, quote) =>
+    quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1"),
+  );
 }
 
 /**
@@ -200,11 +223,7 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
     if (!text.startsWith("#")) break;
     comments.unshift(text.replace(/^#\s+/, ""));
   }
-  for (const comment of comments) {
-    const error = errorLine(comment);
-    if (error !== undefined) return error;
-  }
-  return undefined;
+  return firstErrorLine(comments);
 }
 
 /**
@@ -222,19 +241,7 @@ function readTapEntry(
 ): { entry: Slot | null; next: number } {
   const startLine = lines[index]?.line ?? 0;
   const block = readTapBlock(lines, index);
-  if (block === null) {
-    const entry: NodeEntry = {
-      name,
-      file: null,
-      line: undefined,
-      message: "",
-      stack: [],
-      fileLevel: false,
-      startLine,
-      endLine: startLine,
-    };
-    return { entry, next: index };
-  }
+  if (block === null) return { entry: nameOnlyEntry(name, startLine), next: index };
   const failureType = block.fields.get("failureType")?.[0];
   if (failureType === undefined) {
     return { entry: generic(lines.slice(index, block.endIndex + 1)), next: block.endIndex };
@@ -268,19 +275,24 @@ function readTapEntry(
   return { entry, next: block.endIndex };
 }
 
-function tapCounts(lines: readonly CapturedLine[], failureCount: number): AdapterCounts {
+/**
+ * The counts printed by `# pass N` / `ℹ pass N` lines: `pass` and `skipped` plus
+ * `todo` as is, failed as `fail` plus `cancelled` (node reports a timed-out test
+ * as cancelled). With `highestPass`, repeated `pass` lines keep the largest
+ * value (TAP prints one per nesting level); otherwise the last line wins.
+ */
+function nodeCounts(lines: readonly CapturedLine[], pattern: RegExp, highestPass: boolean): AdapterCounts {
   const seen = new Map<string, number>();
   for (const line of lines) {
-    const match = TAP_COUNT.exec(line.text);
+    const match = pattern.exec(line.text);
     if (match === null) continue;
     const key = match[1] ?? "";
     const value = Number(match[2]);
-    seen.set(key, key === "pass" ? Math.max(seen.get(key) ?? 0, value) : value);
+    seen.set(key, highestPass && key === "pass" ? Math.max(seen.get(key) ?? 0, value) : value);
   }
   const counts = emptyCounts();
-  const failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
   counts.passed = seen.get("pass") ?? 0;
-  counts.failed = failed === 0 ? failureCount : failed;
+  counts.failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
   counts.skipped = (seen.get("skipped") ?? 0) + (seen.get("todo") ?? 0);
   return counts;
 }
@@ -302,12 +314,14 @@ export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericRea
     if (read.entry !== null) entries.push(read.entry);
     index = read.next;
   }
-  return finish(entries, tapCounts(lines, entries.flat().length));
+  const counts = nodeCounts(lines, TAP_COUNT, true);
+  if (counts.failed === 0) counts.failed = entries.flat().length;
+  return finish(entries, counts);
 }
 
 /* ------------------------------ spec ------------------------------ */
 
-export const NODE_SPEC_SUMMARY = /^ℹ (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$/;
+export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
 const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
 const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
 const SPEC_NAME_ROW = /^✖ (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
@@ -324,27 +338,9 @@ export function isSpecStream(lines: readonly CapturedLine[]): boolean {
   return keys.size >= 2;
 }
 
-function specCounts(lines: readonly CapturedLine[]): AdapterCounts {
-  const seen = new Map<string, number>();
-  for (const line of lines) {
-    const match = NODE_SPEC_SUMMARY.exec(line.text);
-    if (match !== null) seen.set(match[1] ?? "", Number(match[2]));
-  }
-  const counts = emptyCounts();
-  counts.passed = seen.get("pass") ?? 0;
-  counts.failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
-  counts.skipped = (seen.get("skipped") ?? 0) + (seen.get("todo") ?? 0);
-  return counts;
-}
-
 /** A value that is one quoted string literal loses its quotes; anything else is unchanged. */
 function inspectedString(value: string): string {
-  const quote = value[0];
-  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
-    const inner = value.slice(1, -1);
-    if (!inner.includes(quote)) return inner;
-  }
-  return value;
+  return unquote(value, (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
 /** One `test at ...` entry of the `✖ failing tests:` section. */
@@ -418,16 +414,7 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
       continue;
     }
     if (opened.has(key)) continue;
-    entries.push({
-      name: row[3] ?? "",
-      file: null,
-      line: undefined,
-      message: "",
-      stack: [],
-      fileLevel: false,
-      startLine: line.line,
-      endLine: line.line,
-    });
+    entries.push(nameOnlyEntry(row[3] ?? "", line.line));
   }
   return entries;
 }
@@ -479,7 +466,7 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: readonl
 }
 
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
-  const counts = specCounts(lines);
+  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, false);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
   if (section < 0) return finish(readSpecLeafRows(lines), counts);
 
