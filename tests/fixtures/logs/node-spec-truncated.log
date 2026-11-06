@@ -1,0 +1,14 @@
+✔ subtotal adds up (1.747799ms)
+✔ tax is 21% (0.290453ms)
+✖ discount 10% leaves 90% (1.503719ms)
+✖ total with 10% off (0.544019ms)
+✖ total with 100% off is free (2.092018ms)
+✖ first of an empty cart is undefined (0.330503ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 2
+ℹ fail 4
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 172.813989

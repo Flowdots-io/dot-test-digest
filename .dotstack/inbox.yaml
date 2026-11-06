@@ -1,0 +1,7 @@
+# Where work comes from. With no setting here (and none in an org layer) the inbox is local markdown:
+# <KEY>.md tickets under .dotstack/inbox/ with front-matter key, title, status.
+# Setting adapter here replaces an org layer's choice, so set it only when this repo differs.
+#
+# adapter: jira
+# jira: {site: <your-site>.atlassian.net, project: <KEY>, via: rest}    # via: rest | rovo
+# statuses: {todo: "To Do", spec: "Analysis", ready: "Ready for Dev", verifying: "Testing", done: "Done"}

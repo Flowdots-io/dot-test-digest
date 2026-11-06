@@ -10,6 +10,7 @@ import {
   type AdapterCounts,
   type AdapterResult,
 } from "./common.js";
+import { isNodeTapStream, isSpecStream, NODE_SPEC_SUMMARY, parseNodeSpec, parseNodeTap } from "./node-test.js";
 
 const HEADER = /^\s*(?:FAIL|✕|×|✗|●|not ok\s+\d+|\d+\))\s+(.+?)\s*$/;
 const TAP_SUMMARY = /^#\s+(?:tests|pass|fail)\s+\d+\s*$/;
@@ -434,7 +435,7 @@ export const jsTestAdapter: Adapter = {
     for (const line of lines) {
       if (HEADER.test(line)) score += 1;
       if (SUMMARY.test(line) || /^\s*\d+\s+passing\s*\(/.test(line)) score += 3;
-      if (TAP_SUMMARY.test(line)) score += 3;
+      if (TAP_SUMMARY.test(line) || NODE_SPEC_SUMMARY.test(line)) score += 3;
       if (PLAYWRIGHT_HEADER.test(line)) score += 2;
       if (COMPACT_SUMMARY.test(line)) score += 4;
       if (COMPACT_BANNER.test(line)) {
@@ -448,6 +449,10 @@ export const jsTestAdapter: Adapter = {
   },
 
   parse(lines: readonly CapturedLine[]): AdapterResult {
-    return isCompactStream(lines) ? parseCompact(lines) : parseGeneric(lines);
+    if (isSpecStream(lines)) return parseNodeSpec(lines);
+    if (isCompactStream(lines)) return parseCompact(lines);
+    return isNodeTapStream(lines)
+      ? parseNodeTap(lines, (span) => parseGeneric(span).failures)
+      : parseGeneric(lines);
   },
 };

@@ -18,8 +18,16 @@ export interface RawFailure {
 export interface DedupeOptions {
   repoRoot: string;
   contextLines: number;
-  maxClusters: number;
+  /** How many of the ranked clusters are kept (and get a SignalWindow read from disk). */
+  keep: number;
   logPath: string;
+}
+
+export interface DedupeResult {
+  /** The top `keep` clusters, each with its SignalWindow. */
+  kept: FailureCluster[];
+  /** Every cluster beyond `keep`, ranked, without a window. */
+  omitted: FailureCluster[];
 }
 
 /**
@@ -49,10 +57,17 @@ export function computeFingerprint(
   return createHash("sha256").update(payload, "utf8").digest("hex");
 }
 
+interface RankedCluster {
+  cluster: FailureCluster;
+  top: ReturnType<typeof topRepoFrame>;
+  startLine: number;
+  endLine: number;
+}
+
 export function dedupeFailures(
   failures: readonly RawFailure[],
   options: DedupeOptions,
-): FailureCluster[] {
+): DedupeResult {
   const groups = new Map<string, RawFailure[]>();
 
   // SPEC-002 §4.2.2: one failure record per canonical test identity, even if
@@ -66,7 +81,7 @@ export function dedupeFailures(
     else groups.set(fingerprint, [failure]);
   }
 
-  const clusters: FailureCluster[] = [];
+  const entries: RankedCluster[] = [];
 
   for (const [fingerprint, bucket] of groups) {
     const first = bucket[0];
@@ -78,7 +93,7 @@ export function dedupeFailures(
     const startLine = Math.min(...bucket.map((item) => item.startLine));
     const endLine = Math.max(...bucket.map((item) => item.endLine));
 
-    clusters.push({
+    const cluster: FailureCluster = {
       cluster_id: `c_${fingerprint.slice(0, 8)}`,
       fingerprint,
       error_kind: first.errorKind,
@@ -88,17 +103,29 @@ export function dedupeFailures(
       message: first.message,
       top_frame: top?.location ?? "unknown:0:0",
       pruned_stack: pruneStack(first.frames, options.repoRoot),
-      signal_window: top
-        ? readSignalWindow(top.file, top.line, options.contextLines, options.repoRoot)
-        : "",
+      signal_window: "",
       raw_log_lines: `L${startLine}-L${endLine}`,
-    });
+    };
+    entries.push({ cluster, top, startLine, endLine });
   }
 
-  return clusters
-    .sort(
-      (a, b) =>
-        b.affected_count - a.affected_count || a.raw_log_lines.localeCompare(b.raw_log_lines),
-    )
-    .slice(0, options.maxClusters);
+  const ranked = entries.sort(compareClusters);
+  const kept = ranked.slice(0, options.keep).map(({ cluster, top }) =>
+    top
+      ? {
+          ...cluster,
+          signal_window: readSignalWindow(top.file, top.line, options.contextLines, options.repoRoot),
+        }
+      : cluster,
+  );
+  return { kept, omitted: ranked.slice(options.keep).map(({ cluster }) => cluster) };
+}
+
+function compareClusters(a: RankedCluster, b: RankedCluster): number {
+  return (
+    b.cluster.affected_count - a.cluster.affected_count ||
+    a.startLine - b.startLine ||
+    a.endLine - b.endLine ||
+    (a.cluster.cluster_id < b.cluster.cluster_id ? -1 : a.cluster.cluster_id > b.cluster.cluster_id ? 1 : 0)
+  );
 }

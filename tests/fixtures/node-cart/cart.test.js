@@ -1,0 +1,10 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { subtotal, tax, discount, total, first } from "./cart.js";
+const items = [{ name: "pen", price: 500, qty: 3 }];
+test("subtotal adds up", () => assert.equal(subtotal(items), 1500));
+test("tax is 21%", () => assert.equal(tax(1000), 210));
+test("discount 10% leaves 90%", () => assert.equal(discount(1000, 10), 900));
+test("total with 10% off", () => assert.equal(total(items, 10), 1634));
+test("total with 100% off is free", () => assert.equal(total(items, 100), 0));
+test("first of an empty cart is undefined", () => assert.equal(first([]), undefined));

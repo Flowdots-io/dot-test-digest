@@ -25,68 +25,46 @@ TDD state lives in `~/.cache/dot-test-digest/state-<scope_id>.json`; `--scope-id
 
 ## Example
 
-The same small project (a cart module with one real bug and 29 vitest tests, 5 of them failing), run without and with the digest. Measured on 2026-11-01 with dot-test-digest 0.1.0, Node 20, vitest 2.1.9 and `--no-jev`; the log path is shortened.
+The same small project run without and with the digest: a cart module with two bugs (`discount` returns the discount instead of the amount left, and `first` crashes on an empty cart) and 29 vitest tests, 5 of them failing. The project is in [`tests/fixtures/vitest-cart/`](tests/fixtures/vitest-cart). It is a recreation: the project I measured the first version of this example with was not kept, so the numbers below come from this one and are not comparable with the earlier ones. Measured on 2026-11-01 with dot-test-digest 0.1.0 (built from this tree), Node 22.23.4, vitest 2.1.9, `--no-jev`, in a fresh temporary copy of the fixture. The log path in the pasted digest is shortened to `~/.cache/...`; the byte count is of the real output, with a longer path.
 
 ```bash
 vitest run                                  # raw
 dot-test-digest --no-jev -- vitest run      # through the digest
 ```
 
-**Raw:** 109 lines, 4,308 bytes (excerpt)
+**Raw:** 110 lines, 4,292 bytes, exit code `1` (excerpt)
 
 ```text
+ RUN  v2.1.9 /tmp/m/vc
 
- RUN  v2.1.9 /path/to/project
-
- ❯ tests/cart.test.ts (29 tests | 5 failed) 49ms
-   × cart > discount 10% leaves 90% 21ms
+ ❯ tests/cart.test.ts (29 tests | 5 failed) 48ms
+   × cart > discount 10% leaves 90% 20ms
      → expected 100 to be 900 // Object.is equality
    × cart > total without discount 3ms
      → expected +0 to be 1815 // Object.is equality
-   × cart > total with 10% off 2ms
+   × cart > total with 10% off 3ms
      → expected 182 to be 1634 // Object.is equality
    × cart > total with 100% off is free 2ms
      → expected 1815 to be +0 // Object.is equality
-   × cart > first of an empty cart is undefined 2ms
+   × cart > first of an empty cart is undefined 3ms
      → Cannot read properties of undefined (reading 'name')
 
 ⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
 
-… (88 more lines: per-failure diffs and stack traces)
+… (per-failure diffs and stack traces, omitted here)
  Test Files  1 failed (1)
       Tests  5 failed | 24 passed (29)
-   Start at  03:39:05
-   Duration  663ms (transform 122ms, setup 0ms, collect 118ms, tests 49ms, environment 0ms, prepare 137ms)
+   Start at  22:54:05
+   Duration  787ms (transform 98ms, setup 0ms, collect 77ms, tests 48ms, environment 0ms, prepare 144ms)
 ```
 
-**Digest:** 33 lines, 1,798 bytes (complete output), same exit code (`1`)
+**Digest:** 34 lines, 2,128 bytes, same exit code (`1`)
 
 ```text
-[FAIL] 5 failed, 24 passed in 1517ms | 3 clusters | log: ~/.cache/dot-test-digest/logs/run_mvxa6iou671370c8.log
-c_c7823024 ASSERTION_FAILURE x1 tests/cart.test.ts:11:69
-  AssertionError: expected 1815 to be +0 // Object.is equality
-  diff: expected 0 / received 1815
-  tests/cart.test.ts:11:69
-   9 |   it("total without discount", () => expect(total(items)).toBe(1815));
-  10 |   it("total with 10% off", () => expect(total(items, 10)).toBe(1634));
-  11 >   it("total with 100% off is free", () => expect(total(items, 100)).toBe(0));
-  12 |   it("first item name", () => expect(first(items)).toBe("pen"));
-  13 |   it("first of an empty cart is undefined", () => expect(first([])).toBeUndefined());
-  tests: cart > total with 100% off is free
-  raw: L11-L84
-c_8bdc37b0 RUNTIME_EXCEPTION x1 src/cart.ts:10:50
-  TypeError: Cannot read properties of undefined (reading 'name')
-  Module.first src/cart.ts:10:50
-  tests/cart.test.ts:13:58
-   8 |   return d + tax(d); // bug propagates here
-   9 | };
-  10 > export const first = (items: Item[]) => items[0].name; // crashes on an empty cart
-  tests: cart > first of an empty cart is undefined
-  raw: L13-L102
+[FAIL] 5 failed, 24 passed in 1326ms | 3 clusters | log: ~/.cache/dot-test-digest/logs/run_mvyffv735538e5b4.log
 c_992bb564 ASSERTION_FAILURE x1 tests/cart.test.ts:7:66
   AssertionError: expected 100 to be 900 // Object.is equality
   diff: expected 900 / received 100
-  tests/cart.test.ts:7:66
   5 |   it("subtotal adds up", () => expect(subtotal(items)).toBe(1500));
   6 |   it("tax is 21%", () => expect(tax(1000)).toBe(210));
   7 >   it("discount 10% leaves 90%", () => expect(discount(1000, 10)).toBe(900));
@@ -94,43 +72,86 @@ c_992bb564 ASSERTION_FAILURE x1 tests/cart.test.ts:7:66
   9 |   it("total without discount", () => expect(total(items)).toBe(1815));
   tests: cart > discount 10% leaves 90%
   raw: L5-L27
+c_95e904e3 ASSERTION_FAILURE x1 tests/cart.test.ts:9:59
+  AssertionError: expected +0 to be 1815 // Object.is equality
+  diff: expected 1815 / received 0
+   7 |   it("discount 10% leaves 90%", () => expect(discount(1000, 10)).toBe(900));
+   8 |   it("discount 50% leaves half", () => expect(discount(2000, 50)).toBe(1000));
+   9 >   it("total without discount", () => expect(total(items)).toBe(1815));
+  10 |   it("total with 10% off", () => expect(total(items, 10)).toBe(1634));
+  11 |   it("total with 100% off is free", () => expect(total(items, 100)).toBe(0));
+  tests: cart > total without discount
+  raw: L7-L46
+c_cf012b19 ASSERTION_FAILURE x1 tests/cart.test.ts:10:59
+  AssertionError: expected 182 to be 1634 // Object.is equality
+  diff: expected 1634 / received 182
+   8 |   it("discount 50% leaves half", () => expect(discount(2000, 50)).toBe(1000));
+   9 |   it("total without discount", () => expect(total(items)).toBe(1815));
+  10 >   it("total with 10% off", () => expect(total(items, 10)).toBe(1634));
+  11 |   it("total with 100% off is free", () => expect(total(items, 100)).toBe(0));
+  12 |   it("first item name", () => expect(first(items)).toBe("pen"));
+  tests: cart > total with 10% off
+  raw: L9-L65
 +2 more clusters (see log)
+  c_c7823024 ASSERTION_FAILURE x1 tests/cart.test.ts:11:69 cart > total with 100% off is free
+  c_8bdc37b0 RUNTIME_EXCEPTION x1 src/cart.ts:10:50 cart > first of an empty cart is undefined
 ```
 
-Fair reading of this example: vitest already prints a one-line summary of every failure at the top, so the raw output is not hard to scan here. The digest drops the repeated per-failure detail and adds a source window around each failing line, but it shows **3 of the 5 failures**; the other two are only counted (`+2 more clusters`). The full output is always in the log it names.
+Fair reading of this example: vitest already prints a one-line summary of every failure at the top, so the raw output is not hard to scan here. The digest drops the repeated per-failure detail and adds a source window around each failing line. It prints full detail for **3 of the 5 failures** (the `--max-clusters` default is 5, but the output is also capped at about 600 tokens); the other two are listed one per line after `+2 more clusters`, with their id, kind, location and test name, but no message, diff or window. The one that is not an assertion (the `TypeError` from `first`) is one of the two that only get a line. The full output is always in the log the header names.
 
-A passing run is one line (`[PASS] 29 passed, 0 failed in 1301ms | log: …`, 101 bytes against 262 bytes raw).
+A passing run is one line: for the same project with both bugs fixed, `[PASS] 29 passed, 0 failed in 1306ms | log: …` was 86 bytes against 249 bytes raw (10 lines).
 
 ## Where it works well, and where it does not
 
-These are measurements from small hand-made projects with the same bug in each, not a benchmark. Sizes are raw output against digest output.
+These are measurements from small hand-made projects, not a benchmark. Sizes are raw output against digest output; the digest bytes include the header line with its log path (a `/tmp/...` path here; the default `~/.cache/...` path is a little longer).
 
 | Case | Raw | Digest | Verdict |
 | --- | --- | --- | --- |
-| vitest (non-TTY), 5 of 29 failing | 110 lines, 4,308 B | 33 lines, 1,798 B | **Good.** Distinct failures become clusters with file, line, diff and a source window. Shows the first 3 clusters only. |
-| vitest, all passing | 10 lines, 262 B | 1 line, 101 B | **Good.** |
-| `node --test` (default or `--test-reporter=tap`), 4 of 26 failing | 214 lines, about 5.5 KB | 6 lines, 305 B | **Poor for debugging.** Four different failures are merged into one cluster, `RUNTIME_EXCEPTION x4 unknown:0:0 "Unknown test failure"`. The file and line and the actual values are lost, and the diff shown belongs to only one of the four tests. |
-| `node --test --test-reporter=spec`, 4 failing | 172 lines, 6,851 B | 24 lines, 1,277 B | **Not recognized.** Reported as `BUILD_ERROR` with `0 failed, 0 passed`; you get the tail of the log. |
-| `tsc`, 6 errors in 2 files | 8 lines, 714 B | 40 lines, 1,894 B | **Larger than the raw output.** The source windows outweigh the saving when there are only a few errors. |
+| vitest (non-TTY), 5 of 29 failing | 110 lines, 4,292 B | 34 lines, 2,128 B | **Good.** Distinct failures become clusters with file, line, diff and a source window. Full detail for the first 3; the others are listed one per line. |
+| vitest, all passing | 10 lines, 249 B | 1 line, 86 B | **Good.** |
+| `node --test` (default or `--test-reporter=tap`), 4 of 6 failing | 120 lines, 3,593 B (default); 3,591 B (tap) | 38 lines, 2,258 B (both) | **Good now.** The four failures are four clusters (three with file, line, diff and source window, the fourth listed in one line), not one merged cluster. |
+| `node --test --test-reporter=spec`, 4 of 6 failing | 91 lines, 3,336 B | 38 lines, 2,258 B | **Good now.** Parsed, with the same clusters as the tap reporter; no longer reported as `BUILD_ERROR`. |
+| `tsc --noEmit`, 5 errors in 2 files | 5 lines, 419 B | 6 lines, 517 B | **Not smaller.** The digest is the header line (98 B) plus the 5 raw lines unchanged: the size rule falls back to the raw text when a digest would be larger. So it costs the header and saves nothing. |
+
+Differences from the first version of this table, so the numbers are not read as a like-for-like comparison: the `node --test` project here has 6 tests (not 26) and the `tsc` project has 5 errors (not 6), because these are the fixtures kept in `tests/fixtures/` (`node-cart`, `tsc-small`). The same-bug-in-each claim from before no longer holds; each project has its own failures.
 
 **The TDD gate (`--tdd-phase=red`) is the most reliable part.** In every case I ran it gave the right verdict, and the exit code was `0` for `VALID_RED` and `64` for `INVALID_RED`:
 
-| Red phase run | Status |
-| --- | --- |
-| vitest, an assertion fails | `VALID_RED` |
-| `node --test` (default, tap or spec reporter), an assertion fails | `VALID_RED` |
-| vitest, import of a missing module | `INVALID_RED` (`SYNTAX_IMPORT_ERROR`) |
-| `node --test` (tap or spec reporter), import of a missing module | `INVALID_RED` |
-| `node --test`, the test already passes | `INVALID_RED` |
+| Red phase run | Status | Exit code |
+| --- | --- | --- |
+| vitest, an assertion fails | `VALID_RED` | `0` |
+| `node --test` (default, tap or spec reporter), an assertion fails | `VALID_RED` | `0` (each of the three) |
+| vitest, import of a missing module | `INVALID_RED` (`SYNTAX_IMPORT_ERROR`) | `64` |
+| `node --test` (default, tap or spec reporter), import of a missing module | `INVALID_RED` (`SYNTAX_IMPORT_ERROR`) | `64` (each of the three) |
+| `node --test`, the test already passes | `INVALID_RED` | `64` |
+| `node --test` (default, tap or spec reporter), import of an export that does not exist | `VALID_RED` | `0` (each of the three) |
 
-For `node --test` the gate is right but its labels are weaker: assertion failures are reported as `RUNTIME_EXCEPTION`, and with the spec reporter as `UNSTRUCTURED_BUILD_ERROR`.
+The `node --test` labels are now the right ones for what I checked: with `--format=json`, an assertion failure under the spec reporter is `ASSERTION_FAILURE` (the failing `first()` call is `RUNTIME_EXCEPTION`), a missing module is `SYNTAX_IMPORT_ERROR`, and a missing export is `RUNTIME_EXCEPTION` (`The requested module './cart.js' does not provide an export named 'applyCoupon'`), which is why it counts as a valid red. I checked the JSON labels only for the spec reporter and not for default or tap.
 
 **Things to know before relying on it**
 
-- Clusters are grouped by the shape of the error, not by root cause. One bug that produces different assertion messages makes several clusters, and a cap of about 600 tokens means only the first 3 are printed.
+- Clusters are grouped by the shape of the error, not by root cause. One bug that produces different assertion messages makes several clusters (in the vitest example, the one bug in `discount` makes four assertion clusters, each with different expected and received values).
+- Only the first 3 clusters of the vitest run above were printed in full. The output is capped at about 600 tokens, so a run with more failures than fit shows the rest as `+N more clusters (see log)`.
+- The clusters that do not fit are no longer only counted: each one is listed on its own line with its id, kind, location and test name. When the digest would be larger than the raw output (the `tsc` row), the footer is not printed because the raw text already shows every failure.
+- Size rule: the digest is never larger than the raw output plus its header line. By design it degrades in steps (no source windows, then no stack frames, then one line per cluster, and in the end the header plus the raw text). I observed only two outcomes: the full form (every other case here) and the last step (the `tsc` case); I did not construct runs that land on the middle steps. The cap on the full-detail form (600 tokens, 2,400 bytes) is unchanged.
+- Two failing tests with the same name in one file are kept as two failures, and the test name carries the line it was declared on: `handles empty @4` and `handles empty @7` in a `node --test` run (default, tap and spec reporters all printed it). The suffix is added only when a name is shared by two or more failures of the same file, and it uses the line of the test, so the same name in different files stays plain. I only checked this with `node --test`.
 - The child process's exit code is passed through unchanged (observed in every run above).
 - Grammars for pytest, `cargo test`, `go test`, jest, mocha, Playwright and eslint exist and are covered by fixtures in this repo's tests, but **I did not run them against real projects**. Treat them as untested in practice.
 - Gear 1 (the optional Jev call) was not exercised: every measurement used `--no-jev`.
+
+**How these were measured.** Each project was copied to a fresh temporary directory (the vitest and tsc copies use this repo's `node_modules`), then each command was run twice with stdout and stderr redirected to a file, so vitest ran non-TTY: once raw and once through the digest, with `DOT_TEST_DIGEST_HOME` pointing at a temporary directory. Lines and bytes are `wc -l` and `wc -c`. Commands, with `D` standing for `node dist/index.js --no-jev`:
+
+```bash
+vitest run                                  # in tests/fixtures/vitest-cart, and D -- vitest run
+tsc --noEmit                                # in tests/fixtures/tsc-small, and D -- tsc --noEmit
+node --test cart.test.js                    # in tests/fixtures/node-cart, and D -- node --test cart.test.js
+node --test --test-reporter=tap cart.test.js
+node --test --test-reporter=spec cart.test.js
+D --tdd-phase=red --scope-id <id> -- <the same commands>   # red-phase table; missing module: missing-module.test.js,
+                                                           # missing export: missing-export.test.js, already passing: passing.test.js
+```
+
+For the red-phase table's vitest missing-module case, a one-test project imported `../src/nope`, which does not exist. The all-passing vitest row is the cart fixture with the two bugs fixed.
 
 ## Install
 
