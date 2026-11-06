@@ -225,6 +225,52 @@ describe("omitted-cluster footer", () => {
   });
 });
 
+describe("omitted-cluster footer at volume", () => {
+  it("When the listing itself does not fit, the tail is only counted (5000 omitted clusters)", () => {
+    const COUNT = 5000;
+    const only = omissionCluster({
+      cluster_id: "c_30000000",
+      top_frame: "src/cart.ts:3:10",
+      message: "AssertionError: expected 100 to be 900",
+      raw_log_lines: "L1-L4",
+    });
+    const omittedLine = (n: number): string =>
+      `  c_3${String(n).padStart(7, "0")} TYPE_COMPILE_ERROR x1 src/mod${n}.ts:1:1 TS2322: Type ${n} is not assignable`;
+    const omitted = Array.from({ length: COUNT }, (_, i) =>
+      omissionCluster({
+        cluster_id: `c_3${String(i + 1).padStart(7, "0")}`,
+        error_kind: "TYPE_COMPILE_ERROR",
+        top_frame: `src/mod${i + 1}.ts:1:1`,
+        message: `TS2322: Type ${i + 1} is not assignable`,
+      }),
+    );
+
+    const base = [
+      "[FAIL] 5001 failed, 0 passed in 10ms | 1 cluster | log: /tmp/logs/run_e.log",
+      "c_30000000 ASSERTION_FAILURE x1 src/cart.ts:3:10",
+      "  AssertionError: expected 100 to be 900",
+      "  raw: L1-L4",
+      `+${COUNT} more clusters (see log)`,
+    ].join("\n");
+    let expected = base;
+    for (let n = 1; n <= COUNT; n += 1) {
+      const next = `${expected}\n${omittedLine(n)}`;
+      if (Buffer.byteLength(next, "utf8") > 2400) break;
+      expected = next;
+    }
+    // The renderer cuts any text of 2,400 bytes or more to 2,399 ending in "...".
+    if (Buffer.byteLength(expected, "utf8") > 2399) expected = `${expected.slice(0, 2396)}...`;
+
+    const envelope = failEnvelope(COUNT + 1, "/tmp/logs/run_e.log", [only]);
+    const started = performance.now();
+    const out = formatEnvelope(envelope, "compact-md", { omitted });
+    const elapsed = performance.now() - started;
+
+    expect(out).toBe(`${expected}\n`);
+    expect(elapsed).toBeLessThan(2000);
+  }, 120_000);
+});
+
 const HEADER_A = "[FAIL] 1 failed, 0 passed in 10ms | 1 cluster | log: /tmp/logs/run_a.log";
 
 function thresholdEnvelope() {

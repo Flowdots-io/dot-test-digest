@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
+import type { ErrorKind } from "../types/schema.js";
 import {
   classifyMessage,
   emptyCounts,
@@ -25,10 +26,10 @@ interface NodeEntry {
   expected?: string;
   actual?: string;
   stack: string[];
-  /** A whole test file that crashed rather than one test inside it. */
-  fileLevel: boolean;
   /** The error the crashed file's own subprocess printed. */
   subprocessError?: string;
+  /** Overrides the kind classified from the message, e.g. a crashed file that printed no error. */
+  errorKind?: ErrorKind;
   startLine: number;
   endLine: number;
 }
@@ -52,6 +53,10 @@ function nodePath(text: string): string {
   });
 }
 
+/**
+ * Failures carry paths relative to where the digest runs, so this reads
+ * `process.cwd()`: `Adapter.parse(lines)` has no other context to take it from.
+ */
 function relativeToCwd(file: string): string {
   const relative = path.relative(process.cwd(), file).split(path.sep).join("/");
   return relative === "" || relative.startsWith("..") ? file : relative;
@@ -72,6 +77,19 @@ function errorLine(text: string): string | undefined {
   return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
 }
 
+/** A failure known by its name alone: the stream was cut before its details. */
+function nameOnlyEntry(name: string, line: number): NodeEntry {
+  return {
+    name,
+    file: null,
+    line: undefined,
+    message: "",
+    stack: [],
+    startLine: line,
+    endLine: line,
+  };
+}
+
 function toRawFailure(entry: NodeEntry): RawFailure {
   const message = entry.subprocessError ?? entry.message;
   const diff =
@@ -81,7 +99,8 @@ function toRawFailure(entry: NodeEntry): RawFailure {
   return {
     testName: entry.name === "" ? null : entry.name,
     testFile: entry.file === null ? null : relativeToCwd(entry.file),
-    errorKind: classifyMessage(entry.subprocessError ?? `${entry.message}\n${entry.stack.join("\n")}`),
+    errorKind:
+      entry.errorKind ?? classifyMessage(entry.subprocessError ?? `${entry.message}\n${entry.stack.join("\n")}`),
     message: message === "" ? UNKNOWN_FAILURE : message,
     frames: entry.stack,
     ...(diff !== undefined ? { diff } : {}),
@@ -91,7 +110,7 @@ function toRawFailure(entry: NodeEntry): RawFailure {
 }
 
 /** Names shared by two or more failures of one file get ` @<line>`. */
-function disambiguateSameNames(entries: readonly NodeEntry[]): void {
+function disambiguateSameNames(entries: NodeEntry[]): void {
   const keyOf = (entry: NodeEntry): string => `${entry.file ?? ""}\u0000${entry.name}`;
   const seen = new Map<string, number>();
   for (const entry of entries) seen.set(keyOf(entry), (seen.get(keyOf(entry)) ?? 0) + 1);
@@ -102,15 +121,24 @@ function disambiguateSameNames(entries: readonly NodeEntry[]): void {
   }
 }
 
-function finish(entries: readonly NodeEntry[], counts: AdapterCounts): AdapterResult {
-  disambiguateSameNames(entries);
-  return { adapter: "js-test", failures: entries.map(toRawFailure), counts };
+/** What a reader found: one node entry, or failures the generic grammar read from a block that is not node's. */
+type Slot = NodeEntry | readonly RawFailure[];
+
+function isEntry(slot: Slot): slot is NodeEntry {
+  return !Array.isArray(slot);
+}
+
+function finish(slots: readonly Slot[], counts: AdapterCounts): AdapterResult {
+  disambiguateSameNames(slots.filter(isEntry));
+  const failures = slots.flatMap((slot) => (isEntry(slot) ? [toRawFailure(slot)] : slot));
+  return { adapter: "js-test", failures, counts };
 }
 
 /* ------------------------------ TAP ------------------------------ */
 
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)\s*$/;
-const TAP_COUNT = /^#\s+(tests|pass|fail|cancelled|skipped|todo)\s+(\d+)\s*$/;
+const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
+const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
 const YAML_KEY = /^([A-Za-z_][\w-]*):(?:\s+(.*?))?\s*$/;
 const NODE_SUBTEST = /^\s*# Subtest:/;
 
@@ -120,15 +148,23 @@ interface TapBlock {
   endIndex: number;
 }
 
-/** A YAML scalar loses one pair of quotes and its escapes; anything else is trimmed. */
-function yamlScalar(value: string): string {
-  const trimmed = value.trim();
-  const quote = trimmed[0];
-  if ((quote === "'" || quote === '"') && trimmed.length >= 2 && trimmed.endsWith(quote)) {
-    const inner = trimmed.slice(1, -1);
-    return quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1");
+/**
+ * One pair of matching quotes removed. `unescape` turns what is inside into the
+ * value, or returns undefined when the text is not one literal and keeps its quotes.
+ */
+function unquote(value: string, unescape: (inner: string, quote: string) => string | undefined): string {
+  const quote = value[0];
+  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
+    return unescape(value.slice(1, -1), quote) ?? value;
   }
-  return trimmed;
+  return value;
+}
+
+/** A YAML scalar loses its quotes and their escapes; anything else is trimmed. */
+function yamlScalar(value: string): string {
+  return unquote(value.trim(), (inner, quote) =>
+    quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1"),
+  );
 }
 
 /**
@@ -188,39 +224,28 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
     if (!text.startsWith("#")) break;
     comments.unshift(text.replace(/^#\s+/, ""));
   }
-  for (const comment of comments) {
-    const error = errorLine(comment);
-    if (error !== undefined) return error;
-  }
-  return undefined;
+  return firstErrorLine(comments);
 }
 
 /**
- * The entry of the `not ok` line at `index`, and the index of the last line it
+ * The slot of the `not ok` line at `index`, and the index of the last line it
  * consumed. A suite whose only fault is its failing subtests is a roll-up, not
- * a failure (entry null). A `not ok` with no readable diagnostic block (a
- * stream cut short) is kept by name alone.
+ * a failure (slot null). A block with no `failureType:` key is not node's: the
+ * generic grammar reads it, as it did before node TAP had its own. A `not ok`
+ * with no readable diagnostic block (a stream cut short) is kept by name alone.
  */
 function readTapEntry(
   lines: readonly CapturedLine[],
   index: number,
   name: string,
-): { entry: NodeEntry | null; next: number } {
+  generic: GenericReader,
+): { entry: Slot | null; next: number } {
   const startLine = lines[index]?.line ?? 0;
   const block = readTapBlock(lines, index);
-  const failureType = block?.fields.get("failureType")?.[0];
-  if (block === null || failureType === undefined) {
-    const entry: NodeEntry = {
-      name,
-      file: null,
-      line: undefined,
-      message: "",
-      stack: [],
-      fileLevel: false,
-      startLine,
-      endLine: startLine,
-    };
-    return { entry, next: index };
+  if (block === null) return { entry: nameOnlyEntry(name, startLine), next: index };
+  const failureType = block.fields.get("failureType")?.[0];
+  if (failureType === undefined) {
+    return { entry: generic(lines.slice(index, block.endIndex + 1)), next: block.endIndex };
   }
   if (failureType === "subtestsFailed") return { entry: null, next: block.endIndex };
 
@@ -243,7 +268,6 @@ function readTapEntry(
       ? { expected: expected.join(", "), actual: actual.join(", ") }
       : {}),
     stack: field("stack").map(nodePath),
-    fileLevel,
     ...(subprocessError !== undefined ? { subprocessError } : {}),
     startLine,
     endLine: lines[block.endIndex]?.line ?? startLine,
@@ -251,19 +275,24 @@ function readTapEntry(
   return { entry, next: block.endIndex };
 }
 
-function tapCounts(lines: readonly CapturedLine[], failureCount: number): AdapterCounts {
+/**
+ * The counts printed by `# pass N` / `ℹ pass N` lines: `pass` and `skipped` plus
+ * `todo` as is, failed as `fail` plus `cancelled` (node reports a timed-out test
+ * as cancelled). With `highestPass`, repeated `pass` lines keep the largest
+ * value (TAP prints one per nesting level); otherwise the last line wins.
+ */
+function nodeCounts(lines: readonly CapturedLine[], pattern: RegExp, highestPass: boolean): AdapterCounts {
   const seen = new Map<string, number>();
   for (const line of lines) {
-    const match = TAP_COUNT.exec(line.text);
+    const match = pattern.exec(line.text);
     if (match === null) continue;
     const key = match[1] ?? "";
     const value = Number(match[2]);
-    seen.set(key, key === "pass" ? Math.max(seen.get(key) ?? 0, value) : value);
+    seen.set(key, highestPass && key === "pass" ? Math.max(seen.get(key) ?? 0, value) : value);
   }
   const counts = emptyCounts();
-  const failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
   counts.passed = seen.get("pass") ?? 0;
-  counts.failed = failed === 0 ? failureCount : failed;
+  counts.failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
   counts.skipped = (seen.get("skipped") ?? 0) + (seen.get("todo") ?? 0);
   return counts;
 }
@@ -273,25 +302,31 @@ export function isNodeTapStream(lines: readonly CapturedLine[]): boolean {
   return lines.some((line) => NODE_SUBTEST.test(line.text));
 }
 
-export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
-  const entries: NodeEntry[] = [];
+/** Reads a stretch of lines with the generic (v0.1.2) grammar; the adapter supplies it so this module imports nothing from it. */
+export type GenericReader = (span: readonly CapturedLine[]) => readonly RawFailure[];
+
+export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericReader): AdapterResult {
+  const entries: Slot[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
-    const read = readTapEntry(lines, index, (notOk[2] ?? "").replaceAll("\\#", "#"));
+    const read = readTapEntry(lines, index, (notOk[2] ?? "").replaceAll("\\#", "#"), generic);
     if (read.entry !== null) entries.push(read.entry);
     index = read.next;
   }
-  return finish(entries, tapCounts(lines, entries.length));
+  const counts = nodeCounts(lines, TAP_COUNT, true);
+  if (counts.failed === 0) counts.failed = entries.flat().length;
+  return finish(entries, counts);
 }
 
 /* ------------------------------ spec ------------------------------ */
 
-export const NODE_SPEC_SUMMARY = /^ℹ (tests|pass|fail|cancelled|skipped|todo) (\d+)\s*$/;
+export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
 const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
 const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
 const SPEC_NAME_ROW = /^✖ (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
 const SPEC_TREE_ROW = /^(\s*)([✖▶]) (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+const SPEC_ENTRY_INDENT = 2;
 const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
 
 export function isSpecStream(lines: readonly CapturedLine[]): boolean {
@@ -303,27 +338,9 @@ export function isSpecStream(lines: readonly CapturedLine[]): boolean {
   return keys.size >= 2;
 }
 
-function specCounts(lines: readonly CapturedLine[]): AdapterCounts {
-  const seen = new Map<string, number>();
-  for (const line of lines) {
-    const match = NODE_SPEC_SUMMARY.exec(line.text);
-    if (match !== null) seen.set(match[1] ?? "", Number(match[2]));
-  }
-  const counts = emptyCounts();
-  counts.passed = seen.get("pass") ?? 0;
-  counts.failed = (seen.get("fail") ?? 0) + (seen.get("cancelled") ?? 0);
-  counts.skipped = (seen.get("skipped") ?? 0) + (seen.get("todo") ?? 0);
-  return counts;
-}
-
 /** A value that is one quoted string literal loses its quotes; anything else is unchanged. */
 function inspectedString(value: string): string {
-  const quote = value[0];
-  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
-    const inner = value.slice(1, -1);
-    if (!inner.includes(quote)) return inner;
-  }
-  return value;
+  return unquote(value, (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
 /** One `test at ...` entry of the `✖ failing tests:` section. */
@@ -342,6 +359,8 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
     const raw = lines[index]?.text ?? "";
     const text = raw.trim();
     if (text === "") continue;
+    // node indents every line of an entry by two spaces; anything shallower is output of a wrapper.
+    if (leadingSpaces(raw) < SPEC_ENTRY_INDENT) break;
     last = index;
     if (/^at /.test(text)) inFrames = true;
     if (!inFrames) {
@@ -371,7 +390,6 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
       ? { expected: inspectedString(expected), actual: inspectedString(actual) }
       : {}),
     stack,
-    fileLevel: message === "test failed" && path.resolve(name) === file,
     startLine: lines[start]?.line ?? 0,
     endLine: lines[last]?.line ?? 0,
   };
@@ -395,16 +413,7 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
       continue;
     }
     if (opened.has(key)) continue;
-    entries.push({
-      name: row[3] ?? "",
-      file: null,
-      line: undefined,
-      message: "",
-      stack: [],
-      fileLevel: false,
-      startLine: line.line,
-      endLine: line.line,
-    });
+    entries.push(nameOnlyEntry(row[3] ?? "", line.line));
   }
   return entries;
 }
@@ -433,13 +442,18 @@ function firstErrorLine(block: readonly string[]): string | undefined {
   return undefined;
 }
 
+/** node names a crashed test file's entry after the file, as given on the command line. */
+function isCrashedFile(entry: NodeEntry): boolean {
+  return entry.message === "test failed" && entry.file !== null && path.resolve(entry.name) === entry.file;
+}
+
 /**
  * A whole test file that crashed is reported as `'test failed'`; node relayed
  * the subprocess's own error above the section. Take it from the block that
  * names the file, else (with a single crashed file) from the first error line.
  */
-function adoptSubprocessErrors(before: readonly CapturedLine[], entries: readonly NodeEntry[]): void {
-  const crashed = entries.filter((entry) => entry.fileLevel);
+function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEntry[]): void {
+  const crashed = entries.filter(isCrashedFile);
   if (crashed.length === 0) return;
   const blocks = textBlocks(before);
   for (const entry of crashed) {
@@ -450,11 +464,13 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: readonl
       firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
       (crashed.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
     if (error !== undefined) entry.subprocessError = error;
+    // A file that died with no error we can attribute to it is a startup crash, never a behavioural failure.
+    else entry.errorKind = "SYNTAX_IMPORT_ERROR";
   }
 }
 
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
-  const counts = specCounts(lines);
+  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, false);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
   if (section < 0) return finish(readSpecLeafRows(lines), counts);
 

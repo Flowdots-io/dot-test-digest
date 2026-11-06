@@ -642,6 +642,74 @@ describe("node --test, spec red-phase guards (missing module, path forms)", () =
   });
 });
 
+describe("node --test, spec red-phase guards (crashes with no attributable error)", () => {
+  const SYNTAX_MESSAGE =
+    "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
+  const PASSING_TEST = "import './lib.js'; import test from 'node:test'; test('x',()=>{});\n";
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (two files crash through a shared import)", async () => {
+    const run = await runNodeCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      [SPEC, "a.test.js", "b.test.js"],
+      {
+        files: {
+          "lib.js": "import './missing-helper.js';\n",
+          "a.test.js": PASSING_TEST,
+          "b.test.js": PASSING_TEST,
+        },
+      },
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters.every((c) => c.error_kind === "SYNTAX_IMPORT_ERROR")).toBe(true);
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (a test file that exits at load time)", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json", "--tdd-phase=red"], [SPEC, "exit.test.js"], {
+      files: { "exit.test.js": "process.exit(1);\n" },
+    });
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+});
+
+describe("node --test, spec red-phase guards (wrapper output after the failing-tests section)", () => {
+  const WRAPPER = [
+    "import { spawnSync } from 'node:child_process';",
+    "const run = spawnSync(process.execPath, ['--test', '--test-reporter=spec', 'mm.test.js'], { stdio: 'inherit' });",
+    "console.log(' ELIFECYCLE  Test failed. See above for more details.');",
+    "process.exit(run.status ?? 1);",
+    "",
+  ].join("\n");
+
+  it("A missing module is INVALID_RED with exit 64 and the syntax message (unindented wrapper line after the section)", async () => {
+    const run = await runInCart(
+      ["--no-jev", "--format=json", "--tdd-phase=red"],
+      [process.execPath, "wrapper.js"],
+      {
+        files: {
+          "wrapper.js": WRAPPER,
+          "mm.test.js": "import './missing.js'; import test from 'node:test'; test('x',()=>{});\n",
+        },
+      },
+    );
+    const envelope = JSON.parse(run.stdout) as Envelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(envelope.clusters[0]?.message.startsWith("Error: Cannot find module '")).toBe(true);
+    expect(envelope.clusters[0]?.message).not.toContain("ELIFECYCLE");
+  });
+});
+
 describe("node --test, spec red-phase guards (missing export)", () => {
   it("A missing export is VALID_RED with exit 0 under the spec reporter", async () => {
     const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [SPEC, "missing-export.test.js"]);
