@@ -83,40 +83,28 @@ export function renderPassLine(envelope: DigestEnvelope): string {
   return truncateBytes(line, PASS_BYTE_CEILING - 1);
 }
 
-/**
- * The size rule's ladder (SPEC-002 §4.4): each level drops detail from the one
- * before. Level 5 (header + raw text) is handled apart in `renderFailBody`.
- */
-interface Level {
+/** What a cluster block keeps at one step of the size rule's ladder (SPEC-002 §4.4). */
+interface Detail {
   window: boolean;
   stack: boolean;
-  oneLine: boolean;
 }
-
-const FULL: Level = { window: true, stack: true, oneLine: false };
-const LADDER: readonly Level[] = [
-  FULL,
-  { window: false, stack: true, oneLine: false },
-  { window: false, stack: false, oneLine: false },
-  { window: false, stack: false, oneLine: true },
-];
 
 function clusterHead(cluster: FailureCluster): string {
   return `${cluster.cluster_id} ${cluster.error_kind} x${cluster.affected_count} ${cluster.top_frame}`;
 }
 
-function renderCluster(cluster: FailureCluster, level: Level): string {
+function renderCluster(cluster: FailureCluster, detail: Detail): string {
   const rows: string[] = [clusterHead(cluster)];
   if (cluster.message !== "") rows.push(`  ${truncateBytes(cluster.message, MESSAGE_BYTE_CEILING)}`);
   if (cluster.diff) {
     rows.push(`  diff: expected ${cluster.diff.expected} / received ${cluster.diff.received}`);
   }
-  if (level.stack) {
+  if (detail.stack) {
     for (const frame of cluster.pruned_stack) {
       if (frame !== cluster.top_frame) rows.push(`  ${frame}`);
     }
   }
-  if (level.window && cluster.signal_window !== "") {
+  if (detail.window && cluster.signal_window !== "") {
     for (const line of cluster.signal_window.split("\n")) rows.push(`  ${line}`);
   }
   if (cluster.sample_tests.length > 0) rows.push(`  tests: ${cluster.sample_tests.join(", ")}`);
@@ -146,6 +134,17 @@ function renderOneLine(cluster: FailureCluster): string {
   return cluster.message === "" ? head : `${head} ${truncateBytes(cluster.message, MESSAGE_BYTE_CEILING)}`;
 }
 
+/**
+ * The size rule's ladder: each renderer drops detail from the one before. The
+ * last level (header plus the raw text itself) is handled apart in `renderFailBody`.
+ */
+const LADDER: readonly ((cluster: FailureCluster) => string)[] = [
+  (cluster) => renderCluster(cluster, { window: true, stack: true }),
+  (cluster) => renderCluster(cluster, { window: false, stack: true }),
+  (cluster) => renderCluster(cluster, { window: false, stack: false }),
+  renderOneLine,
+];
+
 function headerLine(envelope: DigestEnvelope, clusterCount: number): string {
   return (
     `[${statusLabel(envelope)}] ${envelope.summary.failed} failed, ${envelope.summary.passed} passed` +
@@ -165,33 +164,34 @@ function byteSums(texts: readonly string[]): number[] {
   return sums;
 }
 
-interface FailBodyInput {
-  rawText: string | undefined;
-  omitted: readonly FailureCluster[];
-}
-
 /**
  * The first ladder level whose text is no larger than the raw output plus the
- * header would be; the header plus the raw text itself when none is.
+ * header would be; the header plus the raw text itself when none is. Without
+ * raw text the size rule is off and only the fullest level is rendered.
  */
-function renderFailBody(envelope: DigestEnvelope, { rawText, omitted }: FailBodyInput): string {
-  if (rawText === undefined) return renderLevel(envelope, omitted, FULL).text;
-  for (const level of LADDER) {
-    const { text, header } = renderLevel(envelope, omitted, level);
-    if (byteLength(text) <= byteLength(rawText) + byteLength(header)) return text;
+function renderFailBody(
+  envelope: DigestEnvelope,
+  omitted: readonly FailureCluster[],
+  rawText: string | undefined,
+): string {
+  for (const renderBlock of rawText === undefined ? LADDER.slice(0, 1) : LADDER) {
+    const { header, body } = renderLevel(envelope, omitted, renderBlock);
+    const text = truncateBytes(`${header}\n${body}`, FAIL_BYTE_CEILING - 1);
+    if (rawText === undefined || byteLength(text) <= byteLength(rawText) + byteLength(header)) return text;
   }
   const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText}`;
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
+/** One ladder level: the header, and the cluster blocks and omitted-cluster footer that fit the token budget. */
 function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
-  level: Level,
-): { text: string; header: string } {
+  renderBlock: (cluster: FailureCluster) => string,
+): { header: string; body: string } {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
-  const blocks = clusters.map((c) => (level.oneLine ? renderOneLine(c) : renderCluster(c, level)));
+  const blocks = clusters.map(renderBlock);
   const lines = all.map((c) => `\n${renderOmittedLine(c)}`);
   const footerHead = (count: number): string => `\n+${count} more clusters (see log)`;
 
@@ -215,8 +215,7 @@ function renderLevel(
   const header = headerLine(envelope, kept);
   const footer =
     all.length > kept ? `${footerHead(all.length - kept)}${lines.slice(kept, kept + listed).join("")}` : "";
-  const text = `${header}\n${blocks.slice(0, kept).join("\n")}${footer}`;
-  return { text: truncateBytes(text, FAIL_BYTE_CEILING - 1), header };
+  return { header, body: `${blocks.slice(0, kept).join("\n")}${footer}` };
 }
 
 export function formatEnvelope(
@@ -225,6 +224,7 @@ export function formatEnvelope(
   context: RenderContext = {},
 ): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
+  const { rawText, omitted = [] } = context;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED";
-  return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, { rawText: context.rawText, omitted: context.omitted ?? [] })}\n`;
+  return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, omitted, rawText)}\n`;
 }
