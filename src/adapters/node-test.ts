@@ -26,10 +26,10 @@ interface NodeEntry {
   expected?: string;
   actual?: string;
   stack: string[];
+  /** The whole test file died at load (node's `test failed` entry for the file itself), not one of its tests. */
+  crashedFile: boolean;
   /** The error the crashed file's own subprocess printed. */
   subprocessError?: string;
-  /** Overrides the kind classified from the message, e.g. a crashed file that printed no error. */
-  errorKind?: ErrorKind;
   startLine: number;
   endLine: number;
 }
@@ -85,9 +85,20 @@ function nameOnlyEntry(name: string, line: number): NodeEntry {
     line: undefined,
     message: "",
     stack: [],
+    crashedFile: false,
     startLine: line,
     endLine: line,
   };
+}
+
+/**
+ * A crashed file's own printed error decides its kind; one that printed none
+ * died at startup, never on a behavioural assertion.
+ */
+function errorKindOf(entry: NodeEntry): ErrorKind {
+  if (entry.subprocessError !== undefined) return classifyMessage(entry.subprocessError);
+  if (entry.crashedFile) return "SYNTAX_IMPORT_ERROR";
+  return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`);
 }
 
 function toRawFailure(entry: NodeEntry): RawFailure {
@@ -99,8 +110,7 @@ function toRawFailure(entry: NodeEntry): RawFailure {
   return {
     testName: entry.name === "" ? null : entry.name,
     testFile: entry.file === null ? null : relativeToCwd(entry.file),
-    errorKind:
-      entry.errorKind ?? classifyMessage(entry.subprocessError ?? `${entry.message}\n${entry.stack.join("\n")}`),
+    errorKind: errorKindOf(entry),
     message: message === "" ? UNKNOWN_FAILURE : message,
     frames: entry.stack,
     ...(diff !== undefined ? { diff } : {}),
@@ -257,8 +267,8 @@ function readTapEntry(
   const place = /^(.*?):(\d+)(?::\d+)?$/.exec(field("location")[0] ?? "");
   const expected = field("expected");
   const actual = field("actual");
-  const fileLevel = field("error")[0] === "test failed" && block.fields.has("exitCode");
-  const subprocessError = fileLevel ? tapSubprocessError(lines, index) : undefined;
+  const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
+  const subprocessError = crashedFile ? tapSubprocessError(lines, index) : undefined;
   const entry: NodeEntry = {
     name,
     file: place?.[1] ?? null,
@@ -268,6 +278,7 @@ function readTapEntry(
       ? { expected: expected.join(", "), actual: actual.join(", ") }
       : {}),
     stack: field("stack").map(nodePath),
+    crashedFile,
     ...(subprocessError !== undefined ? { subprocessError } : {}),
     startLine,
     endLine: lines[block.endIndex]?.line ?? startLine,
@@ -390,6 +401,7 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
       ? { expected: inspectedString(expected), actual: inspectedString(actual) }
       : {}),
     stack,
+    crashedFile: message === "test failed" && path.resolve(name) === file,
     startLine: lines[start]?.line ?? 0,
     endLine: lines[last]?.line ?? 0,
   };
@@ -442,18 +454,13 @@ function firstErrorLine(block: readonly string[]): string | undefined {
   return undefined;
 }
 
-/** node names a crashed test file's entry after the file, as given on the command line. */
-function isCrashedFile(entry: NodeEntry): boolean {
-  return entry.message === "test failed" && entry.file !== null && path.resolve(entry.name) === entry.file;
-}
-
 /**
  * A whole test file that crashed is reported as `'test failed'`; node relayed
  * the subprocess's own error above the section. Take it from the block that
  * names the file, else (with a single crashed file) from the first error line.
  */
 function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEntry[]): void {
-  const crashed = entries.filter(isCrashedFile);
+  const crashed = entries.filter((entry) => entry.crashedFile);
   if (crashed.length === 0) return;
   const blocks = textBlocks(before);
   for (const entry of crashed) {
@@ -464,8 +471,6 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEnt
       firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
       (crashed.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
     if (error !== undefined) entry.subprocessError = error;
-    // A file that died with no error we can attribute to it is a startup crash, never a behavioural failure.
-    else entry.errorKind = "SYNTAX_IMPORT_ERROR";
   }
 }
 
