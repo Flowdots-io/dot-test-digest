@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import type { DigestEnvelope } from "../src/types/schema.js";
 import { runInCart, runNodeCart } from "./helpers/node-cart.js";
 
 interface Cluster {
@@ -676,6 +677,23 @@ describe("node --test, spec red-phase guards (crashes with no attributable error
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
     expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
+  });
+});
+
+describe("node --test, TAP red-phase guards (crashes with no attributable error)", () => {
+  const SYNTAX_MESSAGE =
+    "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
+
+  it("A missing module is INVALID_RED with exit 64 (a test file that exits at load time)", async () => {
+    const run = await runNodeCart(["--no-jev", "--format=json", "--tdd-phase=red"], ["exit.test.js"], {
+      files: { "exit.test.js": "process.exit(1);\n" },
+    });
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(envelope.clusters?.[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 });
