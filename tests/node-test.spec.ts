@@ -849,6 +849,45 @@ describe("node --test, summary.failed is never below the failures reported", () 
     }
   }
 
+  it("Nested suite and timeout under the spec reporter (two node runs in one stream sum their counts)", async () => {
+    const wrapper = [
+      "import { spawnSync } from 'node:child_process';",
+      "let status = 0;",
+      "for (const file of ['two-fail.test.js', 'two-pass.test.js']) {",
+      "  const run = spawnSync(process.execPath, ['--test', '--test-reporter=spec', file], { stdio: 'inherit' });",
+      "  status = status || (run.status ?? 1);",
+      "}",
+      "process.exit(status);",
+      "",
+    ].join("\n");
+    const run = await runInCart(
+      ["--no-jev", "--format=json"],
+      [process.execPath, "wrapper.js"],
+      {
+        files: {
+          "wrapper.js": wrapper,
+          "two-fail.test.js": [
+            "import test from 'node:test';",
+            "test('good one', () => {});",
+            "test('bad one', () => { throw new Error('one'); });",
+            "test('bad two', () => { throw new RangeError('two'); });",
+            "",
+          ].join("\n"),
+          "two-pass.test.js": [
+            "import test from 'node:test';",
+            "test('fine a', () => {});",
+            "test('fine b', () => {});",
+            "",
+          ].join("\n"),
+        },
+      },
+    );
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.summary).toMatchObject({ passed: 3, failed: 2, total_clusters: 2 });
+  });
+
   it("Nested suite and timeout under the spec reporter (after hook that throws, same counts as TAP)", async () => {
     const source = SUITE_FAULTS["after hook that throws"]?.source ?? "";
     const tap = await digestOf("tap", "suite-fault.test.js", source);
