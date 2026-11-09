@@ -123,10 +123,11 @@ Differences from the first version of this table, so the numbers are not read as
 | `node --test` (default, tap or spec reporter), an assertion fails | `VALID_RED` | `0` (each of the three) |
 | vitest, import of a missing module | `INVALID_RED` (`SYNTAX_IMPORT_ERROR`) | `64` |
 | `node --test` (default, tap or spec reporter), import of a missing module | `INVALID_RED` (`SYNTAX_IMPORT_ERROR`) | `64` (each of the three) |
+| `node --test` (default or spec reporter), a test file that exits at load time (`process.exit(1)`, no error printed) | `INVALID_RED` (`SYNTAX_IMPORT_ERROR`) | `64` (each of the two) |
 | `node --test`, the test already passes | `INVALID_RED` | `64` |
 | `node --test` (default, tap or spec reporter), import of an export that does not exist | `VALID_RED` | `0` (each of the three) |
 
-The `node --test` labels are now the right ones for what I checked: with `--format=json`, an assertion failure under the spec reporter is `ASSERTION_FAILURE` (the failing `first()` call is `RUNTIME_EXCEPTION`), a missing module is `SYNTAX_IMPORT_ERROR`, and a missing export is `RUNTIME_EXCEPTION` (`The requested module './cart.js' does not provide an export named 'applyCoupon'`), which is why it counts as a valid red. I checked the JSON labels only for the spec reporter and not for default or tap.
+The `node --test` labels are now the right ones for what I checked: with `--format=json`, an assertion failure under the spec reporter is `ASSERTION_FAILURE` (the failing `first()` call is `RUNTIME_EXCEPTION`), a missing module is `SYNTAX_IMPORT_ERROR`, and a missing export is `RUNTIME_EXCEPTION` (`The requested module './cart.js' does not provide an export named 'applyCoupon'`), which is why it counts as a valid red. I checked the JSON labels only for the spec reporter and not for default or tap, except for the file that exits at load time, which I checked with both the default and the spec reporter.
 
 **Things to know before relying on it**
 
