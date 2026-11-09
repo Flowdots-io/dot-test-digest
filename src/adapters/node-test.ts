@@ -294,17 +294,19 @@ function readTapEntry(
 /**
  * The counts printed by `# pass N` / `ℹ pass N` lines: `pass` and `skipped` plus
  * `todo` as is, failed as `fail` plus `cancelled` (node reports a timed-out test
- * as cancelled). With `highestPass`, repeated `pass` lines keep the largest
- * value (TAP prints one per nesting level); otherwise the last line wins.
+ * as cancelled). `merge` joins a count line with the same key seen before.
  */
-function nodeCounts(lines: readonly CapturedLine[], pattern: RegExp, highestPass: boolean): AdapterCounts {
+function nodeCounts(
+  lines: readonly CapturedLine[],
+  pattern: RegExp,
+  merge: (key: string, earlier: number, value: number) => number,
+): AdapterCounts {
   const seen = new Map<string, number>();
   for (const line of lines) {
     const match = pattern.exec(line.text);
     if (match === null) continue;
     const key = match[1] ?? "";
-    const value = Number(match[2]);
-    seen.set(key, highestPass && key === "pass" ? Math.max(seen.get(key) ?? 0, value) : value);
+    seen.set(key, merge(key, seen.get(key) ?? 0, Number(match[2])));
   }
   const counts = emptyCounts();
   counts.passed = seen.get("pass") ?? 0;
@@ -330,7 +332,11 @@ export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericRea
     if (read.entry !== null) entries.push(read.entry);
     index = read.next;
   }
-  return finish(entries, nodeCounts(lines, TAP_COUNT, true));
+  // TAP prints a `# pass` line per nesting level: the largest is the run's total.
+  const counts = nodeCounts(lines, TAP_COUNT, (key, earlier, value) =>
+    key === "pass" ? Math.max(earlier, value) : value,
+  );
+  return finish(entries, counts);
 }
 
 /* ------------------------------ spec ------------------------------ */
@@ -478,7 +484,8 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEnt
 }
 
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
-  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, false);
+  // The spec reporter prints one summary block per node run: a stream of several runs sums them.
+  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, (_key, earlier, value) => earlier + value);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
   if (section < 0) return finish(readSpecLeafRows(lines), counts);
 
