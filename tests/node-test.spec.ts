@@ -789,6 +789,53 @@ describe("node --test, spec red-phase guards (assertion failures)", () => {
 });
 
 /** `exit` is node's own exit code for the file (a throwing `after` hook leaves it 0); the digest passes it through. */
+const DIRECTIVE_TESTS = [
+  "import test, { describe, it } from 'node:test';",
+  "test('not yet', { todo: true }, () => { throw new Error('x'); });",
+  "test('later', { todo: 'next sprint' }, () => { throw new Error('l'); });",
+  "test('skipped one', { skip: true }, () => { throw new Error('y'); });",
+  "describe('group', () => {",
+  "  it('nested todo', { todo: true }, () => { throw new Error('n'); });",
+  "  it('nested skip', { skip: 'why' }, () => { throw new Error('s'); });",
+  "});",
+  "describe('todo suite', { todo: true }, () => {",
+  "  it('inside', () => { throw new Error('i'); });",
+  "});",
+  "test('fine', () => {});",
+  "",
+].join("\n");
+
+describe("node --test, TODO and SKIP directives", () => {
+  it("The spec reporter yields the same clusters as the TAP reporter (todo and skip tests are not failures)", async () => {
+    const tap = await digestOf("tap", "directives.test.js", DIRECTIVE_TESTS);
+    const spec = await digestOf("spec", "directives.test.js", DIRECTIVE_TESTS);
+
+    for (const { run, envelope } of [tap, spec]) {
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("PASS");
+      expect(envelope.clusters ?? []).toEqual([]);
+      expect(envelope.summary.failed).toBe(0);
+    }
+    expect(spec.envelope.summary).toEqual(tap.envelope.summary);
+  });
+
+  it("The spec reporter yields the same clusters as the TAP reporter (a real failure beside directive tests)", async () => {
+    const source = `${DIRECTIVE_TESTS}test('really fails', () => { throw new Error('z'); });\n`;
+    const tap = await digestOf("tap", "directives.test.js", source);
+    const spec = await digestOf("spec", "directives.test.js", source);
+
+    for (const { run, envelope } of [tap, spec]) {
+      expect(run.code).toBe(1);
+      expect(envelope.clusters?.map((c) => c.sample_tests)).toEqual([["really fails"]]);
+      expect(envelope.summary.failed).toBe(1);
+    }
+    expect(spec.envelope.summary).toEqual(tap.envelope.summary);
+    expect(spec.envelope.clusters?.map((c) => c.cluster_id)).toEqual(
+      tap.envelope.clusters?.map((c) => c.cluster_id),
+    );
+  });
+});
+
 const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> = {
   "before hook that throws": {
     exit: 1,
