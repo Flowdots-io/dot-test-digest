@@ -787,3 +787,74 @@ describe("node --test, spec red-phase guards (assertion failures)", () => {
     ]);
   });
 });
+
+/** `exit` is node's own exit code for the file (a throwing `after` hook leaves it 0); the digest passes it through. */
+const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> = {
+  "before hook that throws": {
+    exit: 1,
+    source: [
+      "import { describe, before, it } from 'node:test';",
+      "describe('suite with failing before', () => {",
+      "  before(() => { throw new Error('before boom'); });",
+      "  it('a', () => {});",
+      "  it('b', () => {});",
+      "});",
+      "",
+    ].join("\n"),
+  },
+  "after hook that throws": {
+    exit: 0,
+    source: [
+      "import { describe, after, it } from 'node:test';",
+      "describe('suite with failing after', () => {",
+      "  after(() => { throw new Error('after boom'); });",
+      "  it('a', () => {});",
+      "});",
+      "",
+    ].join("\n"),
+  },
+  "describe body that throws": {
+    exit: 1,
+    source: [
+      "import { describe, it } from 'node:test';",
+      "describe('suite whose body throws', () => {",
+      "  it('a', () => {});",
+      "  throw new Error('body boom');",
+      "});",
+      "",
+    ].join("\n"),
+  },
+};
+
+async function digestOf(reporter: string, file: string, source: string) {
+  const run = await runNodeCart(
+    ["--no-jev", "--format=json"],
+    [`--test-reporter=${reporter}`, file],
+    { files: { [file]: source } },
+  );
+  return { run, envelope: JSON.parse(run.stdout) as DigestEnvelope };
+}
+
+describe("node --test, summary.failed is never below the failures reported", () => {
+  for (const [fault, { source, exit }] of Object.entries(SUITE_FAULTS)) {
+    for (const reporter of ["tap", "spec"]) {
+      it(`Nested suite with a deep-equal failure and a timeout (${fault}, ${reporter})`, async () => {
+        const { run, envelope } = await digestOf(reporter, "suite-fault.test.js", source);
+
+        const reported = (envelope.clusters ?? []).reduce((sum, c) => sum + c.affected_count, 0);
+        expect(run.code).toBe(exit);
+        expect(reported).toBeGreaterThan(0);
+        expect(envelope.summary.failed).toBeGreaterThanOrEqual(reported);
+      });
+    }
+  }
+
+  it("Nested suite and timeout under the spec reporter (after hook that throws, same counts as TAP)", async () => {
+    const source = SUITE_FAULTS["after hook that throws"]?.source ?? "";
+    const tap = await digestOf("tap", "suite-fault.test.js", source);
+    const spec = await digestOf("spec", "suite-fault.test.js", source);
+
+    expect(tap.envelope.summary).toEqual({ passed: 1, failed: 1, skipped: 0, total_clusters: 1 });
+    expect(spec.envelope.summary).toEqual(tap.envelope.summary);
+  });
+});
