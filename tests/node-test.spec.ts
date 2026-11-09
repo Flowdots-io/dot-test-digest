@@ -787,3 +787,165 @@ describe("node --test, spec red-phase guards (assertion failures)", () => {
     ]);
   });
 });
+
+/** `exit` is node's own exit code for the file (a throwing `after` hook leaves it 0); the digest passes it through. */
+const DIRECTIVE_TESTS = [
+  "import test, { describe, it } from 'node:test';",
+  "test('not yet', { todo: true }, () => { throw new Error('x'); });",
+  "test('later', { todo: 'next sprint' }, () => { throw new Error('l'); });",
+  "test('skipped one', { skip: true }, () => { throw new Error('y'); });",
+  "describe('group', () => {",
+  "  it('nested todo', { todo: true }, () => { throw new Error('n'); });",
+  "  it('nested skip', { skip: 'why' }, () => { throw new Error('s'); });",
+  "});",
+  "describe('todo suite', { todo: true }, () => {",
+  "  it('inside', () => { throw new Error('i'); });",
+  "});",
+  "test('fine', () => {});",
+  "",
+].join("\n");
+
+describe("node --test, TODO and SKIP directives", () => {
+  it("The spec reporter yields the same clusters as the TAP reporter (todo and skip tests are not failures)", async () => {
+    const tap = await digestOf("tap", "directives.test.js", DIRECTIVE_TESTS);
+    const spec = await digestOf("spec", "directives.test.js", DIRECTIVE_TESTS);
+
+    for (const { run, envelope } of [tap, spec]) {
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("PASS");
+      expect(envelope.clusters ?? []).toEqual([]);
+      expect(envelope.summary.failed).toBe(0);
+    }
+    expect(spec.envelope.summary).toEqual(tap.envelope.summary);
+  });
+
+  it("The spec reporter yields the same clusters as the TAP reporter (a real failure beside directive tests)", async () => {
+    const source = [
+      DIRECTIVE_TESTS,
+      "import assert from 'node:assert/strict';",
+      "test('really fails', () => { assert.equal(1, 2); });",
+      "",
+    ].join("\n");
+    const tap = await digestOf("tap", "directives.test.js", source);
+    const spec = await digestOf("spec", "directives.test.js", source);
+
+    for (const { run, envelope } of [tap, spec]) {
+      expect(run.code).toBe(1);
+      expect(envelope.clusters?.map((c) => c.sample_tests)).toEqual([["really fails"]]);
+      expect(envelope.summary.failed).toBe(1);
+    }
+    expect(spec.envelope.summary).toEqual(tap.envelope.summary);
+    expect(spec.envelope.clusters?.map((c) => c.cluster_id)).toEqual(
+      tap.envelope.clusters?.map((c) => c.cluster_id),
+    );
+  });
+});
+
+const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> = {
+  "before hook that throws": {
+    exit: 1,
+    source: [
+      "import { describe, before, it } from 'node:test';",
+      "describe('suite with failing before', () => {",
+      "  before(() => { throw new Error('before boom'); });",
+      "  it('a', () => {});",
+      "  it('b', () => {});",
+      "});",
+      "",
+    ].join("\n"),
+  },
+  "after hook that throws": {
+    exit: 0,
+    source: [
+      "import { describe, after, it } from 'node:test';",
+      "describe('suite with failing after', () => {",
+      "  after(() => { throw new Error('after boom'); });",
+      "  it('a', () => {});",
+      "});",
+      "",
+    ].join("\n"),
+  },
+  "describe body that throws": {
+    exit: 1,
+    source: [
+      "import { describe, it } from 'node:test';",
+      "describe('suite whose body throws', () => {",
+      "  it('a', () => {});",
+      "  throw new Error('body boom');",
+      "});",
+      "",
+    ].join("\n"),
+  },
+};
+
+async function digestOf(reporter: string, file: string, source: string) {
+  const run = await runNodeCart(
+    ["--no-jev", "--format=json"],
+    [`--test-reporter=${reporter}`, file],
+    { files: { [file]: source } },
+  );
+  return { run, envelope: JSON.parse(run.stdout) as DigestEnvelope };
+}
+
+describe("node --test, summary.failed is never below the failures reported", () => {
+  for (const [fault, { source, exit }] of Object.entries(SUITE_FAULTS)) {
+    for (const reporter of ["tap", "spec"]) {
+      it(`Nested suite with a deep-equal failure and a timeout (${fault}, ${reporter})`, async () => {
+        const { run, envelope } = await digestOf(reporter, "suite-fault.test.js", source);
+
+        const reported = (envelope.clusters ?? []).reduce((sum, c) => sum + c.affected_count, 0);
+        expect(run.code).toBe(exit);
+        expect(reported).toBeGreaterThan(0);
+        expect(envelope.summary.failed).toBeGreaterThanOrEqual(reported);
+      });
+    }
+  }
+
+  it("Nested suite and timeout under the spec reporter (two node runs in one stream sum their counts)", async () => {
+    const wrapper = [
+      "import { spawnSync } from 'node:child_process';",
+      "let status = 0;",
+      "for (const file of ['two-fail.test.js', 'two-pass.test.js']) {",
+      "  const run = spawnSync(process.execPath, ['--test', '--test-reporter=spec', file], { stdio: 'inherit' });",
+      "  status = status || (run.status ?? 1);",
+      "}",
+      "process.exit(status);",
+      "",
+    ].join("\n");
+    const run = await runInCart(
+      ["--no-jev", "--format=json"],
+      [process.execPath, "wrapper.js"],
+      {
+        files: {
+          "wrapper.js": wrapper,
+          "two-fail.test.js": [
+            "import test from 'node:test';",
+            "test('good one', () => {});",
+            "test('bad one', () => { throw new Error('one'); });",
+            "test('bad two', () => { throw new RangeError('two'); });",
+            "",
+          ].join("\n"),
+          "two-pass.test.js": [
+            "import test from 'node:test';",
+            "test('fine a', () => {});",
+            "test('fine b', () => {});",
+            "",
+          ].join("\n"),
+        },
+      },
+    );
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+    expect(run.code).toBe(1);
+    expect(envelope.summary).toMatchObject({ passed: 3, failed: 2, total_clusters: 2 });
+  });
+
+  it("Nested suite and timeout under the spec reporter (after hook that throws, same counts as TAP)", async () => {
+    const source = SUITE_FAULTS["after hook that throws"]?.source ?? "";
+    const tap = await digestOf("tap", "suite-fault.test.js", source);
+    const spec = await digestOf("spec", "suite-fault.test.js", source);
+
+    expect(tap.envelope.summary).toEqual({ passed: 1, failed: 1, skipped: 0, total_clusters: 1 });
+    expect(spec.envelope.summary).toEqual(tap.envelope.summary);
+  });
+});

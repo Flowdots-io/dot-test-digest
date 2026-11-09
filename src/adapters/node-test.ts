@@ -138,15 +138,21 @@ function isEntry(slot: Slot): slot is NodeEntry {
   return !Array.isArray(slot);
 }
 
+/**
+ * node does not count a suite whose hook or body threw in `fail`/`cancelled`,
+ * so the printed count can sit below the failures reported: it never may.
+ */
 function finish(slots: readonly Slot[], counts: AdapterCounts): AdapterResult {
   disambiguateSameNames(slots.filter(isEntry));
   const failures = slots.flatMap((slot) => (isEntry(slot) ? [toRawFailure(slot)] : slot));
-  return { adapter: "js-test", failures, counts };
+  const failed = Math.max(counts.failed, failures.length);
+  return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
 
 /* ------------------------------ TAP ------------------------------ */
 
-const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)\s*$/;
+/** `not ok N - name`; group 3 is a trailing `# TODO` / `# SKIP` directive (node escapes a `#` of the name itself). */
+const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)(\s+#\s*(?:TODO|SKIP)\b.*)?\s*$/;
 const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
 const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
 const YAML_KEY = /^([A-Za-z_][\w-]*):(?:\s+(.*?))?\s*$/;
@@ -289,17 +295,19 @@ function readTapEntry(
 /**
  * The counts printed by `# pass N` / `ℹ pass N` lines: `pass` and `skipped` plus
  * `todo` as is, failed as `fail` plus `cancelled` (node reports a timed-out test
- * as cancelled). With `highestPass`, repeated `pass` lines keep the largest
- * value (TAP prints one per nesting level); otherwise the last line wins.
+ * as cancelled). `merge` joins a count line with the same key seen before.
  */
-function nodeCounts(lines: readonly CapturedLine[], pattern: RegExp, highestPass: boolean): AdapterCounts {
+function nodeCounts(
+  lines: readonly CapturedLine[],
+  pattern: RegExp,
+  merge: (key: string, earlier: number, value: number) => number,
+): AdapterCounts {
   const seen = new Map<string, number>();
   for (const line of lines) {
     const match = pattern.exec(line.text);
     if (match === null) continue;
     const key = match[1] ?? "";
-    const value = Number(match[2]);
-    seen.set(key, highestPass && key === "pass" ? Math.max(seen.get(key) ?? 0, value) : value);
+    seen.set(key, merge(key, seen.get(key) ?? 0, Number(match[2])));
   }
   const counts = emptyCounts();
   counts.passed = seen.get("pass") ?? 0;
@@ -322,11 +330,14 @@ export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericRea
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
     const read = readTapEntry(lines, index, (notOk[2] ?? "").replaceAll("\\#", "#"), generic);
-    if (read.entry !== null) entries.push(read.entry);
+    const isDirective = notOk[3] !== undefined;
+    if (read.entry !== null && !isDirective) entries.push(read.entry);
     index = read.next;
   }
-  const counts = nodeCounts(lines, TAP_COUNT, true);
-  if (counts.failed === 0) counts.failed = entries.flat().length;
+  // TAP prints a `# pass` line per nesting level: the largest is the run's total.
+  const counts = nodeCounts(lines, TAP_COUNT, (key, earlier, value) =>
+    key === "pass" ? Math.max(earlier, value) : value,
+  );
   return finish(entries, counts);
 }
 
@@ -335,8 +346,14 @@ export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericRea
 export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
 const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
 const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
-const SPEC_NAME_ROW = /^✖ (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
-const SPEC_TREE_ROW = /^(\s*)([✖▶]) (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+/**
+ * What follows a row's name: its duration, then for a todo or skipped test a
+ * directive group (` # TODO`, or ` # <reason>` when the test gave one). A
+ * directive only counts after the duration, so a `#` inside a name is safe.
+ */
+const SPEC_ROW_TAIL = String.raw`(?: \(\d+(?:\.\d+)?ms\)( #(?: .*)?)?)?\s*$`;
+const SPEC_NAME_ROW = new RegExp(`^✖ (.*?)${SPEC_ROW_TAIL}`);
+const SPEC_TREE_ROW = new RegExp(`^(\\s*)([✖▶]) (.*?)${SPEC_ROW_TAIL}`);
 const SPEC_ENTRY_INDENT = 2;
 const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
 
@@ -358,7 +375,7 @@ function inspectedString(value: string): string {
 function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
   const at = SPEC_TEST_AT.exec(lines[start]?.text ?? "");
   const nameRow = SPEC_NAME_ROW.exec(lines[start + 1]?.text ?? "");
-  if (at === null || nameRow === null) return null;
+  if (at === null || nameRow === null || nameRow[2] !== undefined) return null;
 
   const messageLines: string[] = [];
   const stack: string[] = [];
@@ -424,7 +441,7 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
       opened.add(key);
       continue;
     }
-    if (opened.has(key)) continue;
+    if (opened.has(key) || row[4] !== undefined) continue;
     entries.push(nameOnlyEntry(row[3] ?? "", line.line));
   }
   return entries;
@@ -475,7 +492,8 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEnt
 }
 
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
-  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, false);
+  // The spec reporter prints one summary block per node run: a stream of several runs sums them.
+  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, (_key, earlier, value) => earlier + value);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
   if (section < 0) return finish(readSpecLeafRows(lines), counts);
 
