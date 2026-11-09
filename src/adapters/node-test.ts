@@ -9,6 +9,7 @@ import {
   type AdapterCounts,
   type AdapterResult,
 } from "./common.js";
+import { parseGeneric } from "./js-generic.js";
 
 /**
  * The two reporters `node --test` prints (SPEC-002 §4.2.3): TAP, whose failures
@@ -131,20 +132,11 @@ function disambiguateSameNames(entries: NodeEntry[]): void {
   }
 }
 
-/** What a reader found: one node entry, or failures the generic grammar read from a block that is not node's. */
-type Slot = NodeEntry | readonly RawFailure[];
-
-function isEntry(slot: Slot): slot is NodeEntry {
-  return !Array.isArray(slot);
-}
-
 /**
  * node does not count a suite whose hook or body threw in `fail`/`cancelled`,
  * so the printed count can sit below the failures reported: it never may.
  */
-function finish(slots: readonly Slot[], counts: AdapterCounts): AdapterResult {
-  disambiguateSameNames(slots.filter(isEntry));
-  const failures = slots.flatMap((slot) => (isEntry(slot) ? [toRawFailure(slot)] : slot));
+function resultOf(failures: RawFailure[], counts: AdapterCounts): AdapterResult {
   const failed = Math.max(counts.failed, failures.length);
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
@@ -244,26 +236,18 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
 }
 
 /**
- * The slot of the `not ok` line at `index`, and the index of the last line it
- * consumed. A suite whose only fault is its failing subtests is a roll-up, not
- * a failure (slot null). A block with no `failureType:` key is not node's: the
- * generic grammar reads it, as it did before node TAP had its own. A `not ok`
- * with no readable diagnostic block (a stream cut short) is kept by name alone.
+ * The entry of a `not ok` line whose diagnostic block is node's (it has a
+ * `failureType:` key), or null for a suite whose only fault is its failing
+ * subtests: that is a roll-up, not a failure.
  */
 function readTapEntry(
   lines: readonly CapturedLine[],
   index: number,
   name: string,
-  generic: GenericReader,
-): { entry: Slot | null; next: number } {
+  block: TapBlock,
+): NodeEntry | null {
   const startLine = lines[index]?.line ?? 0;
-  const block = readTapBlock(lines, index);
-  if (block === null) return { entry: nameOnlyEntry(name, startLine), next: index };
-  const failureType = block.fields.get("failureType")?.[0];
-  if (failureType === undefined) {
-    return { entry: generic(lines.slice(index, block.endIndex + 1)), next: block.endIndex };
-  }
-  if (failureType === "subtestsFailed") return { entry: null, next: block.endIndex };
+  if (block.fields.get("failureType")?.[0] === "subtestsFailed") return null;
 
   const field = (key: string): string[] => block.fields.get(key) ?? [];
   const errorName = field("name").join(" ").trim();
@@ -275,7 +259,7 @@ function readTapEntry(
   const actual = field("actual");
   const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
   const subprocessError = crashedFile ? tapSubprocessError(lines, index) : undefined;
-  const entry: NodeEntry = {
+  return {
     name,
     file: place?.[1] ?? null,
     line: place?.[2],
@@ -289,7 +273,6 @@ function readTapEntry(
     startLine,
     endLine: lines[block.endIndex]?.line ?? startLine,
   };
-  return { entry, next: block.endIndex };
 }
 
 /**
@@ -321,24 +304,42 @@ export function isNodeTapStream(lines: readonly CapturedLine[]): boolean {
   return lines.some((line) => NODE_SUBTEST.test(line.text));
 }
 
-/** Reads a stretch of lines with the generic (v0.1.2) grammar; the adapter supplies it so this module imports nothing from it. */
-export type GenericReader = (span: readonly CapturedLine[]) => readonly RawFailure[];
-
-export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericReader): AdapterResult {
-  const entries: Slot[] = [];
+/**
+ * A `not ok` with no readable diagnostic block (a stream cut short) is kept by
+ * name alone. A block with no `failureType:` key is not node's: the generic
+ * grammar reads it, as it did before node TAP had its own.
+ */
+export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
+  const entries: NodeEntry[] = [];
+  const foreign: RawFailure[] = [];
   for (let index = 0; index < lines.length; index += 1) {
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
-    const read = readTapEntry(lines, index, (notOk[2] ?? "").replaceAll("\\#", "#"), generic);
+    const name = (notOk[2] ?? "").replaceAll("\\#", "#");
     const isDirective = notOk[3] !== undefined;
-    if (read.entry !== null && !isDirective) entries.push(read.entry);
-    index = read.next;
+    const block = readTapBlock(lines, index);
+    if (block === null) {
+      if (!isDirective) entries.push(nameOnlyEntry(name, lines[index]?.line ?? 0));
+      continue;
+    }
+    if (!isDirective) {
+      if (block.fields.get("failureType")?.[0] !== undefined) {
+        const entry = readTapEntry(lines, index, name, block);
+        if (entry !== null) entries.push(entry);
+      } else {
+        foreign.push(...parseGeneric(lines.slice(index, block.endIndex + 1)).failures);
+      }
+    }
+    index = block.endIndex;
   }
   // TAP prints a `# pass` line per nesting level: the largest is the run's total.
   const counts = nodeCounts(lines, TAP_COUNT, (key, earlier, value) =>
     key === "pass" ? Math.max(earlier, value) : value,
   );
-  return finish(entries, counts);
+  disambiguateSameNames(entries);
+  // Each block is read once and in stream order, so startLine puts the two lists back in that order.
+  const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
+  return resultOf(failures, counts);
 }
 
 /* ------------------------------ spec ------------------------------ */
@@ -491,11 +492,16 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEnt
   }
 }
 
+function specResult(entries: NodeEntry[], counts: AdapterCounts): AdapterResult {
+  disambiguateSameNames(entries);
+  return resultOf(entries.map(toRawFailure), counts);
+}
+
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
   // The spec reporter prints one summary block per node run: a stream of several runs sums them.
   const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, (_key, earlier, value) => earlier + value);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
-  if (section < 0) return finish(readSpecLeafRows(lines), counts);
+  if (section < 0) return specResult(readSpecLeafRows(lines), counts);
 
   const starts: number[] = [];
   for (let index = section + 1; index < lines.length; index += 1) {
@@ -507,5 +513,5 @@ export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
     if (entry !== null) entries.push(entry);
   });
   adoptSubprocessErrors(lines.slice(0, section), entries);
-  return finish(entries, counts);
+  return specResult(entries, counts);
 }
