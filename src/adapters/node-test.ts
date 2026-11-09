@@ -138,10 +138,15 @@ function isEntry(slot: Slot): slot is NodeEntry {
   return !Array.isArray(slot);
 }
 
+/**
+ * node does not count a suite whose hook or body threw in `fail`/`cancelled`,
+ * so the printed count can sit below the failures reported: it never may.
+ */
 function finish(slots: readonly Slot[], counts: AdapterCounts): AdapterResult {
   disambiguateSameNames(slots.filter(isEntry));
   const failures = slots.flatMap((slot) => (isEntry(slot) ? [toRawFailure(slot)] : slot));
-  return { adapter: "js-test", failures, counts };
+  const failed = Math.max(counts.failed, failures.length);
+  return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
 
 /* ------------------------------ TAP ------------------------------ */
@@ -325,9 +330,7 @@ export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericRea
     if (read.entry !== null) entries.push(read.entry);
     index = read.next;
   }
-  const counts = nodeCounts(lines, TAP_COUNT, true);
-  if (counts.failed === 0) counts.failed = entries.flat().length;
-  return finish(entries, counts);
+  return finish(entries, nodeCounts(lines, TAP_COUNT, true));
 }
 
 /* ------------------------------ spec ------------------------------ */
