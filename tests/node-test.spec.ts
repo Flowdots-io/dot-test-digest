@@ -1,27 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import type { DigestEnvelope } from "../src/types/schema.js";
+import type { DigestEnvelope, FailureCluster } from "../src/types/schema.js";
+import { clustersOf } from "./helpers/digest.js";
 import { runInCart, runNodeCart } from "./helpers/node-cart.js";
-
-interface Cluster {
-  cluster_id: string;
-  error_kind: string;
-  affected_count: number;
-  top_frame: string;
-  message: string;
-  diff?: { expected: string; received: string };
-  sample_tests: string[];
-  pruned_stack: string[];
-  signal_window: string;
-}
-
-interface Envelope {
-  status: string;
-  execution_gear: string;
-  summary: { passed: number; failed: number; skipped: number; total_clusters: number };
-  clusters: Cluster[];
-}
 
 function baselineOf(home: string, scope: string): string[] {
   const raw = fs.readFileSync(path.join(home, `state-${scope}.json`), "utf8");
@@ -31,14 +13,14 @@ function baselineOf(home: string, scope: string): string[] {
 describe("node --test, TAP diagnostic blocks", () => {
   it("The cart run with the default (TAP) reporter yields four distinct clusters", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], ["cart.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.status).toBe("FAIL");
     expect(envelope.execution_gear).toBe("GEAR_0_GRAMMAR");
     expect(envelope.summary).toEqual({ passed: 2, failed: 4, skipped: 0, total_clusters: 4 });
 
-    const view = envelope.clusters.map((c) => ({
+    const view = clustersOf(envelope).map((c) => ({
       cluster_id: c.cluster_id,
       error_kind: c.error_kind,
       affected_count: c.affected_count,
@@ -85,7 +67,7 @@ describe("node --test, TAP diagnostic blocks", () => {
         sample_tests: ["first of an empty cart is undefined"],
       },
     ]);
-    for (const cluster of envelope.clusters) {
+    for (const cluster of clustersOf(envelope)) {
       expect(cluster.top_frame).not.toBe("unknown:0:0");
       expect(cluster.message).not.toBe("Unknown test failure");
     }
@@ -93,9 +75,9 @@ describe("node --test, TAP diagnostic blocks", () => {
 
   it("Each node failure gets a SignalWindow from the right file", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], ["cart.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
-    const byId = (id: string): Cluster => {
-      const found = envelope.clusters.find((c) => c.cluster_id === id);
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+    const byId = (id: string): FailureCluster => {
+      const found = clustersOf(envelope).find((c) => c.cluster_id === id);
       if (found === undefined) throw new Error(`no cluster ${id}`);
       return found;
     };
@@ -110,7 +92,7 @@ describe("node --test, TAP diagnostic blocks", () => {
         "5 > export const first = (items) => items[0].name;",
       ].join("\n"),
     );
-    for (const cluster of envelope.clusters) {
+    for (const cluster of clustersOf(envelope)) {
       for (const frame of cluster.pruned_stack) {
         expect(frame).not.toContain("file://");
         expect(frame).not.toContain("node:internal");
@@ -137,20 +119,20 @@ describe("node --test, TAP diagnostic blocks", () => {
 describe("node --test, TAP counts, suites and timeouts", () => {
   it("Nested suite with a deep-equal failure and a timeout", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], ["suite.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.summary.passed).toBe(1);
     expect(envelope.summary.failed).toBe(3);
     expect(envelope.summary.skipped).toBe(0);
-    expect(envelope.clusters.flatMap((c) => c.sample_tests).sort()).toEqual([
+    expect(clustersOf(envelope).flatMap((c) => c.sample_tests).sort()).toEqual([
       "discount 10% leaves 90%",
       "names match",
       "slow",
     ]);
-    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(3);
+    expect(clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0)).toBe(3);
 
-    const names = envelope.clusters.find((c) => c.sample_tests.includes("names match"));
+    const names = clustersOf(envelope).find((c) => c.sample_tests.includes("names match"));
     expect(names?.error_kind).toBe("ASSERTION_FAILURE");
     expect(names?.top_frame).toBe("suite.test.js:7:34");
     expect(names?.message).toBe(
@@ -158,7 +140,7 @@ describe("node --test, TAP counts, suites and timeouts", () => {
     );
     expect(names?.diff).toEqual({ expected: "a: 2", received: "a: 1" });
 
-    const slow = envelope.clusters.find((c) => c.sample_tests.includes("slow"));
+    const slow = clustersOf(envelope).find((c) => c.sample_tests.includes("slow"));
     expect(slow?.error_kind).toBe("TIMEOUT_OR_CONN_REFUSED");
     expect(slow?.message).toBe("test timed out after 20ms");
     expect(slow?.top_frame).toBe("unknown:0:0");
@@ -169,13 +151,13 @@ describe("node --test, TAP counts, suites and timeouts", () => {
 describe("node --test, same-named failures under TAP", () => {
   it("Two same-named failing tests in one file stay two failures under TAP", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], ["same-name.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.summary).toEqual({ passed: 0, failed: 2, skipped: 0, total_clusters: 2 });
-    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
+    expect(clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
     expect(
-      envelope.clusters.map((c) => ({
+      clustersOf(envelope).map((c) => ({
         cluster_id: c.cluster_id,
         error_kind: c.error_kind,
         affected_count: c.affected_count,
@@ -217,12 +199,12 @@ describe("node --test, same-named failures under TAP", () => {
 describe("node --test, file-level TAP failures", () => {
   it("A missing module is one SYNTAX_IMPORT_ERROR failure", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], ["missing-module.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.summary.failed).toBe(1);
     expect(envelope.summary.total_clusters).toBe(1);
-    const cluster = envelope.clusters[0];
+    const cluster = clustersOf(envelope)[0];
     expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(cluster?.affected_count).toBe(1);
     expect(cluster?.sample_tests).toEqual(["missing-module.test.js"]);
@@ -234,12 +216,12 @@ describe("node --test, file-level TAP failures", () => {
 describe("node --test, file-level TAP failures (missing export)", () => {
   it("A missing export is a RUNTIME_EXCEPTION failure, not a syntax error", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], ["missing-export.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.summary.total_clusters).toBe(1);
-    expect(envelope.clusters[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
-    expect(envelope.clusters[0]?.message).toBe(
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(clustersOf(envelope)[0]?.message).toBe(
       "SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'",
     );
   });
@@ -249,13 +231,13 @@ describe("node --test, two crashing files under TAP", () => {
   it("Two crashing files under TAP each carry their own subprocess error", async () => {
     const files = ["missing-module.test.js", "missing-export.test.js"];
     const run = await runNodeCart(["--no-jev", "--format=json"], files);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.summary).toEqual({ passed: 0, failed: 2, skipped: 0, total_clusters: 2 });
-    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
-    const moduleCluster = envelope.clusters.find((c) => c.sample_tests[0] === "missing-module.test.js");
-    const exportCluster = envelope.clusters.find((c) => c.sample_tests[0] === "missing-export.test.js");
+    expect(clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
+    const moduleCluster = clustersOf(envelope).find((c) => c.sample_tests[0] === "missing-module.test.js");
+    const exportCluster = clustersOf(envelope).find((c) => c.sample_tests[0] === "missing-export.test.js");
     expect(moduleCluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(moduleCluster?.message.startsWith("Error: Cannot find module '")).toBe(true);
     expect(moduleCluster?.message).toContain("missing.js' imported from ");
@@ -342,13 +324,13 @@ const SPEC = "--test-reporter=spec";
 describe("node --test, spec reporter recognition", () => {
   it("The cart run with the spec reporter is parsed, not reported as BUILD_ERROR", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "cart.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.status).toBe("FAIL");
     expect(envelope.execution_gear).toBe("GEAR_0_GRAMMAR");
     expect(envelope.summary).toEqual({ passed: 2, failed: 4, skipped: 0, total_clusters: 4 });
-    expect(envelope.clusters.map((c) => c.error_kind)).not.toContain("UNSTRUCTURED_BUILD_ERROR");
+    expect(clustersOf(envelope).map((c) => c.error_kind)).not.toContain("UNSTRUCTURED_BUILD_ERROR");
   });
 });
 
@@ -356,18 +338,18 @@ describe("node --test, spec reporter parity with TAP", () => {
   it("The spec reporter yields the same clusters as the TAP reporter", async () => {
     const spec = JSON.parse(
       (await runNodeCart(["--no-jev", "--format=json"], [SPEC, "cart.test.js"])).stdout,
-    ) as Envelope;
+    ) as DigestEnvelope;
     const tap = JSON.parse(
       (await runNodeCart(["--no-jev", "--format=json"], ["--test-reporter=tap", "cart.test.js"])).stdout,
-    ) as Envelope;
+    ) as DigestEnvelope;
 
     const ids = ["c_9721831d", "c_6edce10a", "c_fdff652c", "c_53a8182a"];
-    expect(spec.clusters.map((c) => c.cluster_id)).toEqual(ids);
-    expect(tap.clusters.map((c) => c.cluster_id)).toEqual(ids);
-    const view = (e: Envelope) =>
-      e.clusters.map((c) => [c.error_kind, c.top_frame, c.message, c.sample_tests]);
+    expect(clustersOf(spec).map((c) => c.cluster_id)).toEqual(ids);
+    expect(clustersOf(tap).map((c) => c.cluster_id)).toEqual(ids);
+    const view = (e: DigestEnvelope) =>
+      clustersOf(e).map((c) => [c.error_kind, c.top_frame, c.message, c.sample_tests]);
     expect(view(spec)).toEqual(view(tap));
-    expect(spec.clusters.map((c) => c.diff)).toEqual([
+    expect(clustersOf(spec).map((c) => c.diff)).toEqual([
       { expected: "900", received: "0" },
       { expected: "1634", received: "0" },
       { expected: "0", received: "-16335" },
@@ -378,7 +360,7 @@ describe("node --test, spec reporter parity with TAP", () => {
 
 describe("node --test, test names containing a hash", () => {
   it("The spec reporter yields the same clusters as the TAP reporter (names containing #)", async () => {
-    const view = async (reporter: string): Promise<Envelope> =>
+    const view = async (reporter: string): Promise<DigestEnvelope> =>
       JSON.parse(
         (
           await runNodeCart(
@@ -386,13 +368,13 @@ describe("node --test, test names containing a hash", () => {
             [`--test-reporter=${reporter}`, "hash-name.test.js"],
           )
         ).stdout,
-      ) as Envelope;
+      ) as DigestEnvelope;
     const spec = await view("spec");
     const tap = await view("tap");
 
-    expect(spec.clusters.map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
-    expect(tap.clusters.map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
-    expect(tap.clusters.map((c) => c.cluster_id)).toEqual(spec.clusters.map((c) => c.cluster_id));
+    expect(clustersOf(spec).map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
+    expect(clustersOf(tap).map((c) => c.sample_tests)).toEqual([["issue #12 works"]]);
+    expect(clustersOf(tap).map((c) => c.cluster_id)).toEqual(clustersOf(spec).map((c) => c.cluster_id));
   });
 });
 
@@ -403,11 +385,11 @@ describe("node --test, string values in diffs", () => {
         ["--no-jev", "--format=json"],
         [`--test-reporter=${reporter}`, "string-diff.test.js"],
       );
-      const envelope = JSON.parse(run.stdout) as Envelope;
+      const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
       expect(run.code).toBe(1);
-      expect(envelope.clusters).toHaveLength(1);
-      const cluster = envelope.clusters[0];
+      expect(clustersOf(envelope)).toHaveLength(1);
+      const cluster = clustersOf(envelope)[0];
       expect(cluster?.cluster_id).toBe("c_42febbe1");
       expect(cluster?.error_kind).toBe("ASSERTION_FAILURE");
       expect(cluster?.top_frame).toBe("string-diff.test.js:3:35");
@@ -423,18 +405,18 @@ describe("node --test, string values in diffs", () => {
 describe("node --test, spec reporter nested suite and timeout", () => {
   it("Nested suite and timeout under the spec reporter", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "suite.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(envelope.summary).toMatchObject({ passed: 1, failed: 3, skipped: 0 });
-    expect(envelope.clusters.flatMap((c) => c.sample_tests).sort()).toEqual([
+    expect(clustersOf(envelope).flatMap((c) => c.sample_tests).sort()).toEqual([
       "discount 10% leaves 90%",
       "names match",
       "slow",
     ]);
-    const slow = envelope.clusters.find((c) => c.sample_tests.includes("slow"));
+    const slow = clustersOf(envelope).find((c) => c.sample_tests.includes("slow"));
     expect(slow?.error_kind).toBe("TIMEOUT_OR_CONN_REFUSED");
     expect(slow?.message).toBe("test timed out after 20ms");
-    const names = envelope.clusters.find((c) => c.sample_tests.includes("names match"));
+    const names = clustersOf(envelope).find((c) => c.sample_tests.includes("names match"));
     expect(names?.message).toBe(
       "AssertionError: Expected values to be strictly deep-equal: + actual - expected { + a: 1 - a: 2 }",
     );
@@ -457,13 +439,13 @@ describe("node --test, spec reporter compact-md digest", () => {
 describe("node --test, same-named failures under the spec reporter", () => {
   it("Two same-named failing tests in one file stay two failures under the spec reporter", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "same-name.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.summary).toEqual({ passed: 0, failed: 2, skipped: 0, total_clusters: 2 });
-    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
+    expect(clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
     expect(
-      envelope.clusters.map((c) => ({
+      clustersOf(envelope).map((c) => ({
         cluster_id: c.cluster_id,
         error_kind: c.error_kind,
         message: c.message,
@@ -505,14 +487,14 @@ describe("node --test, spec run cut before the failing-tests section", () => {
     expect(fs.readFileSync(log, "utf8").trimEnd().split("\n")).toHaveLength(14);
     const script = `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(log)},'utf8')); process.exit(1)`;
     const run = await runInCart(["--no-jev", "--format=json"], [process.execPath, "-e", script]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.status).toBe("FAIL");
     expect(envelope.execution_gear).toBe("GEAR_0_GRAMMAR");
     expect(envelope.summary).toEqual({ passed: 2, failed: 4, skipped: 0, total_clusters: 1 });
-    expect(envelope.clusters).toHaveLength(1);
-    const cluster = envelope.clusters[0] as Cluster & { raw_log_lines: string };
+    expect(clustersOf(envelope)).toHaveLength(1);
+    const cluster = clustersOf(envelope)[0];
     expect(cluster.cluster_id).toBe("c_11eac407");
     expect(cluster.error_kind).toBe("RUNTIME_EXCEPTION");
     expect(cluster.affected_count).toBe(4);
@@ -530,12 +512,12 @@ describe("node --test, spec run cut before the failing-tests section", () => {
 describe("node --test, file-level spec failures", () => {
   it("A missing module under the spec reporter is one SYNTAX_IMPORT_ERROR failure", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "missing-module.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(envelope.status).toBe("FAIL");
     expect(envelope.summary.failed).toBe(1);
     expect(envelope.summary.total_clusters).toBe(1);
-    const cluster = envelope.clusters[0];
+    const cluster = clustersOf(envelope)[0];
     expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(cluster?.sample_tests).toEqual(["missing-module.test.js"]);
     expect(cluster?.message.startsWith("Error: Cannot find module '")).toBe(true);
@@ -545,11 +527,11 @@ describe("node --test, file-level spec failures", () => {
 describe("node --test, file-level spec failures (missing export)", () => {
   it("A missing export under the spec reporter is a RUNTIME_EXCEPTION failure", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json"], [SPEC, "missing-export.test.js"]);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(envelope.summary.total_clusters).toBe(1);
-    expect(envelope.clusters[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
-    expect(envelope.clusters[0]?.message).toBe(
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(clustersOf(envelope)[0]?.message).toBe(
       "SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'",
     );
   });
@@ -559,14 +541,14 @@ describe("node --test, two crashing files under the spec reporter", () => {
   it("Two crashing files under the spec reporter each carry their own subprocess error", async () => {
     const files = [SPEC, "missing-module.test.js", "missing-export.test.js"];
     const run = await runNodeCart(["--no-jev", "--format=json"], files);
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(1);
     expect(envelope.status).toBe("FAIL");
     expect(envelope.summary).toEqual({ passed: 0, failed: 2, skipped: 0, total_clusters: 2 });
-    expect(envelope.clusters.reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
-    const moduleCluster = envelope.clusters.find((c) => c.sample_tests[0] === "missing-module.test.js");
-    const exportCluster = envelope.clusters.find((c) => c.sample_tests[0] === "missing-export.test.js");
+    expect(clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0)).toBe(2);
+    const moduleCluster = clustersOf(envelope).find((c) => c.sample_tests[0] === "missing-module.test.js");
+    const exportCluster = clustersOf(envelope).find((c) => c.sample_tests[0] === "missing-export.test.js");
     expect(moduleCluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(moduleCluster?.message.startsWith("Error: Cannot find module '")).toBe(true);
     expect(moduleCluster?.message).toContain("missing.js' imported from ");
@@ -605,12 +587,12 @@ describe("node --test, spec red-phase guards (missing module, path forms)", () =
       ["--no-jev", "--format=json", "--tdd-phase=red"],
       (dir) => [SPEC, path.join(dir, "missing-module.test.js")],
     );
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
-    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expect(envelope.clusters[0]?.message).toContain("Cannot find module");
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(clustersOf(envelope)[0]?.message).toContain("Cannot find module");
     expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 
@@ -620,12 +602,12 @@ describe("node --test, spec red-phase guards (missing module, path forms)", () =
       [SPEC, "../missing-module.test.js"],
       { subdir: "sub" },
     );
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
-    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expect(envelope.clusters[0]?.message).toContain("Cannot find module");
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(clustersOf(envelope)[0]?.message).toContain("Cannot find module");
     expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 
@@ -634,11 +616,11 @@ describe("node --test, spec red-phase guards (missing module, path forms)", () =
       ["--no-jev", "--format=json", "--tdd-phase=red"],
       (dir) => [SPEC, path.join(dir, "syntax-error.test.js")],
     );
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
-    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 });
@@ -660,11 +642,11 @@ describe("node --test, spec red-phase guards (crashes with no attributable error
         },
       },
     );
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
-    expect(envelope.clusters.every((c) => c.error_kind === "SYNTAX_IMPORT_ERROR")).toBe(true);
+    expect(clustersOf(envelope).every((c) => c.error_kind === "SYNTAX_IMPORT_ERROR")).toBe(true);
     expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 
@@ -672,11 +654,11 @@ describe("node --test, spec red-phase guards (crashes with no attributable error
     const run = await runNodeCart(["--no-jev", "--format=json", "--tdd-phase=red"], [SPEC, "exit.test.js"], {
       files: { "exit.test.js": "process.exit(1);\n" },
     });
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
-    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 });
@@ -693,7 +675,7 @@ describe("node --test, TAP red-phase guards (crashes with no attributable error)
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
-    expect(envelope.clusters?.[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 });
@@ -718,13 +700,13 @@ describe("node --test, spec red-phase guards (wrapper output after the failing-t
         },
       },
     );
-    const envelope = JSON.parse(run.stdout) as Envelope;
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
-    expect(envelope.clusters[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expect(envelope.clusters[0]?.message.startsWith("Error: Cannot find module '")).toBe(true);
-    expect(envelope.clusters[0]?.message).not.toContain("ELIFECYCLE");
+    expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(clustersOf(envelope)[0]?.message.startsWith("Error: Cannot find module '")).toBe(true);
+    expect(clustersOf(envelope)[0]?.message).not.toContain("ELIFECYCLE");
   });
 });
 
@@ -813,7 +795,7 @@ describe("node --test, TODO and SKIP directives", () => {
     for (const { run, envelope } of [tap, spec]) {
       expect(run.code).toBe(0);
       expect(envelope.status).toBe("PASS");
-      expect(envelope.clusters ?? []).toEqual([]);
+      expect(clustersOf(envelope)).toEqual([]);
       expect(envelope.summary.failed).toBe(0);
     }
     expect(spec.envelope.summary).toEqual(tap.envelope.summary);
@@ -831,12 +813,12 @@ describe("node --test, TODO and SKIP directives", () => {
 
     for (const { run, envelope } of [tap, spec]) {
       expect(run.code).toBe(1);
-      expect(envelope.clusters?.map((c) => c.sample_tests)).toEqual([["really fails"]]);
+      expect(clustersOf(envelope).map((c) => c.sample_tests)).toEqual([["really fails"]]);
       expect(envelope.summary.failed).toBe(1);
     }
     expect(spec.envelope.summary).toEqual(tap.envelope.summary);
-    expect(spec.envelope.clusters?.map((c) => c.cluster_id)).toEqual(
-      tap.envelope.clusters?.map((c) => c.cluster_id),
+    expect(clustersOf(spec.envelope).map((c) => c.cluster_id)).toEqual(
+      clustersOf(tap.envelope).map((c) => c.cluster_id),
     );
   });
 });
@@ -893,7 +875,7 @@ describe("node --test, summary.failed is never below the failures reported", () 
       it(`Nested suite with a deep-equal failure and a timeout (${fault}, ${reporter})`, async () => {
         const { run, envelope } = await digestOf(reporter, "suite-fault.test.js", source);
 
-        const reported = (envelope.clusters ?? []).reduce((sum, c) => sum + c.affected_count, 0);
+        const reported = clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0);
         expect(run.code).toBe(exit);
         expect(reported).toBeGreaterThan(0);
         expect(envelope.summary.failed).toBeGreaterThanOrEqual(reported);
