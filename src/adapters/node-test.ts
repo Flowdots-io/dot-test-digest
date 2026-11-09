@@ -151,7 +151,8 @@ function finish(slots: readonly Slot[], counts: AdapterCounts): AdapterResult {
 
 /* ------------------------------ TAP ------------------------------ */
 
-const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)\s*$/;
+/** `not ok N - name`; group 3 is a trailing `# TODO` / `# SKIP` directive (node escapes a `#` of the name itself). */
+const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)(\s+#\s*(?:TODO|SKIP)\b.*)?\s*$/;
 const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
 const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
 const YAML_KEY = /^([A-Za-z_][\w-]*):(?:\s+(.*?))?\s*$/;
@@ -329,7 +330,8 @@ export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericRea
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
     const read = readTapEntry(lines, index, (notOk[2] ?? "").replaceAll("\\#", "#"), generic);
-    if (read.entry !== null) entries.push(read.entry);
+    const isDirective = notOk[3] !== undefined;
+    if (read.entry !== null && !isDirective) entries.push(read.entry);
     index = read.next;
   }
   // TAP prints a `# pass` line per nesting level: the largest is the run's total.
@@ -344,8 +346,14 @@ export function parseNodeTap(lines: readonly CapturedLine[], generic: GenericRea
 export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
 const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
 const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
-const SPEC_NAME_ROW = /^✖ (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
-const SPEC_TREE_ROW = /^(\s*)([✖▶]) (.*?)(?: \(\d+(?:\.\d+)?ms\))?\s*$/;
+/**
+ * What follows a row's name: its duration, then for a todo or skipped test a
+ * directive group (` # TODO`, or ` # <reason>` when the test gave one). A
+ * directive only counts after the duration, so a `#` inside a name is safe.
+ */
+const SPEC_ROW_TAIL = String.raw`(?: \(\d+(?:\.\d+)?ms\)( #(?: .*)?)?)?\s*$`;
+const SPEC_NAME_ROW = new RegExp(`^✖ (.*?)${SPEC_ROW_TAIL}`);
+const SPEC_TREE_ROW = new RegExp(`^(\\s*)([✖▶]) (.*?)${SPEC_ROW_TAIL}`);
 const SPEC_ENTRY_INDENT = 2;
 const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
 
@@ -367,7 +375,7 @@ function inspectedString(value: string): string {
 function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
   const at = SPEC_TEST_AT.exec(lines[start]?.text ?? "");
   const nameRow = SPEC_NAME_ROW.exec(lines[start + 1]?.text ?? "");
-  if (at === null || nameRow === null) return null;
+  if (at === null || nameRow === null || nameRow[2] !== undefined) return null;
 
   const messageLines: string[] = [];
   const stack: string[] = [];
@@ -433,7 +441,7 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
       opened.add(key);
       continue;
     }
-    if (opened.has(key)) continue;
+    if (opened.has(key) || row[4] !== undefined) continue;
     entries.push(nameOnlyEntry(row[3] ?? "", line.line));
   }
   return entries;

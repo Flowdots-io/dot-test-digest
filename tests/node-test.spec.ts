@@ -820,7 +820,12 @@ describe("node --test, TODO and SKIP directives", () => {
   });
 
   it("The spec reporter yields the same clusters as the TAP reporter (a real failure beside directive tests)", async () => {
-    const source = `${DIRECTIVE_TESTS}test('really fails', () => { throw new Error('z'); });\n`;
+    const source = [
+      DIRECTIVE_TESTS,
+      "import assert from 'node:assert/strict';",
+      "test('really fails', () => { assert.equal(1, 2); });",
+      "",
+    ].join("\n");
     const tap = await digestOf("tap", "directives.test.js", source);
     const spec = await digestOf("spec", "directives.test.js", source);
 
