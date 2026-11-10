@@ -454,7 +454,7 @@ describe("node spec reporter at the adapter seam", () => {
       lines(
         specRun([
           { file: "log.test.js", above: ["Error: the loader gave up", "    at somewhere (node:internal/x:1:1)"] },
-          { file: "cut.test.js", above: [...crashBlock("cut.test.js", "TypeError: boom"), "ℹ a row in between"] },
+          { file: "cut.test.js", above: [...crashBlock("cut.test.js", "TypeError: boom"), "✔ a test row in between (1.0ms)"] },
           { file: "nolocation.test.js", above: ["TypeError: boom", "Node.js v22.23.4"] },
           { file: "notrailer.test.js", above: ["file:///work/notrailer.test.js:5", "TypeError: boom"] },
         ]).join("\n"),
@@ -462,6 +462,22 @@ describe("node spec reporter at the adapter seam", () => {
     );
 
     expect(result.failures.map((f) => f.message)).toEqual(Array(4).fill("test failed"));
+  });
+
+  it("A diagnostic row between a file's crash block and its row does not cut the block off, and the previous run's summary is not a block", () => {
+    const result = jsTestAdapter.parse(
+      lines(
+        specRun([
+          { file: "ok.test.js", above: ["ℹ tests 1", "ℹ pass 0", "ℹ fail 1"] },
+          { file: "crash.test.js", above: [...crashBlock("crash.test.js", "TypeError: boom"), "ℹ a diagnostic row"] },
+        ]).join("\n"),
+      ),
+    );
+
+    expect(crashes(result)).toEqual([
+      ["ok.test.js", "test failed"],
+      ["crash.test.js", "TypeError: boom"],
+    ]);
   });
 
   it("A crash block gives its first error line; a log line before its location line is outside it", () => {
