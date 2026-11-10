@@ -922,3 +922,45 @@ describe("node --test, summary.failed is never below the failures reported", () 
     expect(spec.envelope.summary).toEqual(tap.envelope.summary);
   });
 });
+
+describe("node --test, a runtime SyntaxError raised inside a test that ran", () => {
+  const RUNTIME_SYNTAX_ERROR = [
+    "import test from 'node:test';",
+    "test('parses', () => { JSON.parse(undefined); });",
+    "",
+  ].join("\n");
+  const DYNAMIC_IMPORT = [
+    "import test from 'node:test';",
+    "test('loads late', async () => { await import('./no-such-module.js'); });",
+    "",
+  ].join("\n");
+
+  for (const reporter of ["tap", "spec"]) {
+    it(`A missing export is VALID_RED with exit 0 (JSON.parse(undefined) inside a test, ${reporter})`, async () => {
+      const run = await runNodeCart(
+        ["--no-jev", "--format=json", "--tdd-phase=red"],
+        [`--test-reporter=${reporter}`, "parses.test.js"],
+        { files: { "parses.test.js": RUNTIME_SYNTAX_ERROR } },
+      );
+      const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["RUNTIME_EXCEPTION"]);
+      expect(clustersOf(envelope)[0]?.message).toContain("SyntaxError");
+    });
+
+    it(`A missing module is INVALID_RED with exit 64 (dynamic import of a missing module inside a test, ${reporter})`, async () => {
+      const run = await runNodeCart(
+        ["--no-jev", "--format=json", "--tdd-phase=red"],
+        [`--test-reporter=${reporter}`, "late.test.js"],
+        { files: { "late.test.js": DYNAMIC_IMPORT } },
+      );
+      const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+      expect(run.code).toBe(64);
+      expect(envelope.status).toBe("INVALID_RED");
+      expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["SYNTAX_IMPORT_ERROR"]);
+    });
+  }
+});
