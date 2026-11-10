@@ -151,14 +151,8 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
-function byteSums(texts: readonly string[]): number[] {
-  const sums = [0];
-  for (const text of texts) sums.push((sums.at(-1) ?? 0) + byteLength(text));
-  return sums;
-}
-
 /** The digest, without its final newline, is at most this many bytes: 2,400 with the newline and 600 EstimatedTokens. */
-const FAIL_BODY_BYTES = Math.min(FAIL_BYTE_CEILING - 1, MAX_FAIL_TOKENS * BYTES_PER_TOKEN);
+const FAIL_BODY_BYTES = Math.min(FAIL_BYTE_CEILING, MAX_FAIL_TOKENS * BYTES_PER_TOKEN) - 1;
 
 function renderFailBody(
   envelope: DigestEnvelope,
@@ -189,27 +183,20 @@ function renderLevel(
   const lines = all.map((cluster) => `\n${renderOmittedLine(cluster)}`);
   const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
-  const blockEnds = byteSums(blocks);
-  const lineEnds = byteSums(lines);
-  const blocksBytes = (kept: number): number =>
-    byteLength(headerLine(envelope, kept)) + (blockEnds[kept] ?? 0) + byteLength(footerOf(all.length - kept));
-
+  const fixedBytes = (kept: number): number =>
+    byteLength(headerLine(envelope, kept) + footerOf(all.length - kept));
   let kept = clusters.length;
-  while (kept > 1 && blocksBytes(kept) > FAIL_BODY_BYTES) kept -= 1;
-  let listed = all.length - kept;
-  while (listed > 0 && blocksBytes(kept) + (lineEnds[kept + listed] ?? 0) - (lineEnds[kept] ?? 0) > FAIL_BODY_BYTES) {
-    listed -= 1;
-  }
+  while (kept > 1 && fixedBytes(kept) + byteLength(blocks.slice(0, kept).join("")) > FAIL_BODY_BYTES) kept -= 1;
 
   const header = headerLine(envelope, kept);
   const footer = footerOf(all.length - kept);
-  const keptBlocks = blocks.slice(0, kept).join("");
-  const room = FAIL_BODY_BYTES - byteLength(header) - byteLength(footer);
-  const rest =
-    byteLength(keptBlocks) > room
-      ? `${truncateBytes(keptBlocks, room)}${footer}`
-      : `${keptBlocks}${footer}${lines.slice(kept, kept + listed).join("")}`;
-  return { header, body: `${header}${rest}` };
+  const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(header + footer));
+  let body = `${header}${keptBlocks}${footer}`;
+  for (const line of lines.slice(kept)) {
+    if (byteLength(body) + byteLength(line) > FAIL_BODY_BYTES) break;
+    body += line;
+  }
+  return { header, body };
 }
 
 export function formatEnvelope(

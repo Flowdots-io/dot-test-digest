@@ -444,6 +444,38 @@ describe("node --test, which printed line is a crashed file's error", () => {
       expect(cluster?.message).toBe(MISSING_EXPORT_MESSAGE);
     },
   );
+
+  eachReporter(
+    {
+      tap: "A startup crash is not blamed on another run's output (tap)",
+      spec: "A startup crash is not blamed on another run's output (spec)",
+    },
+    async (reporter) => {
+      const result = jsonOf(
+        await runInCart(
+          ["--no-jev", "--format=json", "--tdd-phase=red"],
+          [process.execPath, "wrap.mjs", reporter, "exitload.test.js", "logc.test.js"],
+          {
+            files: {
+              "wrap.mjs": ONE_RUN_PER_FILE,
+              "exitload.test.js": source("process.exit(1);"),
+              "logc.test.js": source(
+                'import test from "node:test";',
+                'console.log("TypeError: cfg.get is not a function (handled)");',
+                'test("x", () => {});',
+              ),
+            },
+          },
+        ),
+      );
+
+      expect(result.run.code).toBe(64);
+      expect(result.envelope.status).toBe("INVALID_RED");
+      const cluster = clusterOf(result.envelope, "exitload.test.js");
+      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+      expect(cluster?.message).toBe("test failed");
+    },
+  );
 });
 
 describe("node --test, a runtime error thrown at load keeps its error line", () => {
@@ -463,6 +495,32 @@ describe("node --test, a runtime error thrown at load keeps its error line", () 
       expect(clustersOf(envelope).map((c) => [c.error_kind, c.message])).toEqual([
         ["RUNTIME_EXCEPTION", "ReferenceError: notDefinedYet is not defined"],
       ]);
+    },
+  );
+});
+
+describe("node --test, an earlier log line does not displace a runtime error at load", () => {
+  eachReporter(
+    {
+      tap: "A runtime error at load is not displaced by an earlier log line (tap)",
+      spec: "A runtime error at load is not displaced by an earlier log line (spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson([...reporterFlag(reporter), "refload.test.js"], {
+        flags: ["--tdd-phase=red"],
+        files: {
+          "refload.test.js": source(
+            "import test from 'node:test';",
+            "console.log('SyntaxError: Unexpected token } in JSON (from setup)');",
+            "notDefinedYet();",
+            "test('x', () => {});",
+          ),
+        },
+      });
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(clustersOf(envelope).map((c) => c.message)).toEqual(["ReferenceError: notDefinedYet is not defined"]);
     },
   );
 });
@@ -496,6 +554,48 @@ describe("node --test, a test file the runner cannot read", () => {
         expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
       } finally {
         if (unreadable !== "") fs.chmodSync(unreadable, 0o644);
+      }
+    });
+  }
+});
+
+describe("node --test, a read failure of another file at load", () => {
+  const TITLES: Readonly<Record<Reporter, string>> = {
+    tap: "A read failure of another file at load stays a behavioural red",
+    spec: "A read failure of another file at load stays a behavioural red under the spec reporter",
+  };
+
+  for (const reporter of REPORTERS) {
+    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
+      let secret = "";
+      try {
+        const { run, envelope } = await runJson(
+          (dir) => {
+            secret = path.join(dir, "secret.txt");
+            fs.chmodSync(secret, 0o000);
+            return [...reporterFlag(reporter), "loadsecret.test.js"];
+          },
+          {
+            flags: ["--tdd-phase=red"],
+            files: {
+              "secret.txt": "hidden\n",
+              "loadsecret.test.js": source(
+                "import fs from 'node:fs';",
+                "import test from 'node:test';",
+                "fs.readFileSync(new URL('./secret.txt', import.meta.url));",
+                "test('uses it', () => {});",
+              ),
+            },
+          },
+        );
+
+        expect(run.code).toBe(0);
+        expect(envelope.status).toBe("VALID_RED");
+        expect(clustersOf(envelope)).toHaveLength(1);
+        expect(clustersOf(envelope)[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
+        expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
+      } finally {
+        if (secret !== "") fs.chmodSync(secret, 0o644);
       }
     });
   }
@@ -790,6 +890,34 @@ describe("node --test, the same failure reads the same under both reporters", ()
         "TypeError: t",
         "Error: hb",
       ]);
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A thrown number keeps its text under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('num', () => { throw 42; });",
+      "test('obj', () => { throw { a: 1 }; });",
+    );
+    const { tap, spec } = await bothReporters("thrown.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "num")?.message).toBe("42");
+      expect(clusterOf(envelope, "obj")?.message).toBe("{ a: 1 }");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A failed t.plan keeps its text under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('planned', (t) => { t.plan(2); t.assert.ok(true); });",
+    );
+    const { tap, spec } = await bothReporters("planned.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "planned")?.message).toBe("plan expected 2 assertions but received 1");
     }
     expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
   });

@@ -399,4 +399,63 @@ describe("node spec reporter at the adapter seam", () => {
       [81, 91],
     ]);
   });
+
+  /** A spec stream whose crashed files' stderr is not directly above their own `✖ <file>` rows. */
+  function crashedSpecStream(files: readonly string[], printed: readonly string[]): CapturedLine[] {
+    const counts = ["tests", "suites", "pass", "fail", "cancelled", "skipped", "todo"].map(
+      (key) => `ℹ ${key} ${key === "tests" || key === "fail" ? files.length : 0}`,
+    );
+    const section = files.flatMap((file) => ["", `test at ${file}:1:1`, `✖ ${file} (5.1ms)`, "  'test failed'"]);
+    return lines(
+      [
+        ...printed,
+        "ℹ a row in between",
+        ...files.map((file) => `✖ ${file} (5.1ms)`),
+        ...counts,
+        "",
+        "✖ failing tests:",
+        ...section,
+      ].join("\n"),
+    );
+  }
+
+  it("Two crashing files under the spec reporter each carry their own subprocess error (the block that names the file)", () => {
+    const a = path.resolve("crash-a.test.js");
+    const b = path.resolve("crash-b.test.js");
+    const result = runGear0(
+      crashedSpecStream(
+        ["crash-a.test.js", "crash-b.test.js"],
+        [
+          `file://${b}:1`,
+          "TypeError: boom b",
+          `    at file://${b}:1:1`,
+          "",
+          `file://${a}:1`,
+          "Error: boom a",
+          `    at file://${a}:1:1`,
+        ],
+      ),
+    );
+
+    expect(result?.failures.map((f) => [f.testName, f.message])).toEqual([
+      ["crash-a.test.js", "Error: boom a"],
+      ["crash-b.test.js", "TypeError: boom b"],
+    ]);
+  });
+
+  it("A lone crashed file under the spec reporter takes the error line of its own run when no line names the file", () => {
+    const result = runGear0(
+      crashedSpecStream(["crash-a.test.js"], ["", "Error: the loader gave up", "    at somewhere (node:internal/x:1:1)"]),
+    );
+
+    expect(result?.failures.map((f) => [f.testName, f.message])).toEqual([
+      ["crash-a.test.js", "Error: the loader gave up"],
+    ]);
+  });
+
+  it("Two crashed files whose errors name neither file keep the message test failed", () => {
+    const result = runGear0(crashedSpecStream(["crash-a.test.js", "crash-b.test.js"], ["Error: the loader gave up"]));
+
+    expect(result?.failures.map((f) => f.message)).toEqual(["test failed", "test failed"]);
+  });
 });
