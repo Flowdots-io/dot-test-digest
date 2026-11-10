@@ -913,6 +913,54 @@ describe("node --test, summary.failed is never below the failures reported", () 
     expect(envelope.summary).toMatchObject({ passed: 3, failed: 2, total_clusters: 2 });
   });
 
+  it("Nested suite with a deep-equal failure and a timeout (two node runs in one stream sum their counts, TAP equals spec)", async () => {
+    const wrapperFor = (reporter: string): string =>
+      [
+        "import { spawnSync } from 'node:child_process';",
+        "let status = 0;",
+        "for (const file of ['many-fail.test.js', 'many-pass.test.js']) {",
+        `  const run = spawnSync(process.execPath, ['--test', '--test-reporter=${reporter}', file], { stdio: 'inherit' });`,
+        "  status = status || (run.status ?? 1);",
+        "}",
+        "process.exit(status);",
+        "",
+      ].join("\n");
+    const tests = {
+      "many-fail.test.js": [
+        "import test, { describe, it } from 'node:test';",
+        "test('good one', () => {});",
+        "test('bad one', () => { throw new Error('one'); });",
+        "test('skipped a', { skip: true }, () => {});",
+        "test('skipped b', { skip: true }, () => {});",
+        "describe('group', () => {",
+        "  it('nested good', () => {});",
+        "  it('nested bad', () => { throw new RangeError('two'); });",
+        "});",
+        "",
+      ].join("\n"),
+      "many-pass.test.js": [
+        "import test from 'node:test';",
+        "test('fine a', () => {});",
+        "test('fine b', () => {});",
+        "test('skipped c', { skip: true }, () => {});",
+        "",
+      ].join("\n"),
+    };
+    const summaryOf = async (reporter: string) => {
+      const run = await runInCart(["--no-jev", "--format=json"], [process.execPath, "wrapper.js"], {
+        files: { "wrapper.js": wrapperFor(reporter), ...tests },
+      });
+      return { code: run.code, summary: (JSON.parse(run.stdout) as DigestEnvelope).summary };
+    };
+
+    const tap = await summaryOf("tap");
+    const spec = await summaryOf("spec");
+
+    expect(tap.code).toBe(1);
+    expect(tap.summary).toMatchObject({ passed: 4, failed: 2, skipped: 3 });
+    expect(spec.summary).toEqual(tap.summary);
+  });
+
   it("Nested suite and timeout under the spec reporter (after hook that throws, same counts as TAP)", async () => {
     const source = SUITE_FAULTS["after hook that throws"]?.source ?? "";
     const tap = await digestOf("tap", "suite-fault.test.js", source);
