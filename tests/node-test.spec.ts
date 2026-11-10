@@ -499,6 +499,32 @@ describe("node --test, a runtime error thrown at load keeps its error line", () 
   );
 });
 
+describe("node --test, an earlier log line does not displace a runtime error at load", () => {
+  eachReporter(
+    {
+      tap: "A runtime error at load is not displaced by an earlier log line (tap)",
+      spec: "A runtime error at load is not displaced by an earlier log line (spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson([...reporterFlag(reporter), "refload.test.js"], {
+        flags: ["--tdd-phase=red"],
+        files: {
+          "refload.test.js": source(
+            "import test from 'node:test';",
+            "console.log('SyntaxError: Unexpected token } in JSON (from setup)');",
+            "notDefinedYet();",
+            "test('x', () => {});",
+          ),
+        },
+      });
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(clustersOf(envelope).map((c) => c.message)).toEqual(["ReferenceError: notDefinedYet is not defined"]);
+    },
+  );
+});
+
 describe("node --test, a test file the runner cannot read", () => {
   const TITLES: Readonly<Record<Reporter, string>> = {
     tap: "An unreadable test file is INVALID_RED with exit 64",
