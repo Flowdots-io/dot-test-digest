@@ -1011,4 +1011,79 @@ describe("node --test, a JSON parse failure raised inside a test that ran", () =
       expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["SYNTAX_IMPORT_ERROR"]);
     });
   }
+
+  const BROKEN_ESM = "export function total(items) { return items.reduce((a, b) => a + b, 0 }\n";
+  const BROKEN_CJS = "function total(items) { return items.reduce((a, b) => a + b, 0 }\nmodule.exports = { total };\n";
+  const UNTERMINATED = "export const name = 'abc;\n";
+  const SYNTAX_FAULTS: Record<string, { entry: string; files: Record<string, string> }> = {
+    "dynamic import of a file with a syntax error": {
+      entry: "lazy.test.js",
+      files: {
+        "broken.js": BROKEN_ESM,
+        "lazy.test.js": "import test from 'node:test';\ntest('total sums', async () => { await import('./broken.js'); });\n",
+      },
+    },
+    "import of a file with a syntax error in a before hook": {
+      entry: "hook.test.js",
+      files: {
+        "broken.js": BROKEN_ESM,
+        "hook.test.js": [
+          "import test, { before } from 'node:test';",
+          "before(async () => { await import('./broken.js'); });",
+          "test('total sums', () => {});",
+          "",
+        ].join("\n"),
+      },
+    },
+    "require of a file with a syntax error": {
+      entry: "required.test.cjs",
+      files: {
+        "broken.cjs": BROKEN_CJS,
+        "required.test.cjs":
+          "const test = require('node:test');\ntest('total', () => { require('./broken.cjs'); });\n",
+      },
+    },
+    "dynamic import of a file with an unterminated string": {
+      entry: "unterminated.test.js",
+      files: {
+        "broken2.js": UNTERMINATED,
+        "unterminated.test.js": "import test from 'node:test';\ntest('name', async () => { await import('./broken2.js'); });\n",
+      },
+    },
+  };
+
+  for (const reporter of ["tap", "spec"]) {
+    for (const [fault, { entry, files }] of Object.entries(SYNTAX_FAULTS)) {
+      it(`A missing module is INVALID_RED with exit 64 (${fault}, ${reporter})`, async () => {
+        const run = await runNodeCart(
+          ["--no-jev", "--format=json", "--tdd-phase=red"],
+          [`--test-reporter=${reporter}`, entry],
+          { files },
+        );
+        const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+        expect(run.code).toBe(64);
+        expect(envelope.status).toBe("INVALID_RED");
+        expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["SYNTAX_IMPORT_ERROR"]);
+      });
+    }
+
+    it(`A missing export is VALID_RED with exit 0 (JSON.parse('abc') inside a test, ${reporter})`, async () => {
+      const run = await runNodeCart(
+        ["--no-jev", "--format=json", "--tdd-phase=red"],
+        [`--test-reporter=${reporter}`, "parses-text.test.js"],
+        {
+          files: {
+            "parses-text.test.js":
+              "import test from 'node:test';\ntest('parses', () => { JSON.parse('abc'); });\n",
+          },
+        },
+      );
+      const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["RUNTIME_EXCEPTION"]);
+    });
+  }
 });
