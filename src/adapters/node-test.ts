@@ -127,7 +127,9 @@ function disambiguateSameNames(entries: NodeEntry[]): void {
  * node does not count a suite whose hook or body threw in `fail`/`cancelled`,
  * so the printed count can sit below the failures reported: it never may.
  */
-function resultOf(failures: RawFailure[], counts: AdapterCounts): AdapterResult {
+function finish(entries: NodeEntry[], foreign: RawFailure[], counts: AdapterCounts): AdapterResult {
+  disambiguateSameNames(entries);
+  const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
   const failed = Math.max(counts.failed, failures.length);
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
@@ -218,10 +220,8 @@ function readTapEntry(
   index: number,
   name: string,
   block: TapBlock,
-): NodeEntry | null {
+): NodeEntry {
   const startLine = lines[index]?.line ?? 0;
-  if (block.fields.get("failureType")?.[0] === "subtestsFailed") return null;
-
   const field = (key: string): string[] => block.fields.get(key) ?? [];
   const errorName = field("name").join(" ").trim();
   let message = cleanNodeMessage(field("error").filter((text) => text !== ""));
@@ -277,24 +277,19 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
     const name = (notOk[2] ?? "").replaceAll("\\#", "#");
     const isDirective = notOk[3] !== undefined;
     const block = readTapBlock(lines, index);
-    if (block === null) {
-      if (!isDirective) entries.push(nameOnlyEntry(name, lines[index]?.line ?? 0));
-      continue;
-    }
     if (!isDirective) {
-      if (block.fields.get("failureType")?.[0] !== undefined) {
-        const entry = readTapEntry(lines, index, name, block);
-        if (entry !== null) entries.push(entry);
-      } else {
+      const failureType = block?.fields.get("failureType")?.[0];
+      if (block === null) {
+        entries.push(nameOnlyEntry(name, lines[index]?.line ?? 0));
+      } else if (failureType === undefined) {
         foreign.push(...parseGeneric(lines.slice(index, block.endIndex + 1)).failures);
+      } else if (failureType !== "subtestsFailed") {
+        entries.push(readTapEntry(lines, index, name, block));
       }
     }
-    index = block.endIndex;
+    if (block !== null) index = block.endIndex;
   }
-  const counts = nodeCounts(lines, TAP_COUNT);
-  disambiguateSameNames(entries);
-  const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
-  return resultOf(failures, counts);
+  return finish(entries, foreign, nodeCounts(lines, TAP_COUNT));
 }
 
 export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
@@ -430,15 +425,10 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEnt
   }
 }
 
-function specResult(entries: NodeEntry[], counts: AdapterCounts): AdapterResult {
-  disambiguateSameNames(entries);
-  return resultOf(entries.map(toRawFailure), counts);
-}
-
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
   const counts = nodeCounts(lines, NODE_SPEC_SUMMARY);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
-  if (section < 0) return specResult(readSpecLeafRows(lines), counts);
+  if (section < 0) return finish(readSpecLeafRows(lines), [], counts);
 
   const starts: number[] = [];
   for (let index = section + 1; index < lines.length; index += 1) {
@@ -450,5 +440,5 @@ export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
     if (entry !== null) entries.push(entry);
   });
   adoptSubprocessErrors(lines.slice(0, section), entries);
-  return specResult(entries, counts);
+  return finish(entries, [], counts);
 }
