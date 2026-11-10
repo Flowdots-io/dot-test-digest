@@ -194,7 +194,9 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       rawLogPath: run.logPath,
     });
 
-    process.stdout.write(formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText }));
+    process.stdout.write(
+      formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText }),
+    );
     if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
     rawLog.close();
     return decision.exitCode;
