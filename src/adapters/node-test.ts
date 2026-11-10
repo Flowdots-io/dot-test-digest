@@ -11,25 +11,15 @@ import {
 } from "./common.js";
 import { parseGeneric } from "./js-generic.js";
 
-/**
- * The two reporters `node --test` prints (SPEC-002 §4.2.3): TAP, whose failures
- * carry a YAML diagnostic block, and the spec tree with its `✖ failing tests:`
- * section. Each reader only fills a `NodeEntry`; `toRawFailure` is the one place
- * that turns an entry into a failure, so both reporters agree on every field.
- */
 interface NodeEntry {
   name: string;
-  /** Absolute path of the test file, when the stream revealed it. */
   file: string | null;
-  /** Line of the test inside its file, used to tell same-named tests apart. */
   line: string | undefined;
   message: string;
   expected?: string;
   actual?: string;
   stack: string[];
-  /** The whole test file died at load (node's `test failed` entry for the file itself), not one of its tests. */
   crashedFile: boolean;
-  /** The error the crashed file's own subprocess printed. */
   subprocessError?: string;
   startLine: number;
   endLine: number;
@@ -54,16 +44,11 @@ function nodePath(text: string): string {
   });
 }
 
-/**
- * Failures carry paths relative to where the digest runs, so this reads
- * `process.cwd()`: `Adapter.parse(lines)` has no other context to take it from.
- */
 function relativeToCwd(file: string): string {
   const relative = path.relative(process.cwd(), file).split(path.sep).join("/");
   return relative === "" || relative.startsWith("..") ? file : relative;
 }
 
-/** Joins message lines with one space, collapses whitespace and drops a `[CODE]` tag after the error name. */
 function cleanNodeMessage(parts: readonly string[]): string {
   return parts
     .join(" ")
@@ -72,13 +57,11 @@ function cleanNodeMessage(parts: readonly string[]): string {
     .trim();
 }
 
-/** `Name: text` of an error line, or undefined when the text is not one. */
 function errorLine(text: string): string | undefined {
   const match = NODE_ERROR_LINE.exec(text);
   return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
 }
 
-/** A failure known by its name alone: the stream was cut before its details. */
 function nameOnlyEntry(name: string, line: number): NodeEntry {
   return {
     name,
@@ -92,10 +75,6 @@ function nameOnlyEntry(name: string, line: number): NodeEntry {
   };
 }
 
-/**
- * A crashed file's own printed error decides its kind; one that printed none
- * died at startup, never on a behavioural assertion.
- */
 function errorKindOf(entry: NodeEntry): ErrorKind {
   if (entry.subprocessError !== undefined) return classifyMessage(entry.subprocessError);
   if (entry.crashedFile) return "SYNTAX_IMPORT_ERROR";
@@ -120,7 +99,6 @@ function toRawFailure(entry: NodeEntry): RawFailure {
   };
 }
 
-/** Names shared by two or more failures of one file get ` @<line>`. */
 function disambiguateSameNames(entries: NodeEntry[]): void {
   const keyOf = (entry: NodeEntry): string => `${entry.file ?? ""}\u0000${entry.name}`;
   const seen = new Map<string, number>();
@@ -141,9 +119,7 @@ function resultOf(failures: RawFailure[], counts: AdapterCounts): AdapterResult 
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
 
-/* ------------------------------ TAP ------------------------------ */
-
-/** `not ok N - name`; group 3 is a trailing `# TODO` / `# SKIP` directive (node escapes a `#` of the name itself). */
+/** node escapes a `#` inside a TAP test name as `\#`, so an unescaped ` # TODO` / ` # SKIP` is a directive. */
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)(\s+#\s*(?:TODO|SKIP)\b.*)?\s*$/;
 const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
 const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
@@ -152,14 +128,9 @@ const NODE_SUBTEST = /^\s*# Subtest:/;
 
 interface TapBlock {
   fields: Map<string, string[]>;
-  /** Index (in the lines array) of the closing `...`. */
   endIndex: number;
 }
 
-/**
- * One pair of matching quotes removed. `unescape` turns what is inside into the
- * value, or returns undefined when the text is not one literal and keeps its quotes.
- */
 function unquote(value: string, unescape: (inner: string, quote: string) => string | undefined): string {
   const quote = value[0];
   if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
@@ -168,19 +139,12 @@ function unquote(value: string, unescape: (inner: string, quote: string) => stri
   return value;
 }
 
-/** A YAML scalar loses its quotes and their escapes; anything else is trimmed. */
 function yamlScalar(value: string): string {
   return unquote(value.trim(), (inner, quote) =>
     quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1"),
   );
 }
 
-/**
- * Reads the YAML diagnostic block after a `not ok` line: `---` opens it, the
- * `...` at the same indent closes it. Each top-level key maps to its value
- * lines: the unquoted scalar, or the trimmed lines of a `|-` block scalar or of
- * an indented mapping. Returns null when the block is missing or unterminated.
- */
 function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapBlock | null {
   const open = lines[headerIndex + 1]?.text;
   if (open === undefined || open.trim() !== "---") return null;
@@ -218,11 +182,7 @@ function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapB
   return null;
 }
 
-/**
- * The error line a crashed test file's subprocess printed: the first match in
- * the run of `#` comment lines directly above that file's own top-level
- * `# Subtest:` line, so a file never borrows another file's error.
- */
+/** node's TAP relays a crashed file's stderr as `#` lines directly above that file's top-level `# Subtest:` line. */
 function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number): string | undefined {
   let subtest = headerIndex - 1;
   while (subtest >= 0 && !/^# Subtest:/.test(lines[subtest]?.text ?? "")) subtest -= 1;
@@ -235,11 +195,6 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
   return firstErrorLine(comments);
 }
 
-/**
- * The entry of a `not ok` line whose diagnostic block is node's (it has a
- * `failureType:` key), or null for a suite whose only fault is its failing
- * subtests: that is a roll-up, not a failure.
- */
 function readTapEntry(
   lines: readonly CapturedLine[],
   index: number,
@@ -275,11 +230,7 @@ function readTapEntry(
   };
 }
 
-/**
- * The counts printed by `# pass N` / `ℹ pass N` lines: `pass` and `skipped` plus
- * `todo` as is, failed as `fail` plus `cancelled` (node reports a timed-out test
- * as cancelled). `merge` joins a count line with the same key seen before.
- */
+/** node counts a timed-out test as `cancelled`, not `fail`. */
 function nodeCounts(
   lines: readonly CapturedLine[],
   pattern: RegExp,
@@ -299,16 +250,10 @@ function nodeCounts(
   return counts;
 }
 
-/** node's TAP always opens each test file with a `# Subtest:` comment. */
 export function isNodeTapStream(lines: readonly CapturedLine[]): boolean {
   return lines.some((line) => NODE_SUBTEST.test(line.text));
 }
 
-/**
- * A `not ok` with no readable diagnostic block (a stream cut short) is kept by
- * name alone. A block with no `failureType:` key is not node's: the generic
- * grammar reads it, as it did before node TAP had its own.
- */
 export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
   const entries: NodeEntry[] = [];
   const foreign: RawFailure[] = [];
@@ -332,26 +277,18 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
     }
     index = block.endIndex;
   }
-  // TAP prints a `# pass` line per nesting level: the largest is the run's total.
   const counts = nodeCounts(lines, TAP_COUNT, (key, earlier, value) =>
     key === "pass" ? Math.max(earlier, value) : value,
   );
   disambiguateSameNames(entries);
-  // Each block is read once and in stream order, so startLine puts the two lists back in that order.
   const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
   return resultOf(failures, counts);
 }
 
-/* ------------------------------ spec ------------------------------ */
-
 export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
 const SPEC_FAILING_HEADER = /^✖ failing tests:\s*$/;
 const SPEC_TEST_AT = /^test at (.+?):(\d+):\d+\s*$/;
-/**
- * What follows a row's name: its duration, then for a todo or skipped test a
- * directive group (` # TODO`, or ` # <reason>` when the test gave one). A
- * directive only counts after the duration, so a `#` inside a name is safe.
- */
+/** node's spec rows end in `(<n>ms)`, then ` # TODO`, ` # SKIP`, or ` # <reason>` for a skip that gave one. */
 const SPEC_ROW_TAIL = String.raw`(?: \(\d+(?:\.\d+)?ms\)( #(?: .*)?)?)?\s*$`;
 const SPEC_NAME_ROW = new RegExp(`^✖ (.*?)${SPEC_ROW_TAIL}`);
 const SPEC_TREE_ROW = new RegExp(`^(\\s*)([✖▶]) (.*?)${SPEC_ROW_TAIL}`);
@@ -367,12 +304,10 @@ export function isSpecStream(lines: readonly CapturedLine[]): boolean {
   return keys.size >= 2;
 }
 
-/** A value that is one quoted string literal loses its quotes; anything else is unchanged. */
 function inspectedString(value: string): string {
   return unquote(value, (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
-/** One `test at ...` entry of the `✖ failing tests:` section. */
 function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
   const at = SPEC_TEST_AT.exec(lines[start]?.text ?? "");
   const nameRow = SPEC_NAME_ROW.exec(lines[start + 1]?.text ?? "");
@@ -388,7 +323,6 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
     const raw = lines[index]?.text ?? "";
     const text = raw.trim();
     if (text === "") continue;
-    // node indents every line of an entry by two spaces; anything shallower is output of a wrapper.
     if (leadingSpaces(raw) < SPEC_ENTRY_INDENT) break;
     last = index;
     const isFrame = /^at /.test(text);
@@ -426,11 +360,7 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
   };
 }
 
-/**
- * Entries for a stream cut before its `✖ failing tests:` section: one per
- * failing leaf row printed before the summary. A `✖` row is a suite, not a
- * leaf, when an earlier `▶` row with the same name and indentation opened it.
- */
+/** node's spec reporter opens a suite with a `▶` row and closes it with a `✖` row of the same name and indent. */
 function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
   const opened = new Set<string>();
   const entries: NodeEntry[] = [];
@@ -449,7 +379,6 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
   return entries;
 }
 
-/** Contiguous non-blank runs of lines, split at tree rows and `ℹ` lines too. */
 function textBlocks(lines: readonly CapturedLine[]): string[][] {
   const blocks: string[][] = [];
   let current: string[] = [];
@@ -473,11 +402,7 @@ function firstErrorLine(block: readonly string[]): string | undefined {
   return undefined;
 }
 
-/**
- * A whole test file that crashed is reported as `'test failed'`; node relayed
- * the subprocess's own error above the section. Take it from the block that
- * names the file, else (with a single crashed file) from the first error line.
- */
+/** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above the `✖ failing tests:` section. */
 function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEntry[]): void {
   const crashed = entries.filter((entry) => entry.crashedFile);
   if (crashed.length === 0) return;
@@ -499,7 +424,6 @@ function specResult(entries: NodeEntry[], counts: AdapterCounts): AdapterResult 
 }
 
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
-  // The spec reporter prints one summary block per node run: a stream of several runs sums them.
   const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, (_key, earlier, value) => earlier + value);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
   if (section < 0) return specResult(readSpecLeafRows(lines), counts);

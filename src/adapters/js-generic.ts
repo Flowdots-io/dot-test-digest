@@ -27,7 +27,6 @@ export function inlineDiff(text: string): { expected: string; received: string }
   return { expected: inline[2].trim(), received: inline[1].trim() };
 }
 
-/** The v0.1.1 grammar for TTY-style streams, TAP and Playwright headers. */
 export function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   const failures: RawFailure[] = [];
   let counts: AdapterCounts = emptyCounts();
@@ -44,7 +43,6 @@ export function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
   for (const line of lines) {
     const text = line.text;
 
-    // SPEC-002 §4.2.1(a): a file banner is metadata, never a frame/failure.
     if (COMPACT_BANNER.test(text)) continue;
 
     const header = HEADER.exec(text);

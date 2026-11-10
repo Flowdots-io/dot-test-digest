@@ -22,7 +22,6 @@ beforeEach(() => {
   stderr = "";
 });
 
-/** `main` in the project dir; the output lands in `stdout` and `stderr`, replacing the previous run's. */
 async function run(argv: readonly string[]): Promise<number> {
   const result = await runMain(argv, { cwd: project, home });
   ({ stdout, stderr } = result);
@@ -55,8 +54,6 @@ describe("source-order ranking through the CLI", () => {
 
 describe("omitted clusters through the CLI", () => {
   it("lists the clusters beyond --max-clusters and keeps JSON capped", async () => {
-    // Build noise before the diagnostics makes the raw output larger than any clustered
-    // rendering, so the run stays on levels 1 to 4 (level 5 has no footer by design).
     const noisy = [
       process.execPath,
       "-e",
@@ -259,7 +256,6 @@ describe("omitted-cluster footer at volume", () => {
       if (Buffer.byteLength(next, "utf8") > 2400) break;
       expected = next;
     }
-    // The renderer cuts any text of 2,400 bytes or more to 2,399 ending in "...".
     if (Buffer.byteLength(expected, "utf8") > 2399) expected = `${expected.slice(0, 2396)}...`;
 
     const envelope = failEnvelope(COUNT + 1, "/tmp/logs/run_e.log", [only]);
