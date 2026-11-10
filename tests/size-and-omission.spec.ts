@@ -258,6 +258,27 @@ describe("omitted-cluster footer", () => {
     expect(size + Buffer.byteLength(`${lineOf(listed.length + 6)}\n`, "utf8")).toBeGreaterThan(FAIL_BYTE_CEILING);
   });
 
+  it("The more-clusters line survives a block that alone exceeds the limit", () => {
+    const big = omissionCluster({
+      cluster_id: "c_30000001",
+      top_frame: "tests/big.test.ts:5:1",
+      message: "AssertionError: expected values to be strictly deep-equal",
+      diff: { expected: "e".repeat(1200), received: "r".repeat(1200) },
+      sample_tests: ["big > huge diff"],
+    });
+    const omitted = [
+      omissionCluster({ cluster_id: "c_30000002", top_frame: "src/a.ts:1:1", sample_tests: ["big > second"] }),
+      omissionCluster({ cluster_id: "c_30000003", top_frame: "src/b.ts:2:2", sample_tests: ["big > third"] }),
+    ];
+    const out = formatEnvelope(failEnvelope(3, "/tmp/logs/run_f.log", [big]), "compact-md", { omitted });
+
+    const lines = out.split("\n");
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+    expect(lines.at(-1)).toBe("");
+    expect(lines.at(-2)).toBe("+2 more clusters (see log)");
+    expect(lines.at(-3)?.endsWith("...")).toBe(true);
+  });
+
   describe("A listing that fills the limit exactly is not cut mid-line", () => {
     const longTest =
       "cart > a test name that is deliberately long so that the omitted-cluster label has to be truncated at eighty bytes";

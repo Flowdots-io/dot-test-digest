@@ -207,7 +207,7 @@ function renderLevel(
   const room = FAIL_BODY_BYTES - byteLength(header) - byteLength(footer);
   const rest =
     byteLength(keptBlocks) > room
-      ? `${truncateBytes(keptBlocks, room)}${footer}`
+      ? truncateBytes(`${keptBlocks}${footer}`, room)
       : `${keptBlocks}${footer}${lines.slice(kept, kept + listed).join("")}`;
   return { header, body: `${header}${rest}` };
 }
