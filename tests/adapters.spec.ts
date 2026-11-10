@@ -327,6 +327,52 @@ describe("node TAP diagnostic blocks", () => {
     expect(result?.failures[0]?.message).toBe("AssertionError: expected 99 to be 100");
     expect(result?.failures[0]?.diff).toEqual({ expected: "100", received: "99" });
   });
+
+  it("A stream mixing node blocks, blocks without a failureType key and a cut-short entry keeps the stream order", () => {
+    const nodeBlock = (name: string, line: number): string[] => [
+      `# Subtest: ${name}`,
+      `not ok 1 - ${name}`,
+      "  ---",
+      "  duration_ms: 1",
+      "  type: 'test'",
+      `  location: '/work/x.test.js:${line}:1'`,
+      "  failureType: 'testCodeFailure'",
+      `  error: 'boom ${name}'`,
+      "  code: 'ERR_TEST_FAILURE'",
+      "  name: 'Error'",
+      "  stack: |-",
+      "    at x (/work/x.test.js:1:1)",
+      "  ...",
+    ];
+    const stream = [
+      "not ok 1 - cut short",
+      "not ok 2 - foreign",
+      "  ---",
+      "  error: |-",
+      "    AssertionError: expected 99 to be 100",
+      "  ...",
+      ...nodeBlock("same", 3),
+      ...nodeBlock("same", 5),
+      "not ok 3 - outer",
+      "  ---",
+      "  FAIL inner thing",
+      "  TypeError: nope",
+      "  ...",
+      ...nodeBlock("last", 9),
+    ].join("\n");
+    const result = runGear0(lines(stream));
+
+    expect(result?.failures.map((f) => f.testName)).toEqual([
+      "cut short",
+      "foreign",
+      "same @3",
+      "same @5",
+      "outer",
+      "inner thing",
+      "last",
+    ]);
+    expect(result?.failures.map((f) => f.startLine)).toEqual([1, 2, 8, 21, 33, 35, 39]);
+  });
 });
 
 describe("node spec reporter at the adapter seam", () => {

@@ -7,17 +7,22 @@ import {
   mergeCounts,
   readCountTokens,
   type Adapter,
-  type AdapterCounts,
   type AdapterResult,
 } from "./common.js";
+import {
+  COMPACT_BANNER,
+  EXPECTED_LINE,
+  FRAME,
+  HEADER,
+  inlineDiff,
+  parseGeneric,
+  RECEIVED_LINE,
+  SUMMARY,
+} from "./js-generic.js";
 import { isNodeTapStream, isSpecStream, NODE_SPEC_SUMMARY, parseNodeSpec, parseNodeTap } from "./node-test.js";
 
-const HEADER = /^\s*(?:FAIL|✕|×|✗|●|not ok\s+\d+|\d+\))\s+(.+?)\s*$/;
 const TAP_SUMMARY = /^#\s+(?:tests|pass|fail)\s+\d+\s*$/;
 const PLAYWRIGHT_HEADER = /^\s*\d+\)\s+\[[^\]]+\]\s+›/;
-const FRAME = /^\s*(?:❯|at)\s+(.+?)\s*$/;
-const ERROR_MESSAGE = /(?:^|\s)((?:[A-Za-z]*Error|AssertionError)[^\n]*)$/;
-const SUMMARY = /\b(?:Tests|Test Files|Tests:)\b/;
 
 /**
  * Vitest's non-TTY ("basic") reporter puts every failure in two sections: an
@@ -25,8 +30,6 @@ const SUMMARY = /\b(?:Tests|Test Files|Tests:)\b/;
  * SPEC-002 §4.2.1). These markers let the adapter pick that grammar.
  */
 const COMPACT_SUMMARY = /Failed Tests\s+\d+/;
-const COMPACT_BANNER =
-  /^\s*❯\s+(.+?)\s+\(\d+\s+tests?(?:\s*\|\s*\d+\s+failed)?\)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s))?\s*$/;
 const COMPACT_FAIL_ROW =
   /^\s*(?:×|✕|✗)\s+(.+?)(?:\s+\d+(?:\.\d+)?\s*(?:ms|s))?\s*$/;
 const SUMMARY_FAIL_ROW = /^\s*FAIL\s+(.+?)\s+>\s+(.+?)\s*$/;
@@ -34,8 +37,6 @@ const ARROW_MESSAGE = /^\s*→\s+(.+?)\s*$/;
 const GROUP_BREAK = /\[\d+\/\d+\]/;
 const GROUP_SEPARATOR = /^\s*⎯{3,}/;
 const ERROR_LINE = /^(?:[A-Za-z_$][\w.$]*Error|Error):\s/;
-const EXPECTED_LINE = /^\s*Expected\s*:?\s*(.+)$/i;
-const RECEIVED_LINE = /^\s*Received\s*:?\s*(.+)$/i;
 const MINUS_VALUE = /^-\s+(.*)$/;
 const PLUS_VALUE = /^\+\s+(.*)$/;
 
@@ -62,14 +63,6 @@ interface SummaryGroup {
   frames: string[];
   diff?: { expected: string; received: string };
   endLine: number;
-}
-
-function inlineDiff(text: string): { expected: string; received: string } | undefined {
-  const inline = /\bexpected\s+(.+?)\s+to\s+(?:be|equal|match|contain|throw)\s+(.+)$/i.exec(
-    text,
-  );
-  if (inline?.[1] === undefined || inline[2] === undefined) return undefined;
-  return { expected: inline[2].trim(), received: inline[1].trim() };
 }
 
 function isCompactStream(lines: readonly CapturedLine[]): boolean {
@@ -322,109 +315,6 @@ function parseCompact(lines: readonly CapturedLine[]): AdapterResult {
   return { adapter: "js-test", failures, counts };
 }
 
-/** The v0.1.1 grammar for TTY-style streams, TAP and Playwright headers. */
-function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
-  const failures: RawFailure[] = [];
-  let counts: AdapterCounts = emptyCounts();
-  let current: RawFailure | null = null;
-
-  const flush = (): void => {
-    if (current === null) return;
-    current.errorKind = classifyMessage(`${current.message}\n${current.frames.join("\n")}`);
-    if (current.message === "") current.message = "Unknown test failure";
-    failures.push(current);
-    current = null;
-  };
-
-  for (const line of lines) {
-    const text = line.text;
-
-    // SPEC-002 §4.2.1(a): a file banner is metadata, never a frame/failure.
-    if (COMPACT_BANNER.test(text)) continue;
-
-    const header = HEADER.exec(text);
-    if (header !== null) {
-      flush();
-      const rawName = header[1] ?? "";
-      const fileMatch = /^(\S+\.(?:spec|test)\.[cm]?[jt]sx?)\s*>\s*/.exec(rawName.trim());
-      const name = normalizeTestName(rawName);
-      current = {
-        testName: name === "" ? null : name,
-        testFile: fileMatch?.[1] ?? null,
-        errorKind: "RUNTIME_EXCEPTION",
-        message: "",
-        frames: [],
-        startLine: line.line,
-        endLine: line.line,
-      };
-      continue;
-    }
-
-    if (SUMMARY.test(text)) {
-      const tokens = readCountTokens(text);
-      if (tokens !== null) counts = mergeCounts(counts, tokens);
-      continue;
-    }
-
-    const tap = /^#\s+(tests|pass|fail)\s+(\d+)\s*$/.exec(text);
-    if (tap !== null) {
-      const value = Number(tap[2]);
-      if (tap[1] === "pass") counts.passed = Math.max(counts.passed, value);
-      if (tap[1] === "fail") counts.failed = Math.max(counts.failed, value);
-      continue;
-    }
-
-    if (current === null) {
-      if (!FRAME.test(text) && !ERROR_MESSAGE.test(text)) continue;
-      current = {
-        testName: null,
-        testFile: null,
-        errorKind: "RUNTIME_EXCEPTION",
-        message: "",
-        frames: [],
-        startLine: line.line,
-        endLine: line.line,
-      };
-    }
-
-    current.endLine = line.line;
-
-    if (current.message === "") {
-      const message = ERROR_MESSAGE.exec(text);
-      if (message?.[1] !== undefined) current.message = message[1].trim();
-    }
-
-    const frame = FRAME.exec(text);
-    if (frame?.[1] !== undefined) {
-      current.frames.push(frame[1]);
-      continue;
-    }
-
-    const expected = /^\s*Expected\s*:?\s*(.+)$/i.exec(text);
-    const received = /^\s*Received\s*:?\s*(.+)$/i.exec(text);
-    if (expected !== null || received !== null) {
-      const diff = current.diff ?? { expected: "", received: "" };
-      if (expected?.[1] !== undefined) diff.expected = expected[1].trim();
-      if (received?.[1] !== undefined) diff.received = received[1].trim();
-      current.diff = diff;
-      continue;
-    }
-
-    if (current.diff === undefined) {
-      const inline = /\bexpected\s+(.+?)\s+to\s+(?:be|equal|match|contain|throw)\s+(.+)$/i.exec(
-        text,
-      );
-      if (inline?.[1] !== undefined && inline[2] !== undefined) {
-        current.diff = { expected: inline[2].trim(), received: inline[1].trim() };
-      }
-    }
-  }
-
-  flush();
-  if (counts.failed === 0 && failures.length > 0) counts.failed = failures.length;
-  return { adapter: "js-test", failures, counts };
-}
-
 export const jsTestAdapter: Adapter = {
   name: "js-test",
 
@@ -451,8 +341,6 @@ export const jsTestAdapter: Adapter = {
   parse(lines: readonly CapturedLine[]): AdapterResult {
     if (isSpecStream(lines)) return parseNodeSpec(lines);
     if (isCompactStream(lines)) return parseCompact(lines);
-    return isNodeTapStream(lines)
-      ? parseNodeTap(lines, (span) => parseGeneric(span).failures)
-      : parseGeneric(lines);
+    return isNodeTapStream(lines) ? parseNodeTap(lines) : parseGeneric(lines);
   },
 };
