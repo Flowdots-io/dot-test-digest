@@ -16,8 +16,8 @@ PR #5 (`sharpen-weak-digest-cases`) and its follow-up PR #6 shipped the node `--
 
 - Omitted-cluster budget order: the number of full blocks is the number that fit together with the header and the `+N more clusters (see log)` line (the v0.1.2 count, at least one); listed lines then fill what is left; unlisted clusters stay counted in `N`. Size is measured against one limit: the digest, final newline included, is at most 2,400 bytes and 600 EstimatedTokens, and no listed line is cut.
 - One error-attribution rule for a crashed file under both reporters: the first `<Name>Error` line at or after the last line that mentions the file; position decides the lines considered (TAP: the comment run above the file's `# Subtest:`; spec: the lines between the previous tree row and the file's own `✖ <file>` row), then the old path rule over every line outside all failing-tests sections.
-- A crashed file whose error is a read failure on the file itself (`EACCES`, `EPERM`, `EISDIR`) is `SYNTAX_IMPORT_ERROR` (invalid red).
-- Parity details: a TAP `testCodeFailure` or `hookFailed` block with no `name:` key reads as `Error: <text>` (`Error` when empty); `\\` in a TAP test name is unescaped; spec diffs unquote backtick strings.
+- A crashed file whose error is a read failure on the test file itself (`EACCES` or `EPERM` whose text names that file's path) is `SYNTAX_IMPORT_ERROR` (invalid red); a read failure of any other file at load is not.
+- Parity details: a TAP `testCodeFailure` or `hookFailed` block with a `stack:` key and no `name:` key reads as `Error: <text>` (`Error` when empty); `\\` in a TAP test name is unescaped; spec diffs unquote backtick strings.
 - README: the many-omitted-clusters limitation is replaced by the new behaviour; SPEC-002 §4.1.1 and §4.2.3 follow.
 - No ceiling is raised (INV-1 160 bytes, INV-2 600 tokens / 2,400 bytes), INV-3 exit codes are untouched, INV-5 verdicts move only toward what INV-5 already says. `--format=json` is unchanged.
 
