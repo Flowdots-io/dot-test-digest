@@ -772,6 +772,60 @@ describe("node --test, spec reporter parity with TAP", () => {
   });
 });
 
+function clusterIds(envelope: DigestEnvelope): string[] {
+  return clustersOf(envelope)
+    .map((c) => c.cluster_id)
+    .sort();
+}
+
+describe("node --test, the same failure reads the same under both reporters", () => {
+  it("Plain errors and hook errors read as Error under both reporters", async () => {
+    const results = await Promise.all(REPORTERS.map((reporter) => digestOf(reporter, "plain.test.js")));
+
+    for (const { envelope } of results) {
+      const message = (test: string): string | undefined => clusterOf(envelope, test)?.message;
+      expect([message("plain"), message("empty"), message("typed"), message("suite")]).toEqual([
+        "Error: z",
+        "Error",
+        "TypeError: t",
+        "Error: hb",
+      ]);
+    }
+    const [tap, spec] = results;
+    expect(clusterIds((tap as JsonRun).envelope)).toEqual(clusterIds((spec as JsonRun).envelope));
+  });
+
+  it("A test name with a backslash is the same under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "import assert from 'node:assert';",
+      'test("back\\\\slash", () => assert.equal(1, 2));',
+    );
+    const { tap, spec } = await bothReporters("names.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clustersOf(envelope)).toHaveLength(1);
+      expect(clustersOf(envelope)[0]?.sample_tests).toEqual(["back\\slash"]);
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A backtick string diff equals the TAP diff", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "import assert from 'node:assert';",
+      'test("bt", () => assert.equal(`a\'b"c`, `a\'b"d`));',
+    );
+    const { tap, spec } = await bothReporters("names.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clustersOf(envelope)).toHaveLength(1);
+      expect(clustersOf(envelope)[0]?.diff).toEqual({ expected: `a'b"d`, received: `a'b"c` });
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+});
+
 const DIRECTIVE_TESTS = source(
   "import test, { describe, it } from 'node:test';",
   "test('not yet', { todo: true }, () => { throw new Error('x'); });",
