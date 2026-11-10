@@ -3,53 +3,33 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DigestEnvelope, FailureCluster } from "../src/types/schema.js";
 import { clustersOf } from "./helpers/digest.js";
-import { runInCart, runNodeCart, type CartArgs, type CartOptions, type CartRun } from "./helpers/node-cart.js";
+import {
+  MISSING_EXPORT_MESSAGE,
+  MODULE_NOT_FOUND,
+  REPORTERS,
+  SPEC,
+  clusterOf,
+  eachReporter,
+  jsonOf,
+  nodeRunsWrapper,
+  reporterFlag,
+  runInCart,
+  runJson,
+  runNodeCart,
+  source,
+  type CartArgs,
+  type CartOptions,
+  type JsonRun,
+  type Reporter,
+} from "./helpers/node-cart.js";
 
 const SYNTAX_MESSAGE =
   "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
 const PASSED_MESSAGE = "New test passed before implementation; expected a failing behavioral assertion.";
-const MODULE_NOT_FOUND = "Error: Cannot find module '";
-const MISSING_EXPORT_MESSAGE =
-  "SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'";
-const SPEC = "--test-reporter=spec";
-
-type Reporter = "tap" | "spec";
-const REPORTERS: readonly Reporter[] = ["tap", "spec"];
-
-/** TAP is node's default when its stdout is a pipe. */
-function reporterFlag(reporter: Reporter): string[] {
-  return reporter === "spec" ? [SPEC] : [];
-}
-
-/** One test per reporter from one body; `titles` keeps each reporter's own title. */
-function eachReporter(titles: Readonly<Record<Reporter, string>>, body: (reporter: Reporter) => Promise<void>): void {
-  for (const reporter of REPORTERS) it(titles[reporter], () => body(reporter));
-}
-
-function source(...lines: string[]): string {
-  return `${lines.join("\n")}\n`;
-}
 
 function baselineOf(home: string, scope: string): string[] {
   const raw = fs.readFileSync(path.join(home, `state-${scope}.json`), "utf8");
   return (JSON.parse(raw) as { baseline: string[] }).baseline;
-}
-
-interface JsonRun {
-  run: CartRun;
-  envelope: DigestEnvelope;
-}
-
-function jsonOf(run: CartRun): JsonRun {
-  return { run, envelope: JSON.parse(run.stdout) as DigestEnvelope };
-}
-
-async function runJson(
-  args: CartArgs,
-  options: CartOptions & { flags?: readonly string[] } = {},
-): Promise<JsonRun> {
-  const { flags = [], ...cart } = options;
-  return jsonOf(await runNodeCart(["--no-jev", "--format=json", ...flags], args, cart));
 }
 
 function digestOf(reporter: Reporter, file: string, contents?: string, flags: readonly string[] = []): Promise<JsonRun> {
@@ -59,28 +39,6 @@ function digestOf(reporter: Reporter, file: string, contents?: string, flags: re
 
 async function bothReporters(file: string, contents?: string): Promise<Record<Reporter, JsonRun>> {
   return { tap: await digestOf("tap", file, contents), spec: await digestOf("spec", file, contents) };
-}
-
-/** Two node runs in one stream, each printing its own summary. */
-async function nodeRunsWrapper(
-  reporter: Reporter,
-  tests: Readonly<Record<string, string>>,
-  options: { flags?: readonly string[]; epilogue?: string } = {},
-): Promise<JsonRun> {
-  const wrapper = source(
-    "import { spawnSync } from 'node:child_process';",
-    "let status = 0;",
-    `for (const file of ${JSON.stringify(Object.keys(tests))}) {`,
-    `  const run = spawnSync(process.execPath, ['--test', '--test-reporter=${reporter}', file], { stdio: 'inherit' });`,
-    "  status = status || (run.status ?? 1);",
-    "}",
-    ...(options.epilogue === undefined ? [] : [options.epilogue]),
-    "process.exit(status);",
-  );
-  const flags = ["--no-jev", "--format=json", ...(options.flags ?? [])];
-  return jsonOf(
-    await runInCart(flags, [process.execPath, "wrapper.js"], { files: { "wrapper.js": wrapper, ...tests } }),
-  );
 }
 
 function expectOneLine(stdout: string, prefix: string): void {
@@ -97,22 +55,14 @@ function expectSyntaxFault({ run, envelope }: JsonRun): void {
   expect(run.stderr).toContain(SYNTAX_MESSAGE);
 }
 
-function clusterOf(envelope: DigestEnvelope, test: string): FailureCluster | undefined {
-  return clustersOf(envelope).find((c) => c.sample_tests.includes(test));
-}
-
-/**
- * Split in two so a failing run does not print the words "SyntaxError: ..." that the digest of this
- * very test run would classify as an invalid red.
- */
-function expectUnexpectedEnd(cluster: FailureCluster | undefined): void {
-  const prefix = "SyntaxError: ";
-  expect(cluster?.message.startsWith(prefix)).toBe(true);
-  expect(cluster?.message.slice(prefix.length)).toBe("Unexpected end of input");
-}
-
 function totalAffected(envelope: DigestEnvelope): number {
   return clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0);
+}
+
+function clusterIds(envelope: DigestEnvelope): string[] {
+  return clustersOf(envelope)
+    .map((c) => c.cluster_id)
+    .sort();
 }
 
 const CART_BASELINE = [
@@ -226,7 +176,7 @@ describe("node --test, TAP diagnostic blocks", () => {
   });
 });
 
-describe("node --test, nested suite and timeout", () => {
+describe("node --test, nested suites, same-named tests and file-level failures", () => {
   eachReporter(
     {
       tap: "Nested suite with a deep-equal failure and a timeout",
@@ -259,9 +209,7 @@ describe("node --test, nested suite and timeout", () => {
       expect(slow?.signal_window).toBe("");
     },
   );
-});
 
-describe("node --test, same-named failures", () => {
   eachReporter(
     {
       tap: "Two same-named failing tests in one file stay two failures under TAP",
@@ -312,9 +260,7 @@ describe("node --test, same-named failures", () => {
       ]);
     },
   );
-});
 
-describe("node --test, file-level failures", () => {
   eachReporter(
     {
       tap: "A missing module is one SYNTAX_IMPORT_ERROR failure",
@@ -381,344 +327,7 @@ describe("node --test, file-level failures", () => {
   );
 });
 
-describe("node --test, which printed line is a crashed file's error", () => {
-  const LOG_LINE = 'data:text/javascript,console.log("Error: config.json not found, using defaults")';
-
-  it("A log line above the crash is not mistaken for the file's error", async () => {
-    const { run, envelope } = await runJson(["--import", LOG_LINE, "missing-module.test.js"], {
-      flags: ["--tdd-phase=red"],
-    });
-
-    expect(run.code).toBe(64);
-    expect(envelope.status).toBe("INVALID_RED");
-    expect(clustersOf(envelope)).toHaveLength(1);
-    const cluster = clustersOf(envelope)[0];
-    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expect(cluster?.sample_tests).toEqual(["missing-module.test.js"]);
-    expect(cluster?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
-  });
-
-  it("A syntax error in a test file is attributed to that file under TAP", async () => {
-    const { envelope } = await runJson(["missing-module.test.js", "syntax-error.test.js"]);
-
-    const cluster = clusterOf(envelope, "syntax-error.test.js");
-    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expectUnexpectedEnd(cluster);
-  });
-
-  it("A syntax error block with blank lines is attributed to its file", async () => {
-    const { envelope } = await runJson([SPEC, "missing-module.test.js", "syntax-error.test.js"]);
-
-    const cluster = clusterOf(envelope, "syntax-error.test.js");
-    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expectUnexpectedEnd(cluster);
-    expect(clusterOf(envelope, "missing-module.test.js")?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
-  });
-
-  const ONE_RUN_PER_FILE = source(
-    'import { spawnSync } from "node:child_process";',
-    "const [reporter, ...files] = process.argv.slice(2);",
-    "let code = 0;",
-    'for (const f of files) { const r = spawnSync(process.execPath, ["--test", "--test-reporter=" + reporter, f], { stdio: "inherit" }); code = code || (r.status ?? 1); }',
-    "process.exit(code);",
-  );
-
-  eachReporter(
-    {
-      tap: "A crashed file in a later run of a multi-run stream keeps its error (tap)",
-      spec: "A crashed file in a later run of a multi-run stream keeps its error (spec)",
-    },
-    async (reporter) => {
-      const result = jsonOf(
-        await runInCart(
-          ["--no-jev", "--format=json", "--tdd-phase=red"],
-          [process.execPath, "wrap.mjs", reporter, "cart.test.js", "missing-export.test.js"],
-          { files: { "wrap.mjs": ONE_RUN_PER_FILE } },
-        ),
-      );
-
-      expect(result.run.code).toBe(0);
-      expect(result.envelope.status).toBe("VALID_RED");
-      const cluster = clusterOf(result.envelope, "missing-export.test.js");
-      expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
-      expect(cluster?.message).toBe(MISSING_EXPORT_MESSAGE);
-    },
-  );
-
-  eachReporter(
-    {
-      tap: "A startup crash is not blamed on another run's output (tap)",
-      spec: "A startup crash is not blamed on another run's output (spec)",
-    },
-    async (reporter) => {
-      const result = jsonOf(
-        await runInCart(
-          ["--no-jev", "--format=json", "--tdd-phase=red"],
-          [process.execPath, "wrap.mjs", reporter, "exitload.test.js", "logc.test.js"],
-          {
-            files: {
-              "wrap.mjs": ONE_RUN_PER_FILE,
-              "exitload.test.js": source("process.exit(1);"),
-              "logc.test.js": source(
-                'import test from "node:test";',
-                'console.log("TypeError: cfg.get is not a function (handled)");',
-                'test("x", () => {});',
-              ),
-            },
-          },
-        ),
-      );
-
-      expect(result.run.code).toBe(64);
-      expect(result.envelope.status).toBe("INVALID_RED");
-      const cluster = clusterOf(result.envelope, "exitload.test.js");
-      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-      expect(cluster?.message).toBe("test failed");
-    },
-  );
-});
-
-describe("node --test, the crash block directly above a file's entry is its error", () => {
-  const SETUP_LOG = 'data:text/javascript,console.log("Error: config.json not found, using defaults")';
-  const EXIT_LOAD = source("process.exit(1);");
-  const LOG_ONLY = source(
-    'import test from "node:test";',
-    'console.log("TypeError: cfg.get is not a function (handled)");',
-    'test("x", () => {});',
-  );
-
-  eachReporter(
-    {
-      tap: "A crash that does not name the test file keeps its own block (tap)",
-      spec: "A crash that does not name the test file keeps its own block (spec)",
-    },
-    async (reporter) => {
-      const result = await runJson([...reporterFlag(reporter), "--import", SETUP_LOG, "deep.test.js"], {
-        flags: ["--tdd-phase=red"],
-        files: {
-          "helper.js": source('import "./missing-dep.js";', "export const h = 1;"),
-          "deep.test.js": source('import test from "node:test";', 'import "./helper.js";', 'test("x", () => {});'),
-        },
-      });
-
-      expect(result.run.code).toBe(64);
-      expect(result.envelope.status).toBe("INVALID_RED");
-      const cluster = clusterOf(result.envelope, "deep.test.js");
-      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-      expect(cluster?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
-      expect(cluster?.message).toContain("missing-dep.js' imported from ");
-    },
-  );
-
-  eachReporter(
-    {
-      tap: "A load-time throw of a non-error is an unattributed startup crash (tap)",
-      spec: "A load-time throw of a non-error is an unattributed startup crash (spec)",
-    },
-    async (reporter) => {
-      const result = await runJson([...reporterFlag(reporter), "--import", SETUP_LOG, "throw42.test.js"], {
-        flags: ["--tdd-phase=red"],
-        files: { "throw42.test.js": source("throw 42;") },
-      });
-
-      expect(result.run.code).toBe(64);
-      expect(result.envelope.status).toBe("INVALID_RED");
-      const cluster = clusterOf(result.envelope, "throw42.test.js");
-      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-      expect(cluster?.message).toBe("test failed");
-    },
-  );
-
-  const FILE_ORDERS: ReadonlyArray<readonly [string, readonly string[]]> = [
-    ["log file first", ["logc.test.js", "exitload.test.js"]],
-    ["log file last", ["exitload.test.js", "logc.test.js"]],
-  ];
-
-  for (const [reporter, title] of [
-    ["tap", "A startup crash is not blamed on another file's log under TAP"],
-    ["spec", "A startup crash is not blamed on another file's log, in either file order"],
-  ] as const) {
-    for (const [order, files] of FILE_ORDERS) {
-      it(`${title} (${order})`, async () => {
-        const result = await runJson([...reporterFlag(reporter), ...files], {
-          flags: ["--tdd-phase=red"],
-          files: { "exitload.test.js": EXIT_LOAD, "logc.test.js": LOG_ONLY },
-        });
-
-        expect(result.run.code).toBe(64);
-        expect(result.envelope.status).toBe("INVALID_RED");
-        const cluster = clusterOf(result.envelope, "exitload.test.js");
-        expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-        expect(cluster?.message).toBe("test failed");
-      });
-    }
-  }
-});
-
-describe("node --test, a read failure of a sibling file whose name starts like the test file", () => {
-  const TITLES: Readonly<Record<Reporter, string>> = {
-    tap: "A read failure of a sibling file whose name starts like the test file stays a behavioural red",
-    spec: "A read failure of a sibling file whose name starts like the test file stays a behavioural red under the spec reporter",
-  };
-
-  for (const reporter of REPORTERS) {
-    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
-      let sibling = "";
-      try {
-        const { run, envelope } = await runJson(
-          (dir) => {
-            sibling = path.join(dir, "cfg.test.json");
-            fs.chmodSync(sibling, 0o000);
-            return [...reporterFlag(reporter), "cfg.test.js"];
-          },
-          {
-            flags: ["--tdd-phase=red"],
-            files: {
-              "cfg.test.json": "{}\n",
-              "cfg.test.js": source(
-                "import fs from 'node:fs';",
-                "import test from 'node:test';",
-                "fs.readFileSync(new URL('./cfg.test.json', import.meta.url));",
-                "test('x', () => {});",
-              ),
-            },
-          },
-        );
-
-        expect(run.code).toBe(0);
-        expect(envelope.status).toBe("VALID_RED");
-        expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["RUNTIME_EXCEPTION"]);
-      } finally {
-        if (sibling !== "") fs.chmodSync(sibling, 0o644);
-      }
-    });
-  }
-});
-
-describe("node --test, a runtime error thrown at load keeps its error line", () => {
-  eachReporter(
-    {
-      tap: "A missing export is VALID_RED with exit 0 (a ReferenceError at load time, whose stack frame names the file, tap)",
-      spec: "A missing export is VALID_RED with exit 0 (a ReferenceError at load time, whose stack frame names the file, spec)",
-    },
-    async (reporter) => {
-      const { run, envelope } = await runJson([...reporterFlag(reporter), "load-error.test.js"], {
-        flags: ["--tdd-phase=red"],
-        files: { "load-error.test.js": source("import test from 'node:test';", "notDefinedYet();", "test('x', () => {});") },
-      });
-
-      expect(run.code).toBe(0);
-      expect(envelope.status).toBe("VALID_RED");
-      expect(clustersOf(envelope).map((c) => [c.error_kind, c.message])).toEqual([
-        ["RUNTIME_EXCEPTION", "ReferenceError: notDefinedYet is not defined"],
-      ]);
-    },
-  );
-});
-
-describe("node --test, an earlier log line does not displace a runtime error at load", () => {
-  eachReporter(
-    {
-      tap: "A runtime error at load is not displaced by an earlier log line (tap)",
-      spec: "A runtime error at load is not displaced by an earlier log line (spec)",
-    },
-    async (reporter) => {
-      const { run, envelope } = await runJson([...reporterFlag(reporter), "refload.test.js"], {
-        flags: ["--tdd-phase=red"],
-        files: {
-          "refload.test.js": source(
-            "import test from 'node:test';",
-            "console.log('SyntaxError: Unexpected token } in JSON (from setup)');",
-            "notDefinedYet();",
-            "test('x', () => {});",
-          ),
-        },
-      });
-
-      expect(run.code).toBe(0);
-      expect(envelope.status).toBe("VALID_RED");
-      expect(clustersOf(envelope).map((c) => c.message)).toEqual(["ReferenceError: notDefinedYet is not defined"]);
-    },
-  );
-});
-
-describe("node --test, a test file the runner cannot read", () => {
-  const TITLES: Readonly<Record<Reporter, string>> = {
-    tap: "An unreadable test file is INVALID_RED with exit 64",
-    spec: "An unreadable test file is INVALID_RED with exit 64 under the spec reporter",
-  };
-
-  for (const reporter of REPORTERS) {
-    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
-      let unreadable = "";
-      try {
-        const { run, envelope } = await runJson(
-          (dir) => {
-            unreadable = path.join(dir, "noread.test.js");
-            fs.chmodSync(unreadable, 0o000);
-            return [...reporterFlag(reporter), "noread.test.js"];
-          },
-          {
-            flags: ["--tdd-phase=red"],
-            files: { "noread.test.js": source("import test from 'node:test';", "test('x', () => {});") },
-          },
-        );
-
-        expect(run.code).toBe(64);
-        expect(envelope.status).toBe("INVALID_RED");
-        expect(clustersOf(envelope)).toHaveLength(1);
-        expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-        expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
-      } finally {
-        if (unreadable !== "") fs.chmodSync(unreadable, 0o644);
-      }
-    });
-  }
-});
-
-describe("node --test, a read failure of another file at load", () => {
-  const TITLES: Readonly<Record<Reporter, string>> = {
-    tap: "A read failure of another file at load stays a behavioural red",
-    spec: "A read failure of another file at load stays a behavioural red under the spec reporter",
-  };
-
-  for (const reporter of REPORTERS) {
-    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
-      let secret = "";
-      try {
-        const { run, envelope } = await runJson(
-          (dir) => {
-            secret = path.join(dir, "secret.txt");
-            fs.chmodSync(secret, 0o000);
-            return [...reporterFlag(reporter), "loadsecret.test.js"];
-          },
-          {
-            flags: ["--tdd-phase=red"],
-            files: {
-              "secret.txt": "hidden\n",
-              "loadsecret.test.js": source(
-                "import fs from 'node:fs';",
-                "import test from 'node:test';",
-                "fs.readFileSync(new URL('./secret.txt', import.meta.url));",
-                "test('uses it', () => {});",
-              ),
-            },
-          },
-        );
-
-        expect(run.code).toBe(0);
-        expect(envelope.status).toBe("VALID_RED");
-        expect(clustersOf(envelope)).toHaveLength(1);
-        expect(clustersOf(envelope)[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
-        expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
-      } finally {
-        if (secret !== "") fs.chmodSync(secret, 0o644);
-      }
-    });
-  }
-});
-
-describe("node --test, red-phase guards", () => {
+describe("node --test, red-phase guards and exit-code transparency", () => {
   eachReporter(
     {
       tap: "Assertion failures are VALID_RED with exit 0 and the baseline holds canonical ids",
@@ -836,14 +445,11 @@ describe("node --test, red-phase guards", () => {
   });
 
   it("A missing module is INVALID_RED with exit 64 and the syntax message (unindented wrapper line after the section)", async () => {
-    const { run, envelope } = await nodeRunsWrapper(
-      "spec",
-      { "mm.test.js": "import './missing.js'; import test from 'node:test'; test('x',()=>{});\n" },
-      {
-        flags: ["--tdd-phase=red"],
-        epilogue: "console.log(' ELIFECYCLE  Test failed. See above for more details.');",
-      },
-    );
+    const { run, envelope } = await nodeRunsWrapper("spec", ["mm.test.js"], {
+      flags: ["--tdd-phase=red"],
+      epilogue: "console.log(' ELIFECYCLE  Test failed. See above for more details.');",
+      files: { "mm.test.js": "import './missing.js'; import test from 'node:test'; test('x',()=>{});\n" },
+    });
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
@@ -851,9 +457,7 @@ describe("node --test, red-phase guards", () => {
     expect(clustersOf(envelope)[0]?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
     expect(clustersOf(envelope)[0]?.message).not.toContain("ELIFECYCLE");
   });
-});
 
-describe("node --test, exit-code transparency", () => {
   eachReporter(
     {
       tap: "Without a TDD phase the child's exit code passes through",
@@ -987,15 +591,7 @@ describe("node --test, spec reporter parity with TAP", () => {
       expect(cluster?.sample_tests).toEqual(["label is pen"]);
     }
   });
-});
 
-function clusterIds(envelope: DigestEnvelope): string[] {
-  return clustersOf(envelope)
-    .map((c) => c.cluster_id)
-    .sort();
-}
-
-describe("node --test, the same failure reads the same under both reporters", () => {
   it("Plain errors and hook errors read as Error under both reporters", async () => {
     const { tap, spec } = await bothReporters("plain.test.js");
 
@@ -1170,7 +766,7 @@ describe("node --test, summary.failed is never below the failures reported", () 
   }
 
   it("Nested suite and timeout under the spec reporter (two node runs in one stream sum their counts)", async () => {
-    const { run, envelope } = await nodeRunsWrapper("spec", {
+    const files = {
       "two-fail.test.js": source(
         "import test from 'node:test';",
         "test('good one', () => {});",
@@ -1182,14 +778,15 @@ describe("node --test, summary.failed is never below the failures reported", () 
         "test('fine a', () => {});",
         "test('fine b', () => {});",
       ),
-    });
+    };
+    const { run, envelope } = await nodeRunsWrapper("spec", Object.keys(files), { files });
 
     expect(run.code).toBe(1);
     expect(envelope.summary).toMatchObject({ passed: 3, failed: 2, total_clusters: 2 });
   });
 
   it("Nested suite with a deep-equal failure and a timeout (two node runs in one stream sum their counts, TAP equals spec)", async () => {
-    const tests = {
+    const files = {
       "many-fail.test.js": source(
         "import test, { describe, it } from 'node:test';",
         "test('good one', () => {});",
@@ -1208,8 +805,8 @@ describe("node --test, summary.failed is never below the failures reported", () 
         "test('skipped c', { skip: true }, () => {});",
       ),
     };
-    const tap = await nodeRunsWrapper("tap", tests);
-    const spec = await nodeRunsWrapper("spec", tests);
+    const tap = await nodeRunsWrapper("tap", Object.keys(files), { files });
+    const spec = await nodeRunsWrapper("spec", Object.keys(files), { files });
 
     expect(tap.run.code).toBe(1);
     expect(tap.envelope.summary).toMatchObject({ passed: 4, failed: 2, skipped: 3 });
