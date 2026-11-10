@@ -814,9 +814,9 @@ describe("node --test, TODO and SKIP directives", () => {
 });
 
 /** node exits 0 when only an `after` hook throws. */
-const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> = {
+const SUITE_FAULTS: Readonly<Record<string, { source: string; nodeExitCode: number }>> = {
   "before hook that throws": {
-    exit: 1,
+    nodeExitCode: 1,
     source: [
       "import { describe, before, it } from 'node:test';",
       "describe('suite with failing before', () => {",
@@ -828,7 +828,7 @@ const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> =
     ].join("\n"),
   },
   "after hook that throws": {
-    exit: 0,
+    nodeExitCode: 0,
     source: [
       "import { describe, after, it } from 'node:test';",
       "describe('suite with failing after', () => {",
@@ -839,7 +839,7 @@ const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> =
     ].join("\n"),
   },
   "describe body that throws": {
-    exit: 1,
+    nodeExitCode: 1,
     source: [
       "import { describe, it } from 'node:test';",
       "describe('suite whose body throws', () => {",
@@ -861,13 +861,13 @@ async function digestOf(reporter: string, file: string, source: string) {
 }
 
 describe("node --test, summary.failed is never below the failures reported", () => {
-  for (const [fault, { source, exit }] of Object.entries(SUITE_FAULTS)) {
+  for (const [fault, { source, nodeExitCode }] of Object.entries(SUITE_FAULTS)) {
     for (const reporter of ["tap", "spec"]) {
       it(`Nested suite with a deep-equal failure and a timeout (${fault}, ${reporter})`, async () => {
         const { run, envelope } = await digestOf(reporter, "suite-fault.test.js", source);
 
         const reported = clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0);
-        expect(run.code).toBe(exit);
+        expect(run.code).toBe(nodeExitCode);
         expect(reported).toBeGreaterThan(0);
         expect(envelope.summary.failed).toBeGreaterThanOrEqual(reported);
       });
@@ -971,7 +971,7 @@ describe("node --test, summary.failed is never below the failures reported", () 
   });
 });
 
-describe("node --test, a runtime SyntaxError raised inside a test that ran", () => {
+describe("node --test, a JSON parse failure raised inside a test that ran", () => {
   const RUNTIME_SYNTAX_ERROR = [
     "import test from 'node:test';",
     "test('parses', () => { JSON.parse(undefined); });",

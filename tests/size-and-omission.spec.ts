@@ -54,13 +54,13 @@ describe("source-order ranking through the CLI", () => {
 
 describe("omitted clusters through the CLI", () => {
   it("lists the clusters beyond --max-clusters and keeps JSON capped", async () => {
-    const noisy = [
+    const twelveErrorsUnderBulkyOutput = [
       process.execPath,
       "-e",
       `for (let i = 0; i < 60; i++) console.log('step ' + i + ' ' + 'x'.repeat(60));` +
         `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(TSC_12)},'utf8')); process.exit(2)`,
     ];
-    const code = await run(["--no-jev", "--max-clusters=5", "--", ...noisy]);
+    const code = await run(["--no-jev", "--max-clusters=5", "--", ...twelveErrorsUnderBulkyOutput]);
     expect(code).toBe(2);
     const lines = stdout.split("\n");
     expect(lines[0]).toMatch(/\| 5 clusters \|/);
@@ -73,7 +73,7 @@ describe("omitted clusters through the CLI", () => {
     }
 
     stdout = "";
-    await run(["--no-jev", "--format=json", "--max-clusters=5", "--", ...noisy]);
+    await run(["--no-jev", "--format=json", "--max-clusters=5", "--", ...twelveErrorsUnderBulkyOutput]);
     const envelope = JSON.parse(stdout) as DigestEnvelope;
     expect(envelope.summary.total_clusters).toBe(5);
     expect(clustersOf(envelope)).toHaveLength(5);
@@ -219,7 +219,7 @@ describe("omitted-cluster footer", () => {
       ),
     );
     expect(estimateTokens(out)).toBeLessThanOrEqual(600);
-    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(2400);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
   });
 
   it("Clusters beyond --max-clusters are listed instead of silently dropped (oversize block: the one kept block alone exceeds the ceiling)", () => {
@@ -275,10 +275,13 @@ describe("omitted-cluster footer at volume", () => {
     let expected = base;
     for (let n = 1; n <= COUNT; n += 1) {
       const next = `${expected}\n${omittedLine(n)}`;
-      if (Buffer.byteLength(next, "utf8") > 2400) break;
+      if (Buffer.byteLength(next, "utf8") > FAIL_BYTE_CEILING) break;
       expected = next;
     }
-    if (Buffer.byteLength(expected, "utf8") > 2399) expected = `${expected.slice(0, 2396)}...`;
+    const withoutNewline = FAIL_BYTE_CEILING - 1;
+    if (Buffer.byteLength(expected, "utf8") > withoutNewline) {
+      expected = `${expected.slice(0, withoutNewline - "...".length)}...`;
+    }
 
     const envelope = failEnvelope(COUNT + 1, "/tmp/logs/run_e.log", [only]);
     const started = performance.now();
