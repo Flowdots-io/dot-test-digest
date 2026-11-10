@@ -41,7 +41,7 @@ When the failing-tests section reports a whole test file (`✖ <file> (<duration
 #### Scenario: The same file crashing in two runs keeps each run's own error
 - **GIVEN** the same working directory, `wrap.mjs`, and `twice.test.js`: `import fs from "node:fs";` / `const marker = new URL("./twice.marker", import.meta.url);` / `if (fs.existsSync(marker)) { throw new RangeError("second run"); }` / `fs.writeFileSync(marker, "x");` / `throw new TypeError("first run");`
 - **WHEN** the adapter parses the output of `node wrap.mjs spec twice.test.js twice.test.js` (two runs, each with a crash block directly above its own `✖ twice.test.js` row)
-- **THEN** it returns two failures named `twice.test.js`, whose messages are `TypeError: first run` and `RangeError: second run` in that order (before this change both read `TypeError: first run`)
+- **THEN** it returns two failures for `twice.test.js` (the adapter's same-name suffix names them `twice.test.js @<n>`), whose messages are `TypeError: first run` and `RangeError: second run` in that order (before this change both read `TypeError: first run`)
 
 #### Scenario: A startup crash is not blamed on another file's log, in either file order
 - **GIVEN** the same working directory, `exitload.test.js` and `logc.test.js` (see `node-tap-diagnostics`, "A startup crash is not blamed on another file's log under TAP")

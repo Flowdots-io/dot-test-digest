@@ -44,7 +44,7 @@ Two lanes share no file and run in parallel; each is serial inside itself. Secti
 
 ## 4. Round 2: crash block attribution (after review of 921a5f6 and 9613252)
 
-- [ ] 4.1 One crash-block rule for both reporters
+- [x] 4.1 One crash-block rule for both reporters
   - scenarios: "A crash that does not name the test file keeps its own block", "A load-time throw of a non-error is an unattributed startup crash", "A startup crash is not blamed on another file's log under TAP", "A startup crash is not blamed on another file's log, in either file order", "The same file crashing in two runs keeps each run's own error", "A read failure of a sibling file whose name starts like the test file stays a behavioural red"
   - blocked-by: none
   - Replace `fileError`, the path-block and lone-crash fallbacks, `ownRunBlocks` and `linesAboveFileRow` by one function over the lines above the entry; the n-th crashed entry of a name takes the n-th row of that name; read failure needs the quoted absolute path.
