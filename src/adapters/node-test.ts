@@ -62,6 +62,29 @@ function errorLine(text: string): string | undefined {
   return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
 }
 
+function mentionsFile(text: string, file: string): boolean {
+  return file !== "" && (text.includes(file) || text.includes(pathToFileURL(file).href));
+}
+
+function firstErrorLine(block: readonly string[]): string | undefined {
+  for (const text of block) {
+    const error = errorLine(text);
+    if (error !== undefined) return error;
+  }
+  return undefined;
+}
+
+/**
+ * The error a crashed file printed: the first error line at or after the last line naming the file,
+ * so a log line printed earlier does not stand in for it. A frame naming the file can come after
+ * its error (`ReferenceError ... at file:///x.test.js:2:1`), so the first error line is the fallback.
+ */
+function fileError(lines: readonly string[], file: string): string | undefined {
+  let anchor = lines.length - 1;
+  while (anchor > 0 && !mentionsFile(lines[anchor] ?? "", file)) anchor -= 1;
+  return firstErrorLine(lines.slice(anchor)) ?? firstErrorLine(lines);
+}
+
 function nameOnlyEntry(name: string, line: number): NodeEntry {
   return {
     name,
@@ -203,7 +226,11 @@ function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapB
 }
 
 /** node's TAP relays a crashed file's stderr as `#` lines directly above that file's top-level `# Subtest:` line. */
-function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number): string | undefined {
+function tapSubprocessError(
+  lines: readonly CapturedLine[],
+  headerIndex: number,
+  file: string,
+): string | undefined {
   let subtest = headerIndex - 1;
   while (subtest >= 0 && !/^# Subtest:/.test(lines[subtest]?.text ?? "")) subtest -= 1;
   const comments: string[] = [];
@@ -212,7 +239,7 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
     if (!text.startsWith("#")) break;
     comments.unshift(text.replace(/^#\s+/, ""));
   }
-  return firstErrorLine(comments);
+  return fileError(comments, file);
 }
 
 function readTapEntry(
@@ -231,7 +258,7 @@ function readTapEntry(
   const expected = field("expected");
   const actual = field("actual");
   const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
-  const subprocessError = crashedFile ? tapSubprocessError(lines, index) : undefined;
+  const subprocessError = crashedFile ? tapSubprocessError(lines, index, place?.[1] ?? "") : undefined;
   return {
     name,
     file: place?.[1] ?? null,
@@ -399,14 +426,6 @@ function textBlocks(lines: readonly CapturedLine[]): string[][] {
   }
   if (current.length > 0) blocks.push(current);
   return blocks;
-}
-
-function firstErrorLine(block: readonly string[]): string | undefined {
-  for (const text of block) {
-    const error = errorLine(text);
-    if (error !== undefined) return error;
-  }
-  return undefined;
 }
 
 /** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above the `✖ failing tests:` section. */
