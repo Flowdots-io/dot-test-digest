@@ -501,6 +501,48 @@ describe("node --test, a test file the runner cannot read", () => {
   }
 });
 
+describe("node --test, a read failure of another file at load", () => {
+  const TITLES: Readonly<Record<Reporter, string>> = {
+    tap: "A read failure of another file at load stays a behavioural red",
+    spec: "A read failure of another file at load stays a behavioural red under the spec reporter",
+  };
+
+  for (const reporter of REPORTERS) {
+    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
+      let secret = "";
+      try {
+        const { run, envelope } = await runJson(
+          (dir) => {
+            secret = path.join(dir, "secret.txt");
+            fs.chmodSync(secret, 0o000);
+            return [...reporterFlag(reporter), "loadsecret.test.js"];
+          },
+          {
+            flags: ["--tdd-phase=red"],
+            files: {
+              "secret.txt": "hidden\n",
+              "loadsecret.test.js": source(
+                "import fs from 'node:fs';",
+                "import test from 'node:test';",
+                "fs.readFileSync(new URL('./secret.txt', import.meta.url));",
+                "test('uses it', () => {});",
+              ),
+            },
+          },
+        );
+
+        expect(run.code).toBe(0);
+        expect(envelope.status).toBe("VALID_RED");
+        expect(clustersOf(envelope)).toHaveLength(1);
+        expect(clustersOf(envelope)[0]?.error_kind).toBe("RUNTIME_EXCEPTION");
+        expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
+      } finally {
+        if (secret !== "") fs.chmodSync(secret, 0o644);
+      }
+    });
+  }
+});
+
 describe("node --test, red-phase guards", () => {
   eachReporter(
     {
