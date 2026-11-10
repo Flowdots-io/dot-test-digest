@@ -1,8 +1,11 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { ADAPTERS, classifyMessage, runGear0, selectAdapter } from "../src/adapters/index.js";
+import { jsTestAdapter } from "../src/adapters/js-test.js";
 import type { CapturedLine } from "../src/runner/capture.js";
+import { tempDir } from "./helpers/node-cart.js";
 
 function lines(text: string): CapturedLine[] {
   return text.split("\n").map((line, index) => ({
@@ -457,5 +460,87 @@ describe("node spec reporter at the adapter seam", () => {
     const result = runGear0(crashedSpecStream(["crash-a.test.js", "crash-b.test.js"], ["Error: the loader gave up"]));
 
     expect(result?.failures.map((f) => f.message)).toEqual(["test failed", "test failed"]);
+  });
+
+  /** Two node runs of the same crashing file in one stream: each run prints its own crash block, its own `✖` row and its own failing-tests section. */
+  function twoRunsOfOneFile(blocks: readonly [readonly string[], readonly string[]]): CapturedLine[] {
+    const run = (block: readonly string[]): string[] => [
+      ...block,
+      "✖ twice.test.js (5.1ms)",
+      "ℹ tests 1",
+      "ℹ suites 0",
+      "ℹ pass 0",
+      "ℹ fail 1",
+      "ℹ cancelled 0",
+      "ℹ skipped 0",
+      "ℹ todo 0",
+      "",
+      "✖ failing tests:",
+      "",
+      "test at twice.test.js:1:1",
+      "✖ twice.test.js (5.1ms)",
+      "  'test failed'",
+    ];
+    return lines([...run(blocks[0]), ...run(blocks[1])].join("\n"));
+  }
+
+  const crashBlock = (error: string): string[] => [
+    "file:///work/twice.test.js:5",
+    "throw new Error();",
+    "      ^",
+    "",
+    error,
+    "    at file:///work/twice.test.js:5:7",
+    "",
+    "Node.js v22.23.4",
+  ];
+
+  it("The same file crashing in two runs keeps each run's own error (direct parse)", () => {
+    const result = jsTestAdapter.parse(
+      twoRunsOfOneFile([crashBlock("TypeError: first run"), crashBlock("RangeError: second run")]),
+    );
+
+    expect(result.failures.map((f) => [f.testName.replace(/ @\d+$/, ""), f.message])).toEqual([
+      ["twice.test.js", "TypeError: first run"],
+      ["twice.test.js", "RangeError: second run"],
+    ]);
+  });
+
+  it("The same file crashing in two runs keeps each run's own error (a real stream)", () => {
+    const dir = tempDir("dtd-twice-");
+    fs.writeFileSync(
+      path.join(dir, "twice.test.js"),
+      [
+        'import fs from "node:fs";',
+        'const marker = new URL("./twice.marker", import.meta.url);',
+        'if (fs.existsSync(marker)) { throw new RangeError("second run"); }',
+        'fs.writeFileSync(marker, "x");',
+        'throw new TypeError("first run");',
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(dir, "wrap.mjs"),
+      [
+        'import { spawnSync } from "node:child_process";',
+        "const [reporter, ...files] = process.argv.slice(2);",
+        "for (const f of files) spawnSync(process.execPath, ['--test', '--test-reporter=' + reporter, f], { stdio: 'inherit' });",
+        "",
+      ].join("\n"),
+    );
+    const captured = path.join(dir, "stream.txt");
+    const fd = fs.openSync(captured, "w");
+    spawnSync(process.execPath, ["wrap.mjs", "spec", "twice.test.js", "twice.test.js"], {
+      cwd: dir,
+      stdio: ["ignore", fd, fd],
+    });
+    fs.closeSync(fd);
+
+    const result = jsTestAdapter.parse(lines(fs.readFileSync(captured, "utf8").replace(/\n$/, "")));
+
+    expect(result.failures.map((f) => [f.testName.replace(/ @\d+$/, ""), f.message])).toEqual([
+      ["twice.test.js", "TypeError: first run"],
+      ["twice.test.js", "RangeError: second run"],
+    ]);
   });
 });
