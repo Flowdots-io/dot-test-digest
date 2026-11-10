@@ -144,18 +144,23 @@ interface TapBlock {
   endIndex: number;
 }
 
-function unquote(value: string, unescape: (inner: string, quote: string) => string | undefined): string {
+function unquote(
+  value: string,
+  quotes: string,
+  unescape: (inner: string, quote: string) => string | undefined,
+): string {
   const quote = value[0];
-  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
+  if (quote !== undefined && quotes.includes(quote) && value.length >= 2 && value.endsWith(quote)) {
     return unescape(value.slice(1, -1), quote) ?? value;
   }
   return value;
 }
 
 function yamlScalar(value: string): string {
-  return unquote(value.trim(), (inner, quote) =>
-    quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1"),
-  );
+  return unquote(value.trim(), "'\"`", (inner, quote) => {
+    if (quote === "'") return inner.replaceAll("''", "'");
+    return quote === '"' ? inner.replace(/\\(["\\])/g, "$1") : inner;
+  });
 }
 
 function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapBlock | null {
@@ -312,7 +317,7 @@ export function isSpecStream(lines: readonly CapturedLine[]): boolean {
 }
 
 function inspectedString(value: string): string {
-  return unquote(value, (inner, quote) => (inner.includes(quote) ? undefined : inner));
+  return unquote(value, "'\"", (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
 function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
