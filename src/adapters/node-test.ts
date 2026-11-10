@@ -474,14 +474,24 @@ function linesAboveFileRow(lines: readonly CapturedLine[], inSection: readonly b
   return lines.slice(previous + 1, row).map((line) => line.text);
 }
 
+/** The blocks of the run that lists `entry`: the lines outside failing-tests sections from the end of the previous section (or the stream start) up to the entry's section. */
+function ownRunBlocks(lines: readonly CapturedLine[], inSection: readonly boolean[], entry: NodeEntry): string[][] {
+  let sectionStart = lines.findIndex((line) => line.line === entry.startLine);
+  if (sectionStart < 0) return [];
+  while (sectionStart > 0 && inSection[sectionStart - 1] === true) sectionStart -= 1;
+  let runStart = sectionStart;
+  while (runStart > 0 && inSection[runStart - 1] !== true) runStart -= 1;
+  return textBlocks(lines.slice(runStart, sectionStart).map((line) => line.text));
+}
+
 /** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above that file's own `✖` row. */
 function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntry[]): void {
   const crashed = entries.filter((entry) => entry.crashedFile);
   if (crashed.length === 0) return;
   const inSection = failingSectionMask(lines);
-  const blocks = textBlocks(lines.map((line, index) => (inSection[index] === true ? "" : line.text)));
   for (const entry of crashed) {
     const absolute = entry.file ?? "";
+    const blocks = ownRunBlocks(lines, inSection, entry);
     const mentions = (block: readonly string[]): boolean => block.some((text) => mentionsFile(text, absolute));
     const error =
       fileError(linesAboveFileRow(lines, inSection, entry.name), absolute) ??
