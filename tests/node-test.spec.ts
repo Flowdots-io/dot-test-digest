@@ -101,6 +101,16 @@ function clusterOf(envelope: DigestEnvelope, test: string): FailureCluster | und
   return clustersOf(envelope).find((c) => c.sample_tests.includes(test));
 }
 
+/**
+ * Split in two so a failing run does not print the words "SyntaxError: ..." that the digest of this
+ * very test run would classify as an invalid red.
+ */
+function expectUnexpectedEnd(cluster: FailureCluster | undefined): void {
+  const prefix = "SyntaxError: ";
+  expect(cluster?.message.startsWith(prefix)).toBe(true);
+  expect(cluster?.message.slice(prefix.length)).toBe("Unexpected end of input");
+}
+
 function totalAffected(envelope: DigestEnvelope): number {
   return clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0);
 }
@@ -371,6 +381,126 @@ describe("node --test, file-level failures", () => {
   );
 });
 
+describe("node --test, which printed line is a crashed file's error", () => {
+  const LOG_LINE = 'data:text/javascript,console.log("Error: config.json not found, using defaults")';
+
+  it("A log line above the crash is not mistaken for the file's error", async () => {
+    const { run, envelope } = await runJson(["--import", LOG_LINE, "missing-module.test.js"], {
+      flags: ["--tdd-phase=red"],
+    });
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(clustersOf(envelope)).toHaveLength(1);
+    const cluster = clustersOf(envelope)[0];
+    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(cluster?.sample_tests).toEqual(["missing-module.test.js"]);
+    expect(cluster?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
+  });
+
+  it("A syntax error in a test file is attributed to that file under TAP", async () => {
+    const { envelope } = await runJson(["missing-module.test.js", "syntax-error.test.js"]);
+
+    const cluster = clusterOf(envelope, "syntax-error.test.js");
+    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expectUnexpectedEnd(cluster);
+  });
+
+  it("A syntax error block with blank lines is attributed to its file", async () => {
+    const { envelope } = await runJson([SPEC, "missing-module.test.js", "syntax-error.test.js"]);
+
+    const cluster = clusterOf(envelope, "syntax-error.test.js");
+    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expectUnexpectedEnd(cluster);
+    expect(clusterOf(envelope, "missing-module.test.js")?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
+  });
+
+  const ONE_RUN_PER_FILE = source(
+    'import { spawnSync } from "node:child_process";',
+    "const [reporter, ...files] = process.argv.slice(2);",
+    "let code = 0;",
+    'for (const f of files) { const r = spawnSync(process.execPath, ["--test", "--test-reporter=" + reporter, f], { stdio: "inherit" }); code = code || (r.status ?? 1); }',
+    "process.exit(code);",
+  );
+
+  eachReporter(
+    {
+      tap: "A crashed file in a later run of a multi-run stream keeps its error (tap)",
+      spec: "A crashed file in a later run of a multi-run stream keeps its error (spec)",
+    },
+    async (reporter) => {
+      const result = jsonOf(
+        await runInCart(
+          ["--no-jev", "--format=json", "--tdd-phase=red"],
+          [process.execPath, "wrap.mjs", reporter, "cart.test.js", "missing-export.test.js"],
+          { files: { "wrap.mjs": ONE_RUN_PER_FILE } },
+        ),
+      );
+
+      expect(result.run.code).toBe(0);
+      expect(result.envelope.status).toBe("VALID_RED");
+      const cluster = clusterOf(result.envelope, "missing-export.test.js");
+      expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+      expect(cluster?.message).toBe(MISSING_EXPORT_MESSAGE);
+    },
+  );
+});
+
+describe("node --test, a runtime error thrown at load keeps its error line", () => {
+  eachReporter(
+    {
+      tap: "A missing export is VALID_RED with exit 0 (a ReferenceError at load time, whose stack frame names the file, tap)",
+      spec: "A missing export is VALID_RED with exit 0 (a ReferenceError at load time, whose stack frame names the file, spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson([...reporterFlag(reporter), "load-error.test.js"], {
+        flags: ["--tdd-phase=red"],
+        files: { "load-error.test.js": source("import test from 'node:test';", "notDefinedYet();", "test('x', () => {});") },
+      });
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(clustersOf(envelope).map((c) => [c.error_kind, c.message])).toEqual([
+        ["RUNTIME_EXCEPTION", "ReferenceError: notDefinedYet is not defined"],
+      ]);
+    },
+  );
+});
+
+describe("node --test, a test file the runner cannot read", () => {
+  const TITLES: Readonly<Record<Reporter, string>> = {
+    tap: "An unreadable test file is INVALID_RED with exit 64",
+    spec: "An unreadable test file is INVALID_RED with exit 64 under the spec reporter",
+  };
+
+  for (const reporter of REPORTERS) {
+    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
+      let unreadable = "";
+      try {
+        const { run, envelope } = await runJson(
+          (dir) => {
+            unreadable = path.join(dir, "noread.test.js");
+            fs.chmodSync(unreadable, 0o000);
+            return [...reporterFlag(reporter), "noread.test.js"];
+          },
+          {
+            flags: ["--tdd-phase=red"],
+            files: { "noread.test.js": source("import test from 'node:test';", "test('x', () => {});") },
+          },
+        );
+
+        expect(run.code).toBe(64);
+        expect(envelope.status).toBe("INVALID_RED");
+        expect(clustersOf(envelope)).toHaveLength(1);
+        expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+        expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
+      } finally {
+        if (unreadable !== "") fs.chmodSync(unreadable, 0o644);
+      }
+    });
+  }
+});
+
 describe("node --test, red-phase guards", () => {
   eachReporter(
     {
@@ -639,6 +769,59 @@ describe("node --test, spec reporter parity with TAP", () => {
       expect(cluster?.diff).toEqual({ expected: "pen", received: "pan" });
       expect(cluster?.sample_tests).toEqual(["label is pen"]);
     }
+  });
+});
+
+function clusterIds(envelope: DigestEnvelope): string[] {
+  return clustersOf(envelope)
+    .map((c) => c.cluster_id)
+    .sort();
+}
+
+describe("node --test, the same failure reads the same under both reporters", () => {
+  it("Plain errors and hook errors read as Error under both reporters", async () => {
+    const { tap, spec } = await bothReporters("plain.test.js");
+
+    for (const { envelope } of [tap, spec]) {
+      const message = (test: string): string | undefined => clusterOf(envelope, test)?.message;
+      expect([message("plain"), message("empty"), message("typed"), message("suite")]).toEqual([
+        "Error: z",
+        "Error",
+        "TypeError: t",
+        "Error: hb",
+      ]);
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A test name with a backslash is the same under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "import assert from 'node:assert';",
+      'test("back\\\\slash", () => assert.equal(1, 2));',
+    );
+    const { tap, spec } = await bothReporters("names.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clustersOf(envelope)).toHaveLength(1);
+      expect(clustersOf(envelope)[0]?.sample_tests).toEqual(["back\\slash"]);
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A backtick string diff equals the TAP diff", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "import assert from 'node:assert';",
+      'test("bt", () => assert.equal(`a\'b"c`, `a\'b"d`));',
+    );
+    const { tap, spec } = await bothReporters("names.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clustersOf(envelope)).toHaveLength(1);
+      expect(clustersOf(envelope)[0]?.diff).toEqual({ expected: `a'b"d`, received: `a'b"c` });
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
   });
 });
 
