@@ -8,7 +8,7 @@ Two lanes share no file and run in parallel; each is serial inside itself. Secti
 
 ## 1. Lane A: node attribution and parity
 
-- [x] 1.1 One attribution rule for a crashed file under TAP
+- [x] 1.1 One attribution rule for a crashed file under TAP (superseded by 4.1)
   - scenarios: "A log line above the crash is not mistaken for the file's error", "A syntax error in a test file is attributed to that file under TAP"
   - blocked-by: none
   - Shared function: first error line at or after the last line that mentions the file, else the first error line. Applied to the TAP comment run.
@@ -18,7 +18,7 @@ Two lanes share no file and run in parallel; each is serial inside itself. Secti
   - blocked-by: 1.1
   - Lines between the previous tree row and the file's own `✖ <file>` row; fall back to the path rule and the lone rule over every line outside all failing-tests sections.
 
-- [x] 1.3 Unreadable test file is invalid red
+- [x] 1.3 Unreadable test file is invalid red (amended: EACCES/EPERM naming the test file's quoted path, no EISDIR)
   - scenarios: "An unreadable test file is INVALID_RED with exit 64", "An unreadable test file is INVALID_RED with exit 64 under the spec reporter"
   - blocked-by: 1.2
   - `errorKindOf`: a crashed file whose subprocess error starts `Error: EACCES|EPERM|EISDIR` is `SYNTAX_IMPORT_ERROR`. Tests skip when `process.getuid?.() === 0`.
@@ -48,3 +48,8 @@ Two lanes share no file and run in parallel; each is serial inside itself. Secti
   - scenarios: "A crash that does not name the test file keeps its own block", "A load-time throw of a non-error is an unattributed startup crash", "A startup crash is not blamed on another file's log under TAP", "A startup crash is not blamed on another file's log, in either file order", "The same file crashing in two runs keeps each run's own error", "A read failure of a sibling file whose name starts like the test file stays a behavioural red"
   - blocked-by: none
   - Replace `fileError`, the path-block and lone-crash fallbacks, `ownRunBlocks` and `linesAboveFileRow` by one function over the lines above the entry; the n-th crashed entry of a name takes the n-th row of that name; read failure needs the quoted absolute path.
+
+- [ ] 4.2 Crash-block regressions found by the round-4 review
+  - scenarios: "A load-time error in a path with a space, in eval code, or after a partial line keeps its error", "A file whose tests ran and then failed on a late error is not a startup crash", "An unreadable test file reached through a symlinked directory is INVALID_RED", "An uncaught exception in a timer reads the same under both reporters"
+  - blocked-by: 4.1
+  - Location line = a non-indented line that is not an error line and ends in `:<N>`; async-activity diagnostic as the no-block message; symlink-resolved path for the read-failure check; `uncaughtException` joins the nameless-error prefix rule.
