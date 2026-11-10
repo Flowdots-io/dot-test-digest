@@ -780,9 +780,9 @@ function clusterIds(envelope: DigestEnvelope): string[] {
 
 describe("node --test, the same failure reads the same under both reporters", () => {
   it("Plain errors and hook errors read as Error under both reporters", async () => {
-    const results = await Promise.all(REPORTERS.map((reporter) => digestOf(reporter, "plain.test.js")));
+    const { tap, spec } = await bothReporters("plain.test.js");
 
-    for (const { envelope } of results) {
+    for (const { envelope } of [tap, spec]) {
       const message = (test: string): string | undefined => clusterOf(envelope, test)?.message;
       expect([message("plain"), message("empty"), message("typed"), message("suite")]).toEqual([
         "Error: z",
@@ -791,8 +791,7 @@ describe("node --test, the same failure reads the same under both reporters", ()
         "Error: hb",
       ]);
     }
-    const [tap, spec] = results;
-    expect(clusterIds((tap as JsonRun).envelope)).toEqual(clusterIds((spec as JsonRun).envelope));
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
   });
 
   it("A test name with a backslash is the same under both reporters", async () => {
