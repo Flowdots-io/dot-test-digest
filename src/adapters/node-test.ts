@@ -413,31 +413,60 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
   return entries;
 }
 
-function textBlocks(lines: readonly CapturedLine[]): string[][] {
+function textBlocks(texts: readonly string[]): string[][] {
   const blocks: string[][] = [];
   let current: string[] = [];
-  for (const line of lines) {
-    if (line.text.trim() === "" || SPEC_ROW_START.test(line.text)) {
+  for (const text of texts) {
+    if (text.trim() === "" || SPEC_ROW_START.test(text)) {
       if (current.length > 0) blocks.push(current);
       current = [];
     } else {
-      current.push(line.text);
+      current.push(text);
     }
   }
   if (current.length > 0) blocks.push(current);
   return blocks;
 }
 
-/** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above the `✖ failing tests:` section. */
-function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEntry[]): void {
+/**
+ * A `✖ failing tests:` section is its header followed by blank lines, indented lines, `test at` lines and
+ * the unindented name row under each. The first other line is the next thing node or a wrapper printed
+ * (a later run opens with its own output, so a stream can hold several sections).
+ */
+function failingSectionMask(lines: readonly CapturedLine[]): boolean[] {
+  let open = false;
+  return lines.map((line, index) => {
+    const previous = lines[index - 1]?.text ?? "";
+    const continues =
+      line.text.trim() === "" ||
+      /^\s/.test(line.text) ||
+      SPEC_TEST_AT.test(line.text) ||
+      (SPEC_TEST_AT.test(previous) && SPEC_NAME_ROW.test(line.text));
+    open = SPEC_FAILING_HEADER.test(line.text) || (open && continues);
+    return open;
+  });
+}
+
+/** The lines node printed between the previous tree row and the file's own `✖ <file>` row. */
+function linesAboveFileRow(lines: readonly CapturedLine[], inSection: readonly boolean[], name: string): string[] {
+  const row = lines.findIndex((line, index) => !inSection[index] && SPEC_NAME_ROW.exec(line.text)?.[1] === name);
+  if (row < 0) return [];
+  let previous = row - 1;
+  while (previous >= 0 && !SPEC_ROW_START.test(lines[previous]?.text ?? "")) previous -= 1;
+  return lines.slice(previous + 1, row).map((line) => line.text);
+}
+
+/** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above that file's own `✖` row. */
+function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntry[]): void {
   const crashed = entries.filter((entry) => entry.crashedFile);
   if (crashed.length === 0) return;
-  const blocks = textBlocks(before);
+  const inSection = failingSectionMask(lines);
+  const blocks = textBlocks(lines.map((line, index) => (inSection[index] === true ? "" : line.text)));
   for (const entry of crashed) {
     const absolute = entry.file ?? "";
-    const mentions = (block: readonly string[]): boolean =>
-      block.some((text) => text.includes(absolute) || text.includes(pathToFileURL(absolute).href));
+    const mentions = (block: readonly string[]): boolean => block.some((text) => mentionsFile(text, absolute));
     const error =
+      fileError(linesAboveFileRow(lines, inSection, entry.name), absolute) ??
       firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
       (crashed.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
     if (error !== undefined) entry.subprocessError = error;
@@ -458,6 +487,6 @@ export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
     const entry = readSpecEntry(lines, start, starts[position + 1] ?? lines.length);
     if (entry !== null) entries.push(entry);
   });
-  adoptSubprocessErrors(lines.slice(0, section), entries);
+  adoptSubprocessErrors(lines, entries);
   return finish(entries, [], counts);
 }
