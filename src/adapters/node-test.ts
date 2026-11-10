@@ -1,5 +1,5 @@
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import type { ErrorKind } from "../types/schema.js";
@@ -62,10 +62,6 @@ function errorLine(text: string): string | undefined {
   return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
 }
 
-function mentionsFile(text: string, file: string | null): boolean {
-  return file !== null && (text.includes(file) || text.includes(pathToFileURL(file).href));
-}
-
 function firstErrorLine(block: readonly string[]): string | undefined {
   for (const text of block) {
     const error = errorLine(text);
@@ -74,25 +70,25 @@ function firstErrorLine(block: readonly string[]): string | undefined {
   return undefined;
 }
 
-function lastErrorLine(block: readonly string[]): string | undefined {
-  for (let index = block.length - 1; index >= 0; index -= 1) {
-    const error = errorLine(block[index] ?? "");
-    if (error !== undefined) return error;
-  }
-  return undefined;
+const CRASH_TRAILER = /^Node\.js v\d/;
+const CRASH_LOCATION = /^(?:file:\/\/|node:|\/|[A-Za-z]:[\\/])\S*:\d+$/;
+
+function lastIndexWhere(lines: readonly string[], test: (text: string) => boolean, before = lines.length): number {
+  let index = before - 1;
+  while (index >= 0 && !test(lines[index] ?? "")) index -= 1;
+  return index;
 }
 
 /**
- * The error a crashed file printed: the first error line at or after the last line naming the file,
- * so a log line printed earlier does not stand in for it. A frame naming the file can come after
- * its error (`ReferenceError ... at file:///x.test.js:2:1`), so with none at or after the mention the
- * last error line before it is the file's; with no mention at all, the first error line.
+ * The error of the crash block node printed for a crashed file: a location-only line, the source and
+ * caret, the error, its stack, and the trailer `Node.js v<version>`. `lines` are the lines above the
+ * file's own entry; only the last block takes part, so a setup log, another file's output or a stack
+ * frame that names another file never stands in for the error.
  */
-function fileError(lines: readonly string[], file: string | null): string | undefined {
-  let mention = lines.length - 1;
-  while (mention >= 0 && !mentionsFile(lines[mention] ?? "", file)) mention -= 1;
-  if (mention < 0) return firstErrorLine(lines);
-  return firstErrorLine(lines.slice(mention)) ?? lastErrorLine(lines.slice(0, mention));
+function crashBlockError(lines: readonly string[]): string | undefined {
+  const trailer = lastIndexWhere(lines, (text) => CRASH_TRAILER.test(text));
+  const location = trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text), trailer);
+  return location < 0 ? undefined : firstErrorLine(lines.slice(location, trailer));
 }
 
 function nameOnlyEntry(name: string, line: number): NodeEntry {
@@ -123,14 +119,14 @@ function isRuntimeSyntaxError(entry: NodeEntry): boolean {
 /** node could not read the test file at all, so no test ran: the runner's startup crash. */
 const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM)\b/;
 
-/** A read failure counts only when it names the crashed file itself: another file read at load is the test's own fault. */
-function isFileReadFailure(entry: NodeEntry, subprocessError: string): boolean {
-  return FILE_READ_FAILURE.test(subprocessError) && mentionsFile(subprocessError, entry.file);
+/** A read failure counts only when it names the test file itself, quoted: `open '/dir/a.test.js'`, not `'/dir/a.test.json'`. */
+function isFileReadFailure(subprocessError: string, file: string | null): boolean {
+  return FILE_READ_FAILURE.test(subprocessError) && file !== null && subprocessError.includes(`'${file}'`);
 }
 
 function errorKindOf(entry: NodeEntry): ErrorKind {
   if (entry.subprocessError !== undefined) {
-    return isFileReadFailure(entry, entry.subprocessError)
+    return isFileReadFailure(entry.subprocessError, entry.file)
       ? "SYNTAX_IMPORT_ERROR"
       : classifyMessage(entry.subprocessError);
   }
@@ -248,11 +244,7 @@ function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapB
 }
 
 /** node's TAP relays a crashed file's stderr as `#` lines directly above that file's top-level `# Subtest:` line. */
-function tapSubprocessError(
-  lines: readonly CapturedLine[],
-  headerIndex: number,
-  file: string | null,
-): string | undefined {
+function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number): string | undefined {
   let subtest = headerIndex - 1;
   while (subtest >= 0 && !/^# Subtest:/.test(lines[subtest]?.text ?? "")) subtest -= 1;
   const comments: string[] = [];
@@ -261,7 +253,7 @@ function tapSubprocessError(
     if (!text.startsWith("#")) break;
     comments.unshift(text.replace(/^#\s+/, ""));
   }
-  return fileError(comments, file);
+  return crashBlockError(comments);
 }
 
 /** node prints the class of an error in `name:` except for a plain `Error`, which the spec reporter shows as `Error: <text>`. */
@@ -288,7 +280,7 @@ function readTapEntry(
   const file = place?.[1] ?? null;
   const expected = field("expected");
   const actual = field("actual");
-  const subprocessError = crashedFile ? tapSubprocessError(lines, index, file) : undefined;
+  const subprocessError = crashedFile ? tapSubprocessError(lines, index) : undefined;
   return {
     name,
     file,
@@ -444,21 +436,6 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
   return entries;
 }
 
-function textBlocks(texts: readonly string[]): string[][] {
-  const blocks: string[][] = [];
-  let current: string[] = [];
-  for (const text of texts) {
-    if (text.trim() === "" || SPEC_ROW_START.test(text)) {
-      if (current.length > 0) blocks.push(current);
-      current = [];
-    } else {
-      current.push(text);
-    }
-  }
-  if (current.length > 0) blocks.push(current);
-  return blocks;
-}
-
 /**
  * A `✖ failing tests:` section is its header followed by blank lines, indented lines, `test at` lines and
  * the unindented name row under each. The first other line is the next thing node or a wrapper printed
@@ -478,37 +455,33 @@ function failingSectionMask(lines: readonly CapturedLine[]): boolean[] {
   });
 }
 
-/** The lines node printed between the previous tree row and the file's own `✖ <file>` row. */
-function linesAboveFileRow(lines: readonly CapturedLine[], inSection: readonly boolean[], name: string): string[] {
-  const row = lines.findIndex((line, index) => !inSection[index] && SPEC_NAME_ROW.exec(line.text)?.[1] === name);
-  if (row < 0) return [];
+/** The lines node printed between the previous tree row and the `nth` own `✖ <name>` row outside the failing-tests sections. */
+function linesAboveFileRow(
+  lines: readonly CapturedLine[],
+  inSection: readonly boolean[],
+  name: string,
+  nth: number,
+): string[] {
+  const rows = lines.flatMap((line, index) =>
+    !inSection[index] && SPEC_NAME_ROW.exec(line.text)?.[1] === name ? [index] : [],
+  );
+  const row = rows[nth];
+  if (row === undefined) return [];
   let previous = row - 1;
   while (previous >= 0 && !SPEC_ROW_START.test(lines[previous]?.text ?? "")) previous -= 1;
   return lines.slice(previous + 1, row).map((line) => line.text);
 }
 
-/** The blocks of the run that lists `entry`: the lines outside failing-tests sections from the end of the previous section (or the stream start) up to the entry's section. */
-function ownRunBlocks(lines: readonly CapturedLine[], inSection: readonly boolean[], entry: NodeEntry): string[][] {
-  let sectionStart = lines.findIndex((line) => line.line === entry.startLine);
-  if (sectionStart < 0) return [];
-  while (sectionStart > 0 && inSection[sectionStart - 1] === true) sectionStart -= 1;
-  let runStart = sectionStart;
-  while (runStart > 0 && inSection[runStart - 1] !== true) runStart -= 1;
-  return textBlocks(lines.slice(runStart, sectionStart).map((line) => line.text));
-}
-
-/** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above that file's own `✖` row. */
+/** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above that file's own `✖` row. The n-th crashed entry of a name takes the n-th row of that name (one stream can hold several runs). */
 function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntry[]): void {
   const crashed = entries.filter((entry) => entry.crashedFile);
   if (crashed.length === 0) return;
   const inSection = failingSectionMask(lines);
+  const taken = new Map<string, number>();
   for (const entry of crashed) {
-    const blocks = ownRunBlocks(lines, inSection, entry);
-    const mentions = (block: readonly string[]): boolean => block.some((text) => mentionsFile(text, entry.file));
-    const error =
-      fileError(linesAboveFileRow(lines, inSection, entry.name), entry.file) ??
-      firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
-      (crashed.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
+    const nth = taken.get(entry.name) ?? 0;
+    taken.set(entry.name, nth + 1);
+    const error = crashBlockError(linesAboveFileRow(lines, inSection, entry.name, nth));
     if (error !== undefined) entry.subprocessError = error;
   }
 }

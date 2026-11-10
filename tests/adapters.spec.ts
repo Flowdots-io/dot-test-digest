@@ -2,7 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ADAPTERS, classifyMessage, runGear0, selectAdapter } from "../src/adapters/index.js";
+import { ADAPTERS, classifyMessage, runGear0, selectAdapter, type AdapterResult } from "../src/adapters/index.js";
 import { jsTestAdapter } from "../src/adapters/js-test.js";
 import type { CapturedLine } from "../src/runner/capture.js";
 import { tempDir } from "./helpers/node-cart.js";
@@ -403,104 +403,90 @@ describe("node spec reporter at the adapter seam", () => {
     ]);
   });
 
-  /** A spec stream whose crashed files' stderr is not directly above their own `✖ <file>` rows. */
-  function crashedSpecStream(files: readonly string[], printed: readonly string[]): CapturedLine[] {
+  /** One node run of crashing files: what each printed, then its `✖` row, then the summary and the failing-tests section. */
+  function specRun(crashed: ReadonlyArray<{ file: string; above: readonly string[] }>): string[] {
     const counts = ["tests", "suites", "pass", "fail", "cancelled", "skipped", "todo"].map(
-      (key) => `ℹ ${key} ${key === "tests" || key === "fail" ? files.length : 0}`,
+      (key) => `ℹ ${key} ${key === "tests" || key === "fail" ? crashed.length : 0}`,
     );
-    const section = files.flatMap((file) => ["", `test at ${file}:1:1`, `✖ ${file} (5.1ms)`, "  'test failed'"]);
-    return lines(
-      [
-        ...printed,
-        "ℹ a row in between",
-        ...files.map((file) => `✖ ${file} (5.1ms)`),
-        ...counts,
-        "",
-        "✖ failing tests:",
-        ...section,
-      ].join("\n"),
-    );
+    return [
+      ...crashed.flatMap(({ file, above }) => [...above, `✖ ${file} (5.1ms)`]),
+      ...counts,
+      "",
+      "✖ failing tests:",
+      ...crashed.flatMap(({ file }) => ["", `test at ${file}:1:1`, `✖ ${file} (5.1ms)`, "  'test failed'"]),
+    ];
   }
 
-  it("Two crashing files under the spec reporter each carry their own subprocess error (the block that names the file)", () => {
-    const a = path.resolve("crash-a.test.js");
-    const b = path.resolve("crash-b.test.js");
-    const result = runGear0(
-      crashedSpecStream(
-        ["crash-a.test.js", "crash-b.test.js"],
-        [
-          `file://${b}:1`,
-          "TypeError: boom b",
-          `    at file://${b}:1:1`,
-          "",
-          `file://${a}:1`,
-          "Error: boom a",
-          `    at file://${a}:1:1`,
-        ],
+  function crashBlock(file: string, error: string): string[] {
+    return [
+      `file:///work/${file}:5`,
+      "throw new Error();",
+      "      ^",
+      "",
+      error,
+      `    at file:///work/${file}:5:7`,
+      "",
+      "Node.js v22.23.4",
+    ];
+  }
+
+  const crashes = (result: AdapterResult): Array<[string, string]> =>
+    result.failures.map((f) => [f.testName.replace(/ @\d+$/, ""), f.message]);
+
+  it("Two crashing files under the spec reporter each carry the crash block directly above their own row", () => {
+    const result = jsTestAdapter.parse(
+      lines(
+        specRun([
+          { file: "crash-b.test.js", above: crashBlock("crash-b.test.js", "TypeError: boom b") },
+          { file: "crash-a.test.js", above: crashBlock("crash-a.test.js", "Error [ERR_X]: boom a") },
+        ]).join("\n"),
       ),
     );
 
-    expect(result?.failures.map((f) => [f.testName, f.message])).toEqual([
-      ["crash-a.test.js", "Error: boom a"],
+    expect(crashes(result)).toEqual([
       ["crash-b.test.js", "TypeError: boom b"],
+      ["crash-a.test.js", "Error: boom a"],
     ]);
   });
 
-  it("A lone crashed file under the spec reporter takes the error line of its own run when no line names the file", () => {
-    const result = runGear0(
-      crashedSpecStream(["crash-a.test.js"], ["", "Error: the loader gave up", "    at somewhere (node:internal/x:1:1)"]),
+  it("Lines above a file's row that are not its crash block never give its message (other file's output, a block cut off from the row)", () => {
+    const result = jsTestAdapter.parse(
+      lines(
+        specRun([
+          { file: "log.test.js", above: ["Error: the loader gave up", "    at somewhere (node:internal/x:1:1)"] },
+          { file: "cut.test.js", above: [...crashBlock("cut.test.js", "TypeError: boom"), "ℹ a row in between"] },
+          { file: "nolocation.test.js", above: ["TypeError: boom", "Node.js v22.23.4"] },
+          { file: "notrailer.test.js", above: ["file:///work/notrailer.test.js:5", "TypeError: boom"] },
+        ]).join("\n"),
+      ),
     );
 
-    expect(result?.failures.map((f) => [f.testName, f.message])).toEqual([
-      ["crash-a.test.js", "Error: the loader gave up"],
-    ]);
+    expect(result.failures.map((f) => f.message)).toEqual(Array(4).fill("test failed"));
   });
 
-  it("Two crashed files whose errors name neither file keep the message test failed", () => {
-    const result = runGear0(crashedSpecStream(["crash-a.test.js", "crash-b.test.js"], ["Error: the loader gave up"]));
+  it("A crash block gives its first error line; a log line before its location line is outside it", () => {
+    const block = crashBlock("a.test.js", "TypeError: boom");
+    const above = ["Error: setup log", ...block.slice(0, -1), "RangeError: cause", ...block.slice(-1)];
+    const result = jsTestAdapter.parse(lines(specRun([{ file: "a.test.js", above }]).join("\n")));
 
-    expect(result?.failures.map((f) => f.message)).toEqual(["test failed", "test failed"]);
+    expect(result.failures.map((f) => f.message)).toEqual(["TypeError: boom"]);
   });
 
-  /** Two node runs of the same crashing file in one stream: each run prints its own crash block, its own `✖` row and its own failing-tests section. */
+  /** Two node runs of the same crashing file in one stream: each run prints its own crash block and `✖` row. */
   function twoRunsOfOneFile(blocks: readonly [readonly string[], readonly string[]]): CapturedLine[] {
-    const run = (block: readonly string[]): string[] => [
-      ...block,
-      "✖ twice.test.js (5.1ms)",
-      "ℹ tests 1",
-      "ℹ suites 0",
-      "ℹ pass 0",
-      "ℹ fail 1",
-      "ℹ cancelled 0",
-      "ℹ skipped 0",
-      "ℹ todo 0",
-      "",
-      "✖ failing tests:",
-      "",
-      "test at twice.test.js:1:1",
-      "✖ twice.test.js (5.1ms)",
-      "  'test failed'",
-    ];
+    const run = (above: readonly string[]): string[] => specRun([{ file: "twice.test.js", above }]);
     return lines([...run(blocks[0]), ...run(blocks[1])].join("\n"));
   }
 
-  const crashBlock = (error: string): string[] => [
-    "file:///work/twice.test.js:5",
-    "throw new Error();",
-    "      ^",
-    "",
-    error,
-    "    at file:///work/twice.test.js:5:7",
-    "",
-    "Node.js v22.23.4",
-  ];
-
   it("The same file crashing in two runs keeps each run's own error (direct parse)", () => {
     const result = jsTestAdapter.parse(
-      twoRunsOfOneFile([crashBlock("TypeError: first run"), crashBlock("RangeError: second run")]),
+      twoRunsOfOneFile([
+        crashBlock("twice.test.js", "TypeError: first run"),
+        crashBlock("twice.test.js", "RangeError: second run"),
+      ]),
     );
 
-    expect(result.failures.map((f) => [f.testName.replace(/ @\d+$/, ""), f.message])).toEqual([
+    expect(crashes(result)).toEqual([
       ["twice.test.js", "TypeError: first run"],
       ["twice.test.js", "RangeError: second run"],
     ]);
@@ -538,7 +524,7 @@ describe("node spec reporter at the adapter seam", () => {
 
     const result = jsTestAdapter.parse(lines(fs.readFileSync(captured, "utf8").replace(/\n$/, "")));
 
-    expect(result.failures.map((f) => [f.testName.replace(/ @\d+$/, ""), f.message])).toEqual([
+    expect(crashes(result)).toEqual([
       ["twice.test.js", "TypeError: first run"],
       ["twice.test.js", "RangeError: second run"],
     ]);
