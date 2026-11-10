@@ -215,7 +215,7 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
 
 type TapField = (key: string) => string[];
 
-const THROWN_FAILURES: ReadonlySet<string> = new Set(["testCodeFailure", "hookFailed"]);
+const THROWN_FAILURES: ReadonlySet<string> = new Set(["testCodeFailure", "hookFailed", "uncaughtException"]);
 
 /**
  * node prints the class of an error in `name:` except for a plain `Error`, which the spec reporter shows as
