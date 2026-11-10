@@ -2,6 +2,8 @@ const NODE_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
 const CRASH_TRAILER = /^Node\.js v\d/;
 /** A non-indented line ending in `:<N>`; a stack frame is indented and an error line is excluded where it is used. */
 const CRASH_LOCATION = /^\S.*:\d+$/;
+/** node's own diagnostic for a test file whose tests ran and then failed on a late error: it names no crash. */
+const LATE_ERROR = /^Error: .* generated asynchronous activity after the test ended\./;
 /** node could not read the test file at all, so no test ran: the runner's startup crash. */
 const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM)\b/;
 
@@ -34,7 +36,8 @@ export function crashBlockError(lines: readonly string[]): string | undefined {
   const trailer = lastIndexWhere(lines, (text) => CRASH_TRAILER.test(text));
   const location =
     trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text) && errorLine(text) === undefined, trailer);
-  return location < 0 ? undefined : firstErrorLine(lines.slice(location, trailer));
+  if (location >= 0) return firstErrorLine(lines.slice(location, trailer));
+  return lines.find((text) => LATE_ERROR.test(text))?.trimEnd();
 }
 
 /** A read failure counts only when it names the test file itself, quoted: `open '/dir/a.test.js'`, not `'/dir/a.test.json'`. */
