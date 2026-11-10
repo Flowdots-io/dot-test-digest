@@ -180,7 +180,6 @@ function renderLevel(
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
   const blocks = clusters.map((cluster) => `\n${renderBlock(cluster)}`);
-  const lines = all.map((cluster) => `\n${renderOmittedLine(cluster)}`);
   const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
   const fixedBytes = (kept: number): number =>
@@ -192,7 +191,8 @@ function renderLevel(
   const footer = footerOf(all.length - kept);
   const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(header + footer));
   let body = `${header}${keptBlocks}${footer}`;
-  for (const line of lines.slice(kept)) {
+  for (const cluster of all.slice(kept)) {
+    const line = `\n${renderOmittedLine(cluster)}`;
     if (byteLength(body) + byteLength(line) > FAIL_BODY_BYTES) break;
     body += line;
   }
