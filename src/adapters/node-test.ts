@@ -10,7 +10,7 @@ import {
   type AdapterResult,
 } from "./common.js";
 import { parseGeneric } from "./js-generic.js";
-import { crashBlockError, isFileReadFailure } from "./node-crash-block.js";
+import { fileErrorAbove, isFileReadFailure } from "./node-crash-block.js";
 
 interface NodeEntry {
   name: string;
@@ -210,7 +210,7 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
     if (!text.startsWith("#")) break;
     comments.unshift(text.replace(/^# ?/, ""));
   }
-  return crashBlockError(comments);
+  return fileErrorAbove(comments);
 }
 
 type TapField = (key: string) => string[];
@@ -436,7 +436,7 @@ function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntr
   const rows = ownFileRows(lines);
   for (const entry of crashed) {
     const row = rows.get(entry.name)?.shift();
-    const error = row === undefined ? undefined : crashBlockError(linesAbove(lines, row));
+    const error = row === undefined ? undefined : fileErrorAbove(linesAbove(lines, row));
     if (error !== undefined) entry.subprocessError = error;
   }
 }

@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { classifyMessage } from "./common.js";
 
 const NODE_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
 const CRASH_TRAILER = /^Node\.js v\d/;
@@ -14,33 +15,50 @@ function errorLine(text: string): string | undefined {
   return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
 }
 
-function firstErrorLine(block: readonly string[]): string | undefined {
-  for (const text of block) {
-    const error = errorLine(text);
-    if (error !== undefined) return error;
-  }
-  return undefined;
+function isLocationLine(text: string): boolean {
+  return CRASH_LOCATION.test(text) && errorLine(text) === undefined;
 }
 
-function lastIndexWhere(lines: readonly string[], test: (text: string) => boolean, before = lines.length): number {
-  let index = before - 1;
+function lastIndexWhere(lines: readonly string[], test: (text: string) => boolean): number {
+  let index = lines.length - 1;
   while (index >= 0 && !test(lines[index] ?? "")) index -= 1;
   return index;
 }
 
+/** The error of the crash block whose trailer ends `segment`: the first error line after its location line. */
+function blockError(segment: readonly string[]): string | undefined {
+  const lastError = lastIndexWhere(segment, (text) => errorLine(text) !== undefined);
+  if (lastError < 0) return undefined;
+  const location = lastIndexWhere(segment.slice(0, lastError), isLocationLine);
+  if (location < 0) return undefined;
+  return segment.slice(location + 1).map(errorLine).find((error) => error !== undefined);
+}
+
+function blockErrors(lines: readonly string[]): string[] {
+  const errors: string[] = [];
+  let start = 0;
+  lines.forEach((text, index) => {
+    if (!CRASH_TRAILER.test(text)) return;
+    const error = blockError(lines.slice(start, index));
+    if (error !== undefined) errors.push(error);
+    start = index + 1;
+  });
+  return errors;
+}
+
 /**
- * The error of the crash block node printed for a crashed file: a location-only line, the source and
- * caret, the error, its stack, and the trailer `Node.js v<version>`. `lines` are the lines above the
- * file's own entry; only the last block takes part, so a setup log, another file's output or a stack
- * frame that names another file never stands in for the error. With no block, node's late-error
- * diagnostic among the lines is the message: that file's tests ran, it did not crash at startup.
+ * The error node printed for a crashed file, from the lines above the file's own entry. Each crash block is
+ * a location-only line, the source and caret, the error, its stack, and the trailer `Node.js v<version>`.
+ * Several blocks can sit there (a process the setup module started crashed too): the first import or syntax
+ * error wins, so a broken import is never hidden, else the last block. A setup log, another file's output or
+ * a stack frame that names another file is outside every block and never stands in for the error. With no
+ * block, node's late-error diagnostic among the lines is the message: that file's tests ran, it did not
+ * crash at startup.
  */
-export function crashBlockError(lines: readonly string[]): string | undefined {
-  const trailer = lastIndexWhere(lines, (text) => CRASH_TRAILER.test(text));
-  const location =
-    trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text) && errorLine(text) === undefined, trailer);
-  if (location >= 0) return firstErrorLine(lines.slice(location, trailer));
-  return lines.find((text) => LATE_ERROR.test(text))?.trimEnd();
+export function fileErrorAbove(lines: readonly string[]): string | undefined {
+  const errors = blockErrors(lines);
+  const error = errors.find((candidate) => classifyMessage(candidate) === "SYNTAX_IMPORT_ERROR") ?? errors.at(-1);
+  return error ?? lines.find((text) => LATE_ERROR.test(text))?.trimEnd();
 }
 
 function realPathOf(file: string): string {

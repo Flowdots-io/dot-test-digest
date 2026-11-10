@@ -260,6 +260,66 @@ describe("node --test, the location line of a crash block", () => {
   }
 });
 
+/**
+ * A server a setup module starts and leaves running. It crashes only once the process that started it (its
+ * pid is the argument) is gone, so its crash block always lands after that process's own, whatever the timing.
+ */
+const CRASHING_SERVER = source(
+  "const starter = Number(process.argv[2]);",
+  "setInterval(() => {",
+  '  if (process.ppid !== starter) throw new TypeError("app.listen is not a function");',
+  "}, 5);",
+);
+const SETUP_DEV = source(
+  'import { spawn } from "node:child_process";',
+  'const server = new URL("./server.js", import.meta.url).pathname;',
+  'spawn(process.execPath, [server, String(process.pid)], { stdio: "inherit" }).unref();',
+);
+const MULTILINE_THROW = source(
+  'import test from "node:test";',
+  'throw new TypeError("config invalid at\\n/etc/app/config.json:12");',
+);
+
+describe("node --test, several crash blocks above one entry, and a message line that looks like a location", () => {
+  eachReporter(
+    {
+      tap: "A crash of a process started by a setup module does not hide a broken import (tap)",
+      spec: "A crash of a process started by a setup module does not hide a broken import (spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson(
+        [...reporterFlag(reporter), "--import", "./setup-dev.mjs", "missing-module.test.js"],
+        { flags: RED, files: { "server.js": CRASHING_SERVER, "setup-dev.mjs": SETUP_DEV } },
+      );
+
+      expect(run.code).toBe(64);
+      expect(envelope.status).toBe("INVALID_RED");
+      const cluster = clusterOf(envelope, "missing-module.test.js");
+      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+      expect(cluster?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
+    },
+  );
+
+  eachReporter(
+    {
+      tap: "A load-time error whose message continues on a line ending in a number keeps its error (tap)",
+      spec: "A load-time error whose message continues on a line ending in a number keeps its error (spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson([...reporterFlag(reporter), "multiline.test.js"], {
+        flags: RED,
+        files: { "multiline.test.js": MULTILINE_THROW },
+      });
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      const cluster = clusterOf(envelope, "multiline.test.js");
+      expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+      expect(cluster?.message).toBe("TypeError: config invalid at");
+    },
+  );
+});
+
 const ASYNC_FAIL = source(
   'import test from "node:test";',
   'import { subtotal } from "./cart.js";',
