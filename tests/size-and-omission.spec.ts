@@ -2,8 +2,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import { buildEnvelope, estimateTokens, formatEnvelope } from "../src/formatters/envelope.js";
-import type { FailureCluster } from "../src/types/schema.js";
+import { buildEnvelope, estimateTokens, FAIL_BYTE_CEILING, formatEnvelope } from "../src/formatters/envelope.js";
+import type { DigestEnvelope, FailureCluster } from "../src/types/schema.js";
+import { clustersOf } from "./helpers/digest.js";
 import { vitestCascadeOutput } from "./fixtures/generate.js";
 import { runMain, runNodeCart, tempDir } from "./helpers/node-cart.js";
 
@@ -21,7 +22,6 @@ beforeEach(() => {
   stderr = "";
 });
 
-/** `main` in the project dir; the output lands in `stdout` and `stderr`, replacing the previous run's. */
 async function run(argv: readonly string[]): Promise<number> {
   const result = await runMain(argv, { cwd: project, home });
   ({ stdout, stderr } = result);
@@ -40,8 +40,8 @@ describe("source-order ranking through the CLI", () => {
   it("--max-clusters keeps the first clusters in source order", async () => {
     const code = await run(["--no-jev", "--format=json", "--max-clusters=5", "--", ...replayLog(TSC_12)]);
     expect(code).toBe(2);
-    const envelope = JSON.parse(stdout) as { clusters: { raw_log_lines: string }[] };
-    expect(envelope.clusters.map((c) => c.raw_log_lines)).toEqual([
+    const envelope = JSON.parse(stdout) as DigestEnvelope;
+    expect(clustersOf(envelope).map((c) => c.raw_log_lines)).toEqual([
       "L1-L1",
       "L2-L2",
       "L3-L3",
@@ -54,15 +54,13 @@ describe("source-order ranking through the CLI", () => {
 
 describe("omitted clusters through the CLI", () => {
   it("lists the clusters beyond --max-clusters and keeps JSON capped", async () => {
-    // Build noise before the diagnostics makes the raw output larger than any clustered
-    // rendering, so the run stays on levels 1 to 4 (level 5 has no footer by design).
-    const noisy = [
+    const twelveErrorsUnderBulkyOutput = [
       process.execPath,
       "-e",
       `for (let i = 0; i < 60; i++) console.log('step ' + i + ' ' + 'x'.repeat(60));` +
         `process.stdout.write(require('node:fs').readFileSync(${JSON.stringify(TSC_12)},'utf8')); process.exit(2)`,
     ];
-    const code = await run(["--no-jev", "--max-clusters=5", "--", ...noisy]);
+    const code = await run(["--no-jev", "--max-clusters=5", "--", ...twelveErrorsUnderBulkyOutput]);
     expect(code).toBe(2);
     const lines = stdout.split("\n");
     expect(lines[0]).toMatch(/\| 5 clusters \|/);
@@ -75,10 +73,10 @@ describe("omitted clusters through the CLI", () => {
     }
 
     stdout = "";
-    await run(["--no-jev", "--format=json", "--max-clusters=5", "--", ...noisy]);
-    const envelope = JSON.parse(stdout) as { summary: { total_clusters: number }; clusters: unknown[] };
+    await run(["--no-jev", "--format=json", "--max-clusters=5", "--", ...twelveErrorsUnderBulkyOutput]);
+    const envelope = JSON.parse(stdout) as DigestEnvelope;
     expect(envelope.summary.total_clusters).toBe(5);
-    expect(envelope.clusters).toHaveLength(5);
+    expect(clustersOf(envelope)).toHaveLength(5);
   });
 });
 
@@ -221,7 +219,29 @@ describe("omitted-cluster footer", () => {
       ),
     );
     expect(estimateTokens(out)).toBeLessThanOrEqual(600);
-    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(2400);
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+  });
+
+  it("Clusters beyond --max-clusters are listed instead of silently dropped (oversize block: the one kept block alone exceeds the ceiling)", () => {
+    const huge = omissionCluster({
+      cluster_id: "c_40000000",
+      top_frame: "tests/cart.test.ts:7:66",
+      message: "AssertionError: expected values to be strictly deep-equal",
+      diff: { expected: "e".repeat(3000), received: "r".repeat(3000) },
+      sample_tests: ["cart > huge diff"],
+      raw_log_lines: "L5-L27",
+    });
+    const omitted = [
+      omissionCluster({ cluster_id: "c_40000001", top_frame: "src/a.ts:1:1", sample_tests: ["cart > second"] }),
+      omissionCluster({ cluster_id: "c_40000002", top_frame: "src/b.ts:2:2", sample_tests: ["cart > third"] }),
+    ];
+    const out = formatEnvelope(failEnvelope(3, "/tmp/logs/run_f.log", [huge]), "compact-md", { omitted });
+
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("[FAIL] 3 failed, 0 passed in 10ms | 1 cluster | log: /tmp/logs/run_f.log");
+    expect(lines.at(-2)).toBe("+2 more clusters (see log)");
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+    expect(estimateTokens(out)).toBeLessThanOrEqual(600);
   });
 });
 
@@ -255,11 +275,13 @@ describe("omitted-cluster footer at volume", () => {
     let expected = base;
     for (let n = 1; n <= COUNT; n += 1) {
       const next = `${expected}\n${omittedLine(n)}`;
-      if (Buffer.byteLength(next, "utf8") > 2400) break;
+      if (Buffer.byteLength(next, "utf8") > FAIL_BYTE_CEILING) break;
       expected = next;
     }
-    // The renderer cuts any text of 2,400 bytes or more to 2,399 ending in "...".
-    if (Buffer.byteLength(expected, "utf8") > 2399) expected = `${expected.slice(0, 2396)}...`;
+    const withoutNewline = FAIL_BYTE_CEILING - 1;
+    if (Buffer.byteLength(expected, "utf8") > withoutNewline) {
+      expected = `${expected.slice(0, withoutNewline - "...".length)}...`;
+    }
 
     const envelope = failEnvelope(COUNT + 1, "/tmp/logs/run_e.log", [only]);
     const started = performance.now();
@@ -371,15 +393,12 @@ describe("the size rule through the CLI", () => {
     useTscSmall();
     const code = await run(["--no-jev", "--format=json", "--", ...REPLAY_TSC_LOG]);
     expect(code).toBe(2);
-    const envelope = JSON.parse(stdout) as {
-      summary: { total_clusters: number };
-      clusters: { signal_window: string; top_frame: string; pruned_stack: string[] }[];
-    };
+    const envelope = JSON.parse(stdout) as DigestEnvelope;
     expect(envelope.summary.total_clusters).toBe(5);
-    expect(envelope.clusters).toHaveLength(5);
-    for (const cluster of envelope.clusters) expect(cluster.signal_window).not.toBe("");
-    expect(envelope.clusters[0]?.top_frame).toBe("src/a.ts:2:14");
-    expect(envelope.clusters[0]?.pruned_stack).toEqual(["src/a.ts:2:14"]);
+    expect(clustersOf(envelope)).toHaveLength(5);
+    for (const cluster of clustersOf(envelope)) expect(cluster.signal_window).not.toBe("");
+    expect(clustersOf(envelope)[0]?.top_frame).toBe("src/a.ts:2:14");
+    expect(clustersOf(envelope)[0]?.pruned_stack).toEqual(["src/a.ts:2:14"]);
   });
 
   it("Level 5 has no footer even when --max-clusters cut clusters", async () => {
@@ -396,14 +415,10 @@ describe("the size rule through the CLI", () => {
     stdout = "";
     const jsonCode = await run(["--no-jev", "--max-clusters=2", "--format=json", "--", ...REPLAY_TSC_LOG]);
     expect(jsonCode).toBe(2);
-    const envelope = JSON.parse(stdout) as {
-      status: string;
-      summary: unknown;
-      clusters: { cluster_id: string; top_frame: string; raw_log_lines: string }[];
-    };
+    const envelope = JSON.parse(stdout) as DigestEnvelope;
     expect(envelope.status).toBe("FAIL");
     expect(envelope.summary).toEqual({ passed: 0, failed: 5, skipped: 0, total_clusters: 2 });
-    expect(envelope.clusters.map((c) => [c.cluster_id, c.top_frame, c.raw_log_lines])).toEqual([
+    expect(clustersOf(envelope).map((c) => [c.cluster_id, c.top_frame, c.raw_log_lines])).toEqual([
       ["c_42a23d40", "src/a.ts:2:14", "L1-L1"],
       ["c_39d5c117", "src/a.ts:3:31", "L2-L2"],
     ]);
@@ -419,8 +434,8 @@ describe("tiny failures through the CLI", () => {
     stdout = "";
     const jsonCode = await run(["--no-jev", "--format=json", "--", process.execPath, "-e", "process.exit(3)"]);
     expect(jsonCode).toBe(3);
-    const envelope = JSON.parse(stdout) as { clusters: { error_kind: string }[] };
-    expect(envelope.clusters.map((c) => c.error_kind)).toEqual(["UNSTRUCTURED_BUILD_ERROR"]);
+    const envelope = JSON.parse(stdout) as DigestEnvelope;
+    expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["UNSTRUCTURED_BUILD_ERROR"]);
   });
 
   it("A tiny unstructured failure prints the header and the raw line", async () => {
@@ -484,8 +499,8 @@ describe("a stack row equal to top_frame is not rendered", () => {
     const lines = formatEnvelope(envelope, "compact-md").split("\n");
     expect(lines).not.toContain("  src/cart.ts:3:10");
     expect(lines.filter((line) => line === "  at total (src/cart.ts:5:20)")).toHaveLength(1);
-    const json = JSON.parse(formatEnvelope(envelope, "json")) as { clusters: { pruned_stack: string[] }[] };
-    expect(json.clusters[0]?.pruned_stack).toEqual(["src/cart.ts:3:10", "at total (src/cart.ts:5:20)"]);
+    const json = JSON.parse(formatEnvelope(envelope, "json")) as DigestEnvelope;
+    expect(clustersOf(json)[0]?.pruned_stack).toEqual(["src/cart.ts:3:10", "at total (src/cart.ts:5:20)"]);
   });
 });
 
@@ -516,11 +531,30 @@ describe("omitted clusters on the real node cart run", () => {
     ]);
 
     const json = await runNodeCart(["--no-jev", "--format=json", "--max-clusters=2"], ["cart.test.js"]);
-    const envelope = JSON.parse(json.stdout) as {
-      summary: { total_clusters: number };
-      clusters: { cluster_id: string }[];
-    };
-    expect(envelope.clusters.map((c) => c.cluster_id)).toEqual(["c_9721831d", "c_6edce10a"]);
+    const envelope = JSON.parse(json.stdout) as DigestEnvelope;
+    expect(clustersOf(envelope).map((c) => c.cluster_id)).toEqual(["c_9721831d", "c_6edce10a"]);
     expect(envelope.summary.total_clusters).toBe(2);
+  });
+
+  it("Clusters beyond --max-clusters are listed instead of silently dropped (oversize block: a huge deep-equal diff beside two small failures)", async () => {
+    const source = [
+      "import test from 'node:test';",
+      "import assert from 'node:assert/strict';",
+      "const left = Array.from({ length: 300 }, (_, id) => ({ id }));",
+      "const right = Array.from({ length: 300 }, (_, id) => ({ id: id + 1 }));",
+      "test('big diff', () => { assert.deepStrictEqual(left, right); });",
+      "test('small one', () => { assert.equal(1, 2); });",
+      "test('small two', () => { assert.equal(3, 4); });",
+      "",
+    ].join("\n");
+    const run = await runNodeCart(["--no-jev"], ["huge-diff.test.js"], {
+      files: { "huge-diff.test.js": source },
+    });
+
+    expect(run.code).toBe(1);
+    expect(Buffer.byteLength(run.stdout, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+    const lines = run.stdout.split("\n");
+    expect(lines[0]).toMatch(/^\[FAIL\] 3 failed, 0 passed in \d+ms \| 1 cluster \| log: /);
+    expect(lines.at(-2)).toBe("+2 more clusters (see log)");
   });
 });

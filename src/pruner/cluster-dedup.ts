@@ -18,15 +18,12 @@ export interface RawFailure {
 export interface DedupeOptions {
   repoRoot: string;
   contextLines: number;
-  /** How many of the ranked clusters are kept (and get a SignalWindow read from disk). */
   keep: number;
   logPath: string;
 }
 
 export interface DedupeResult {
-  /** The top `keep` clusters, each with its SignalWindow. */
   kept: FailureCluster[];
-  /** Every cluster beyond `keep`, ranked, without a window. */
   omitted: FailureCluster[];
 }
 

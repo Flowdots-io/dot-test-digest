@@ -83,7 +83,6 @@ export function renderPassLine(envelope: DigestEnvelope): string {
   return truncateBytes(line, PASS_BYTE_CEILING - 1);
 }
 
-/** What a cluster block keeps at one step of the size rule's ladder (SPEC-002 §4.4). */
 interface Detail {
   window: boolean;
   stack: boolean;
@@ -114,7 +113,6 @@ function renderCluster(cluster: FailureCluster, detail: Detail): string {
 
 const LABEL_BYTE_CEILING = 80;
 
-/** What the failure body needs besides the envelope; no `rawText` means the size rule is off. */
 export interface RenderContext {
   rawText?: string;
   omitted?: readonly FailureCluster[];
@@ -134,10 +132,6 @@ function renderOneLine(cluster: FailureCluster): string {
   return cluster.message === "" ? head : `${head} ${truncateBytes(cluster.message, MESSAGE_BYTE_CEILING)}`;
 }
 
-/**
- * The size rule's ladder: each renderer drops detail from the one before. The
- * last level (header plus the raw text itself) is handled apart in `renderFailBody`.
- */
 const LADDER: readonly ((cluster: FailureCluster) => string)[] = [
   (cluster) => renderCluster(cluster, { window: true, stack: true }),
   (cluster) => renderCluster(cluster, { window: false, stack: true }),
@@ -157,46 +151,38 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
-/** `sums[i]` is the byte length of the first `i` texts. */
 function byteSums(texts: readonly string[]): number[] {
   const sums = [0];
   for (const text of texts) sums.push((sums.at(-1) ?? 0) + byteLength(text));
   return sums;
 }
 
-/**
- * The first ladder level whose text is no larger than the raw output plus the
- * header would be; the header plus the raw text itself when none is. Without
- * raw text the size rule is off and only the fullest level is rendered.
- */
 function renderFailBody(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   rawText: string | undefined,
 ): string {
   for (const renderBlock of rawText === undefined ? LADDER.slice(0, 1) : LADDER) {
-    const { header, body } = renderLevel(envelope, omitted, renderBlock);
-    const text = truncateBytes(`${header}\n${body}`, FAIL_BYTE_CEILING - 1);
-    if (rawText === undefined || byteLength(text) <= byteLength(rawText) + byteLength(header)) return text;
+    const { header, text } = renderLevel(envelope, omitted, renderBlock);
+    const bounded = truncateBytes(`${header}\n${text}`, FAIL_BYTE_CEILING - 1);
+    if (rawText === undefined || byteLength(bounded) <= byteLength(rawText) + byteLength(header)) return bounded;
   }
   const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText}`;
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
-/** One ladder level: the header, and the cluster blocks and omitted-cluster footer that fit the token budget. */
+/** INV-2's ceiling cuts the tail of the listing first, then the blocks: the `+N more clusters` line is never the part cut. */
 function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   renderBlock: (cluster: FailureCluster) => string,
-): { header: string; body: string } {
+): { header: string; text: string } {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
   const blocks = clusters.map(renderBlock);
   const lines = all.map((c) => `\n${renderOmittedLine(c)}`);
   const footerHead = (count: number): string => `\n+${count} more clusters (see log)`;
 
-  // Every size below is a byte count measured once per piece, so choosing what
-  // fits is arithmetic over prefix sums instead of re-rendering the whole text.
   const blockEnds = byteSums(blocks);
   const lineEnds = byteSums(lines);
   const fits = (kept: number, listed: number): boolean => {
@@ -213,9 +199,14 @@ function renderLevel(
   while (listed > 0 && !fits(kept, listed)) listed -= 1;
 
   const header = headerLine(envelope, kept);
-  const footer =
-    all.length > kept ? `${footerHead(all.length - kept)}${lines.slice(kept, kept + listed).join("")}` : "";
-  return { header, body: `${blocks.slice(0, kept).join("\n")}${footer}` };
+  const keptBlocks = blocks.slice(0, kept).join("\n");
+  const footer = all.length > kept ? footerHead(all.length - kept) : "";
+  const room = FAIL_BYTE_CEILING - 1 - byteLength(`${header}\n`) - byteLength(footer);
+  const text =
+    byteLength(keptBlocks) > room
+      ? `${truncateBytes(keptBlocks, room)}${footer}`
+      : `${keptBlocks}${footer}${lines.slice(kept, kept + listed).join("")}`;
+  return { header, text };
 }
 
 export function formatEnvelope(

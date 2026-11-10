@@ -27,7 +27,6 @@ interface Attempt {
   lines: CapturedLine[];
   gear: ExecutionGear;
   failures: RawFailure[];
-  /** The clusters to print and, after them, the ones only listed. */
   ranked: DedupeResult;
   counts: { passed: number; failed: number; skipped: number };
   exitCode: number;
@@ -35,7 +34,6 @@ interface Attempt {
   durationMs: number;
   retryWanted: boolean;
   logPath: string;
-  /** Every captured line after normalisation, one `\n` each: the `R` of the size rule. */
   rawText: string;
 }
 
@@ -194,7 +192,9 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       rawLogPath: run.logPath,
     });
 
-    process.stdout.write(formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText }));
+    process.stdout.write(
+      formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText }),
+    );
     if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
     rawLog.close();
     return decision.exitCode;
