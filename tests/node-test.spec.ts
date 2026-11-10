@@ -467,6 +467,40 @@ describe("node --test, a runtime error thrown at load keeps its error line", () 
   );
 });
 
+describe("node --test, a test file the runner cannot read", () => {
+  const TITLES: Readonly<Record<Reporter, string>> = {
+    tap: "An unreadable test file is INVALID_RED with exit 64",
+    spec: "An unreadable test file is INVALID_RED with exit 64 under the spec reporter",
+  };
+
+  for (const reporter of REPORTERS) {
+    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
+      let unreadable = "";
+      try {
+        const { run, envelope } = await runJson(
+          (dir) => {
+            unreadable = path.join(dir, "noread.test.js");
+            fs.chmodSync(unreadable, 0o000);
+            return [...reporterFlag(reporter), "noread.test.js"];
+          },
+          {
+            flags: ["--tdd-phase=red"],
+            files: { "noread.test.js": source("import test from 'node:test';", "test('x', () => {});") },
+          },
+        );
+
+        expect(run.code).toBe(64);
+        expect(envelope.status).toBe("INVALID_RED");
+        expect(clustersOf(envelope)).toHaveLength(1);
+        expect(clustersOf(envelope)[0]?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+        expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
+      } finally {
+        if (unreadable !== "") fs.chmodSync(unreadable, 0o644);
+      }
+    });
+  }
+});
+
 describe("node --test, red-phase guards", () => {
   eachReporter(
     {
