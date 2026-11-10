@@ -75,11 +75,23 @@ function nameOnlyEntry(name: string, line: number): NodeEntry {
   };
 }
 
-/** A test that ran and threw a `SyntaxError` (say `JSON.parse(undefined)`) failed behaviourally: only a file that failed to load is a syntax fault. */
+const MODULE_LOADER_FRAME = "node:internal/modules/";
+
+/**
+ * A `SyntaxError` a test threw while it ran (`JSON.parse(undefined)`, `new Function("a b")`)
+ * is behavioural; one raised while node parsed a module has loader frames in its stack.
+ */
+function isRuntimeSyntaxError(entry: NodeEntry): boolean {
+  return (
+    /^SyntaxError\b/.test(entry.message) && !entry.stack.some((frame) => frame.includes(MODULE_LOADER_FRAME))
+  );
+}
+
 function errorKindOf(entry: NodeEntry): ErrorKind {
   if (entry.subprocessError !== undefined) return classifyMessage(entry.subprocessError);
   if (entry.crashedFile) return "SYNTAX_IMPORT_ERROR";
-  return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`.replaceAll("SyntaxError", ""));
+  if (isRuntimeSyntaxError(entry)) return "RUNTIME_EXCEPTION";
+  return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`);
 }
 
 function toRawFailure(entry: NodeEntry): RawFailure {
@@ -115,7 +127,9 @@ function disambiguateSameNames(entries: NodeEntry[]): void {
  * node does not count a suite whose hook or body threw in `fail`/`cancelled`,
  * so the printed count can sit below the failures reported: it never may.
  */
-function resultOf(failures: RawFailure[], counts: AdapterCounts): AdapterResult {
+function finish(entries: NodeEntry[], foreign: RawFailure[], counts: AdapterCounts): AdapterResult {
+  disambiguateSameNames(entries);
+  const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
   const failed = Math.max(counts.failed, failures.length);
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
@@ -132,18 +146,23 @@ interface TapBlock {
   endIndex: number;
 }
 
-function unquote(value: string, unescape: (inner: string, quote: string) => string | undefined): string {
+function unquote(
+  value: string,
+  quotes: string,
+  unescape: (inner: string, quote: string) => string | undefined,
+): string {
   const quote = value[0];
-  if ((quote === "'" || quote === '"') && value.length >= 2 && value.endsWith(quote)) {
+  if (quote !== undefined && quotes.includes(quote) && value.length >= 2 && value.endsWith(quote)) {
     return unescape(value.slice(1, -1), quote) ?? value;
   }
   return value;
 }
 
 function yamlScalar(value: string): string {
-  return unquote(value.trim(), (inner, quote) =>
-    quote === "'" ? inner.replaceAll("''", "'") : inner.replace(/\\(["\\])/g, "$1"),
-  );
+  return unquote(value.trim(), "'\"`", (inner, quote) => {
+    if (quote === "'") return inner.replaceAll("''", "'");
+    return quote === '"' ? inner.replace(/\\(["\\])/g, "$1") : inner;
+  });
 }
 
 function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapBlock | null {
@@ -201,10 +220,8 @@ function readTapEntry(
   index: number,
   name: string,
   block: TapBlock,
-): NodeEntry | null {
+): NodeEntry {
   const startLine = lines[index]?.line ?? 0;
-  if (block.fields.get("failureType")?.[0] === "subtestsFailed") return null;
-
   const field = (key: string): string[] => block.fields.get(key) ?? [];
   const errorName = field("name").join(" ").trim();
   let message = cleanNodeMessage(field("error").filter((text) => text !== ""));
@@ -260,24 +277,19 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
     const name = (notOk[2] ?? "").replaceAll("\\#", "#");
     const isDirective = notOk[3] !== undefined;
     const block = readTapBlock(lines, index);
-    if (block === null) {
-      if (!isDirective) entries.push(nameOnlyEntry(name, lines[index]?.line ?? 0));
-      continue;
-    }
     if (!isDirective) {
-      if (block.fields.get("failureType")?.[0] !== undefined) {
-        const entry = readTapEntry(lines, index, name, block);
-        if (entry !== null) entries.push(entry);
-      } else {
+      const failureType = block?.fields.get("failureType")?.[0];
+      if (block === null) {
+        entries.push(nameOnlyEntry(name, lines[index]?.line ?? 0));
+      } else if (failureType === undefined) {
         foreign.push(...parseGeneric(lines.slice(index, block.endIndex + 1)).failures);
+      } else if (failureType !== "subtestsFailed") {
+        entries.push(readTapEntry(lines, index, name, block));
       }
     }
-    index = block.endIndex;
+    if (block !== null) index = block.endIndex;
   }
-  const counts = nodeCounts(lines, TAP_COUNT);
-  disambiguateSameNames(entries);
-  const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
-  return resultOf(failures, counts);
+  return finish(entries, foreign, nodeCounts(lines, TAP_COUNT));
 }
 
 export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
@@ -300,7 +312,7 @@ export function isSpecStream(lines: readonly CapturedLine[]): boolean {
 }
 
 function inspectedString(value: string): string {
-  return unquote(value, (inner, quote) => (inner.includes(quote) ? undefined : inner));
+  return unquote(value, "'\"", (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
 function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
@@ -413,15 +425,10 @@ function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEnt
   }
 }
 
-function specResult(entries: NodeEntry[], counts: AdapterCounts): AdapterResult {
-  disambiguateSameNames(entries);
-  return resultOf(entries.map(toRawFailure), counts);
-}
-
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
   const counts = nodeCounts(lines, NODE_SPEC_SUMMARY);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
-  if (section < 0) return specResult(readSpecLeafRows(lines), counts);
+  if (section < 0) return finish(readSpecLeafRows(lines), [], counts);
 
   const starts: number[] = [];
   for (let index = section + 1; index < lines.length; index += 1) {
@@ -433,5 +440,5 @@ export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
     if (entry !== null) entries.push(entry);
   });
   adoptSubprocessErrors(lines.slice(0, section), entries);
-  return specResult(entries, counts);
+  return finish(entries, [], counts);
 }
