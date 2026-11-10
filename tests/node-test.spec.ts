@@ -478,6 +478,123 @@ describe("node --test, which printed line is a crashed file's error", () => {
   );
 });
 
+describe("node --test, the crash block directly above a file's entry is its error", () => {
+  const SETUP_LOG = 'data:text/javascript,console.log("Error: config.json not found, using defaults")';
+  const EXIT_LOAD = source("process.exit(1);");
+  const LOG_ONLY = source(
+    'import test from "node:test";',
+    'console.log("TypeError: cfg.get is not a function (handled)");',
+    'test("x", () => {});',
+  );
+
+  eachReporter(
+    {
+      tap: "A crash that does not name the test file keeps its own block (tap)",
+      spec: "A crash that does not name the test file keeps its own block (spec)",
+    },
+    async (reporter) => {
+      const result = await runJson([...reporterFlag(reporter), "--import", SETUP_LOG, "deep.test.js"], {
+        flags: ["--tdd-phase=red"],
+        files: {
+          "helper.js": source('import "./missing-dep.js";', "export const h = 1;"),
+          "deep.test.js": source('import test from "node:test";', 'import "./helper.js";', 'test("x", () => {});'),
+        },
+      });
+
+      expect(result.run.code).toBe(64);
+      expect(result.envelope.status).toBe("INVALID_RED");
+      const cluster = clusterOf(result.envelope, "deep.test.js");
+      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+      expect(cluster?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
+      expect(cluster?.message).toContain("missing-dep.js' imported from ");
+    },
+  );
+
+  eachReporter(
+    {
+      tap: "A load-time throw of a non-error is an unattributed startup crash (tap)",
+      spec: "A load-time throw of a non-error is an unattributed startup crash (spec)",
+    },
+    async (reporter) => {
+      const result = await runJson([...reporterFlag(reporter), "--import", SETUP_LOG, "throw42.test.js"], {
+        flags: ["--tdd-phase=red"],
+        files: { "throw42.test.js": source("throw 42;") },
+      });
+
+      expect(result.run.code).toBe(64);
+      expect(result.envelope.status).toBe("INVALID_RED");
+      const cluster = clusterOf(result.envelope, "throw42.test.js");
+      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+      expect(cluster?.message).toBe("test failed");
+    },
+  );
+
+  const FILE_ORDERS: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ["log file first", ["logc.test.js", "exitload.test.js"]],
+    ["log file last", ["exitload.test.js", "logc.test.js"]],
+  ];
+
+  for (const [reporter, title] of [
+    ["tap", "A startup crash is not blamed on another file's log under TAP"],
+    ["spec", "A startup crash is not blamed on another file's log, in either file order"],
+  ] as const) {
+    for (const [order, files] of FILE_ORDERS) {
+      it(`${title} (${order})`, async () => {
+        const result = await runJson([...reporterFlag(reporter), ...files], {
+          flags: ["--tdd-phase=red"],
+          files: { "exitload.test.js": EXIT_LOAD, "logc.test.js": LOG_ONLY },
+        });
+
+        expect(result.run.code).toBe(64);
+        expect(result.envelope.status).toBe("INVALID_RED");
+        const cluster = clusterOf(result.envelope, "exitload.test.js");
+        expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+        expect(cluster?.message).toBe("test failed");
+      });
+    }
+  }
+});
+
+describe("node --test, a read failure of a sibling file whose name starts like the test file", () => {
+  const TITLES: Readonly<Record<Reporter, string>> = {
+    tap: "A read failure of a sibling file whose name starts like the test file stays a behavioural red",
+    spec: "A read failure of a sibling file whose name starts like the test file stays a behavioural red under the spec reporter",
+  };
+
+  for (const reporter of REPORTERS) {
+    it.skipIf(process.getuid?.() === 0)(TITLES[reporter], async () => {
+      let sibling = "";
+      try {
+        const { run, envelope } = await runJson(
+          (dir) => {
+            sibling = path.join(dir, "cfg.test.json");
+            fs.chmodSync(sibling, 0o000);
+            return [...reporterFlag(reporter), "cfg.test.js"];
+          },
+          {
+            flags: ["--tdd-phase=red"],
+            files: {
+              "cfg.test.json": "{}\n",
+              "cfg.test.js": source(
+                "import fs from 'node:fs';",
+                "import test from 'node:test';",
+                "fs.readFileSync(new URL('./cfg.test.json', import.meta.url));",
+                "test('x', () => {});",
+              ),
+            },
+          },
+        );
+
+        expect(run.code).toBe(0);
+        expect(envelope.status).toBe("VALID_RED");
+        expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["RUNTIME_EXCEPTION"]);
+      } finally {
+        if (sibling !== "") fs.chmodSync(sibling, 0o644);
+      }
+    });
+  }
+});
+
 describe("node --test, a runtime error thrown at load keeps its error line", () => {
   eachReporter(
     {
