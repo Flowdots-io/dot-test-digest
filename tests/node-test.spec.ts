@@ -868,6 +868,21 @@ describe("node --test, the same failure reads the same under both reporters", ()
     expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
   });
 
+  it("A thrown number keeps its text under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('num', () => { throw 42; });",
+      "test('obj', () => { throw { a: 1 }; });",
+    );
+    const { tap, spec } = await bothReporters("thrown.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "num")?.message).toBe("42");
+      expect(clusterOf(envelope, "obj")?.message).toBe("{ a: 1 }");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
   it("A test name with a backslash is the same under both reporters", async () => {
     const contents = source(
       "import test from 'node:test';",
