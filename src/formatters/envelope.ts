@@ -163,19 +163,33 @@ function renderFailBody(
   rawText: string | undefined,
 ): string {
   for (const renderBlock of rawText === undefined ? LADDER.slice(0, 1) : LADDER) {
-    const { header, body } = renderLevel(envelope, omitted, renderBlock);
-    const text = truncateBytes(`${header}\n${body}`, FAIL_BYTE_CEILING - 1);
-    if (rawText === undefined || byteLength(text) <= byteLength(rawText) + byteLength(header)) return text;
+    const level = renderLevel(envelope, omitted, renderBlock);
+    const text = boundedText(level);
+    if (rawText === undefined || byteLength(text) <= byteLength(rawText) + byteLength(level.header)) return text;
   }
   const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText}`;
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
+}
+
+interface RenderedLevel {
+  header: string;
+  blocks: string;
+  footerHead: string;
+  listed: string;
+}
+
+/** INV-2's ceiling cuts the tail of the listing first, then the blocks: the `+N more clusters` line is never the part cut. */
+function boundedText({ header, blocks, footerHead, listed }: RenderedLevel): string {
+  const room = FAIL_BYTE_CEILING - 1 - byteLength(`${header}\n`) - byteLength(footerHead);
+  const body = byteLength(blocks) > room ? `${truncateBytes(blocks, room)}${footerHead}` : `${blocks}${footerHead}${listed}`;
+  return truncateBytes(`${header}\n${body}`, FAIL_BYTE_CEILING - 1);
 }
 
 function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   renderBlock: (cluster: FailureCluster) => string,
-): { header: string; body: string } {
+): RenderedLevel {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
   const blocks = clusters.map(renderBlock);
@@ -197,10 +211,12 @@ function renderLevel(
   let listed = all.length - kept;
   while (listed > 0 && !fits(kept, listed)) listed -= 1;
 
-  const header = headerLine(envelope, kept);
-  const footer =
-    all.length > kept ? `${footerHead(all.length - kept)}${lines.slice(kept, kept + listed).join("")}` : "";
-  return { header, body: `${blocks.slice(0, kept).join("\n")}${footer}` };
+  return {
+    header: headerLine(envelope, kept),
+    blocks: blocks.slice(0, kept).join("\n"),
+    footerHead: all.length > kept ? footerHead(all.length - kept) : "",
+    listed: lines.slice(kept, kept + listed).join(""),
+  };
 }
 
 export function formatEnvelope(
