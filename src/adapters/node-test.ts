@@ -62,8 +62,8 @@ function errorLine(text: string): string | undefined {
   return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
 }
 
-function mentionsFile(text: string, file: string): boolean {
-  return file !== "" && (text.includes(file) || text.includes(pathToFileURL(file).href));
+function mentionsFile(text: string, file: string | null): boolean {
+  return file !== null && (text.includes(file) || text.includes(pathToFileURL(file).href));
 }
 
 function firstErrorLine(block: readonly string[]): string | undefined {
@@ -88,7 +88,7 @@ function lastErrorLine(block: readonly string[]): string | undefined {
  * its error (`ReferenceError ... at file:///x.test.js:2:1`), so with none at or after the mention the
  * last error line before it is the file's; with no mention at all, the first error line.
  */
-function fileError(lines: readonly string[], file: string): string | undefined {
+function fileError(lines: readonly string[], file: string | null): string | undefined {
   let mention = lines.length - 1;
   while (mention >= 0 && !mentionsFile(lines[mention] ?? "", file)) mention -= 1;
   if (mention < 0) return firstErrorLine(lines);
@@ -125,7 +125,7 @@ const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM)\b/;
 
 /** A read failure counts only when it names the crashed file itself: another file read at load is the test's own fault. */
 function isFileReadFailure(entry: NodeEntry, subprocessError: string): boolean {
-  return FILE_READ_FAILURE.test(subprocessError) && mentionsFile(subprocessError, entry.file ?? "");
+  return FILE_READ_FAILURE.test(subprocessError) && mentionsFile(subprocessError, entry.file);
 }
 
 function errorKindOf(entry: NodeEntry): ErrorKind {
@@ -179,7 +179,7 @@ function finish(entries: NodeEntry[], foreign: RawFailure[], counts: AdapterCoun
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
 
-/** node escapes a `#` inside a TAP test name as `\#` and a backslash as `\\`, so an unescaped ` # TODO` / ` # SKIP` is a directive. */
+/** node escapes a `#` inside a TAP test name, so an unescaped ` # TODO` / ` # SKIP` is a directive. */
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)(\s+#\s*(?:TODO|SKIP)\b.*)?\s*$/;
 const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
 const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
@@ -251,7 +251,7 @@ function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapB
 function tapSubprocessError(
   lines: readonly CapturedLine[],
   headerIndex: number,
-  file: string,
+  file: string | null,
 ): string | undefined {
   let subtest = headerIndex - 1;
   while (subtest >= 0 && !/^# Subtest:/.test(lines[subtest]?.text ?? "")) subtest -= 1;
@@ -285,12 +285,13 @@ function readTapEntry(
   }
 
   const place = /^(.*?):(\d+)(?::\d+)?$/.exec(field("location")[0] ?? "");
+  const file = place?.[1] ?? null;
   const expected = field("expected");
   const actual = field("actual");
-  const subprocessError = crashedFile ? tapSubprocessError(lines, index, place?.[1] ?? "") : undefined;
+  const subprocessError = crashedFile ? tapSubprocessError(lines, index, file) : undefined;
   return {
     name,
-    file: place?.[1] ?? null,
+    file,
     line: place?.[2],
     message,
     ...(expected.length > 0 && actual.length > 0
@@ -330,6 +331,7 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
   for (let index = 0; index < lines.length; index += 1) {
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
+    // node writes `#` as `\#` and a backslash as `\\` in a test name.
     const name = (notOk[2] ?? "").replace(/\\([\\#])/g, "$1");
     const isDirective = notOk[3] !== undefined;
     const block = readTapBlock(lines, index);
@@ -501,11 +503,10 @@ function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntr
   if (crashed.length === 0) return;
   const inSection = failingSectionMask(lines);
   for (const entry of crashed) {
-    const absolute = entry.file ?? "";
     const blocks = ownRunBlocks(lines, inSection, entry);
-    const mentions = (block: readonly string[]): boolean => block.some((text) => mentionsFile(text, absolute));
+    const mentions = (block: readonly string[]): boolean => block.some((text) => mentionsFile(text, entry.file));
     const error =
-      fileError(linesAboveFileRow(lines, inSection, entry.name), absolute) ??
+      fileError(linesAboveFileRow(lines, inSection, entry.name), entry.file) ??
       firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
       (crashed.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
     if (error !== undefined) entry.subprocessError = error;
