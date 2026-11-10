@@ -1,3 +1,5 @@
+import fs from "node:fs";
+
 const NODE_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
 const CRASH_TRAILER = /^Node\.js v\d/;
 /** A non-indented line ending in `:<N>`; a stack frame is indented and an error line is excluded where it is used. */
@@ -40,7 +42,19 @@ export function crashBlockError(lines: readonly string[]): string | undefined {
   return lines.find((text) => LATE_ERROR.test(text))?.trimEnd();
 }
 
-/** A read failure counts only when it names the test file itself, quoted: `open '/dir/a.test.js'`, not `'/dir/a.test.json'`. */
+function realPathOf(file: string): string {
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
+/**
+ * A read failure counts only when it names the test file itself, quoted: `open '/dir/a.test.js'`, not
+ * `'/dir/a.test.json'`. The entry carries the path as given, node's error the real path: either counts.
+ */
 export function isFileReadFailure(subprocessError: string, file: string | null): boolean {
-  return FILE_READ_FAILURE.test(subprocessError) && file !== null && subprocessError.includes(`'${file}'`);
+  if (!FILE_READ_FAILURE.test(subprocessError) || file === null) return false;
+  return [file, realPathOf(file)].some((candidate) => subprocessError.includes(`'${candidate}'`));
 }
