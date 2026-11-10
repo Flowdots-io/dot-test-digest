@@ -8,7 +8,6 @@ const FIXTURE = path.join(process.cwd(), "tests", "fixtures", "node-cart");
 
 const created: string[] = [];
 
-/** A fresh temporary directory, removed when the importing test file finishes. */
 export function tempDir(prefix: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
   created.push(dir);
@@ -25,11 +24,6 @@ export interface MainRun {
   code: number;
 }
 
-/**
- * Runs `main(argv)` in-process (same argv, stdout and exit-code contract as the
- * built bin) from `cwd` with `DOT_TEST_DIGEST_HOME=home`, capturing what it
- * writes. The previous cwd and environment are restored afterwards.
- */
 export async function runMain(
   argv: readonly string[],
   where: { cwd: string; home: string },
@@ -61,13 +55,10 @@ export async function runMain(
   }
 }
 
-/** Child arguments, or a function of the cart copy's absolute directory (for absolute paths). */
 export type CartArgs = readonly string[] | ((dir: string) => readonly string[]);
 
 export interface CartOptions {
-  /** Run from this subdirectory of the cart copy (created if missing). */
   subdir?: string;
-  /** Extra files written into the cart copy before the run: relative path to literal contents. */
   files?: Readonly<Record<string, string>>;
 }
 
@@ -75,19 +66,11 @@ export interface CartRun {
   stdout: string;
   stderr: string;
   code: number;
-  /** The temporary copy of the node-cart fixture the run used as cwd. */
   dir: string;
-  /** The temporary DOT_TEST_DIGEST_HOME of the run. */
   home: string;
 }
 
-/**
- * Runs `dot-test-digest <flags> -- node --test <args>` in-process (same argv,
- * stdout and exit-code contract as the built bin) inside a fresh copy of
- * `tests/fixtures/node-cart/`, with a temporary `DOT_TEST_DIGEST_HOME`. The
- * child's stdout is a pipe, so node picks its TAP reporter unless `args` say
- * otherwise. The previous cwd and environment are restored afterwards.
- */
+/** The child's stdout is a pipe, so node defaults to its TAP reporter. */
 export async function runNodeCart(
   flags: readonly string[],
   args: CartArgs,
@@ -100,7 +83,6 @@ export async function runNodeCart(
   );
 }
 
-/** Like `runNodeCart` but wraps an arbitrary child command, e.g. one that replays a recorded log. */
 export async function runInCart(
   flags: readonly string[],
   command: CartArgs,

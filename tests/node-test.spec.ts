@@ -813,7 +813,7 @@ describe("node --test, TODO and SKIP directives", () => {
   });
 });
 
-/** `exit` is node's own exit code for the file (a throwing `after` hook leaves it 0); the digest passes it through. */
+/** node exits 0 when only an `after` hook throws. */
 const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> = {
   "before hook that throws": {
     exit: 1,
