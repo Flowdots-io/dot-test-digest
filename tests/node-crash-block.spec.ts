@@ -6,6 +6,7 @@ import { clustersOf } from "./helpers/digest.js";
 import {
   MISSING_EXPORT_MESSAGE,
   MODULE_NOT_FOUND,
+  RED,
   REPORTERS,
   SPEC,
   clusterOf,
@@ -14,6 +15,7 @@ import {
   reporterFlag,
   runJson,
   source,
+  type CartArgs,
   type CartOptions,
   type JsonRun,
   type Reporter,
@@ -26,7 +28,6 @@ const LOG_ONLY = source(
   'console.log("TypeError: cfg.get is not a function (handled)");',
   'test("x", () => {});',
 );
-const RED = ["--tdd-phase=red"];
 
 /**
  * Split in two so a failing run does not print the words "SyntaxError: ..." that the digest of this
@@ -213,15 +214,99 @@ describe("node --test, the crash block directly above a file's entry is its erro
   );
 });
 
+const SPACE_DIR = "a b";
+
+/** A load-time TypeError whose location line node prints in a form the crash block must still recognise. */
+const LOCATION_FORMS: ReadonlyArray<{ form: string; file: string; contents: string }> = [
+  {
+    form: "cjs file in a directory with a space",
+    file: "typeload.test.cjs",
+    contents: source('const test = require("node:test");', "const cfg = {};", 'cfg.get("x");', 'test("x", () => {});'),
+  },
+  {
+    form: "eval code",
+    file: "evalload.test.js",
+    contents: source('import test from "node:test";', 'eval("null.x");', 'test("x", () => {});'),
+  },
+  {
+    form: "partial stdout line before the location",
+    file: "partial.test.js",
+    contents: source(
+      'import test from "node:test";',
+      'process.stdout.write("partial line no newline");',
+      "null.x;",
+      'test("x", () => {});',
+    ),
+  },
+];
+
+describe("node --test, the location line of a crash block", () => {
+  for (const { form, file, contents } of LOCATION_FORMS) {
+    for (const reporter of REPORTERS) {
+      it(`A load-time error in a path with a space, in eval code, or after a partial line keeps its error (${form}, ${reporter})`, async () => {
+        const { run, envelope } = await runJson([...reporterFlag(reporter), file], {
+          flags: RED,
+          subdir: SPACE_DIR,
+          files: { [`${SPACE_DIR}/${file}`]: contents },
+        });
+
+        expect(run.code).toBe(0);
+        expect(envelope.status).toBe("VALID_RED");
+        const cluster = clusterOf(envelope, file);
+        expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+        expect(cluster?.message.startsWith("TypeError: ")).toBe(true);
+      });
+    }
+  }
+});
+
+const ASYNC_FAIL = source(
+  'import test from "node:test";',
+  'import { subtotal } from "./cart.js";',
+  'test("calls impl", () => { setTimeout(() => { subtotal(undefined).x.y; }, 10); });',
+);
+const LATE_THROW = source(
+  'import test from "node:test";',
+  'test("passes", () => {});',
+  'setTimeout(() => { throw new TypeError("late boom"); }, 50);',
+);
+
+describe("node --test, a file whose tests ran and then failed on a late error", () => {
+  it("A file whose tests ran and then failed on a late error is not a startup crash (tap)", async () => {
+    const { run, envelope } = await runJson(["asyncfail.test.js"], {
+      flags: RED,
+      files: { "asyncfail.test.js": ASYNC_FAIL },
+    });
+
+    expect(run.code).toBe(0);
+    expect(envelope.status).toBe("VALID_RED");
+    const cluster = clusterOf(envelope, "asyncfail.test.js");
+    expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(cluster?.message.startsWith('Error: Test "calls impl" at asyncfail.test.js')).toBe(true);
+  });
+
+  it("A file whose tests ran and then failed on a late error is not a startup crash (tap, next to failing tests)", async () => {
+    const { run, envelope } = await runJson(["cart.test.js", "latethrow.test.js"], {
+      flags: RED,
+      files: { "latethrow.test.js": LATE_THROW },
+    });
+
+    expect(run.code).toBe(0);
+    expect(envelope.status).toBe("VALID_RED");
+    expect(envelope.summary.failed).toBe(5);
+    expect(clusterOf(envelope, "latethrow.test.js")?.error_kind).toBe("RUNTIME_EXCEPTION");
+  });
+});
+
 /** Runs the cart with `file` unreadable (mode 000), then restores it so the temp dir can be removed. */
-async function withUnreadable(file: string, args: readonly string[], options: CartOptions): Promise<JsonRun> {
+async function withUnreadable(file: string, args: CartArgs, options: CartOptions): Promise<JsonRun> {
   let unreadable = "";
   try {
     return await runJson(
       (dir) => {
         unreadable = path.join(dir, file);
         fs.chmodSync(unreadable, 0o000);
-        return args;
+        return typeof args === "function" ? args(dir) : args;
       },
       { ...options, flags: RED },
     );
@@ -306,5 +391,33 @@ describe("node --test, a file the runner cannot read", () => {
         expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
       });
     }
+  }
+});
+
+describe("node --test, an unreadable test file reached through a symlinked directory", () => {
+  for (const reporter of REPORTERS) {
+    itUnlessRoot(
+      `An unreadable test file reached through a symlinked directory is INVALID_RED (${reporter})`,
+      async () => {
+        let link = "";
+        try {
+          const { run, envelope } = await withUnreadable(
+            "noread.test.js",
+            (dir) => {
+              link = `${dir}-link`;
+              fs.symlinkSync(dir, link);
+              return [...reporterFlag(reporter), path.join(link, "noread.test.js")];
+            },
+            { files: { "noread.test.js": source("import test from 'node:test';", "test('x', () => {});") } },
+          );
+
+          expect(run.code).toBe(64);
+          expect(envelope.status).toBe("INVALID_RED");
+          expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["SYNTAX_IMPORT_ERROR"]);
+        } finally {
+          if (link !== "") fs.rmSync(link, { force: true });
+        }
+      },
+    );
   }
 });

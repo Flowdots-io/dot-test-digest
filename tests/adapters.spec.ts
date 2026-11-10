@@ -431,7 +431,7 @@ describe("node spec reporter at the adapter seam", () => {
   }
 
   const crashes = (result: AdapterResult): Array<[string, string]> =>
-    result.failures.map((f) => [f.testName.replace(/ @\d+$/, ""), f.message]);
+    result.failures.map((f) => [(f.testName ?? "").replace(/ @\d+$/, ""), f.message]);
 
   it("Two crashing files under the spec reporter each carry the crash block directly above their own row", () => {
     const result = jsTestAdapter.parse(

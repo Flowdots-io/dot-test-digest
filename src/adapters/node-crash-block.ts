@@ -1,6 +1,11 @@
+import fs from "node:fs";
+
 const NODE_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
 const CRASH_TRAILER = /^Node\.js v\d/;
-const CRASH_LOCATION = /^(?:file:\/\/|node:|\/|[A-Za-z]:[\\/])\S*:\d+$/;
+/** A non-indented line ending in `:<N>`; a stack frame is indented and an error line is excluded where it is used. */
+const CRASH_LOCATION = /^\S.*:\d+$/;
+/** node's own diagnostic for a test file whose tests ran and then failed on a late error: it names no crash. */
+const LATE_ERROR = /^Error: .* generated asynchronous activity after the test ended\./;
 /** node could not read the test file at all, so no test ran: the runner's startup crash. */
 const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM)\b/;
 
@@ -27,15 +32,30 @@ function lastIndexWhere(lines: readonly string[], test: (text: string) => boolea
  * The error of the crash block node printed for a crashed file: a location-only line, the source and
  * caret, the error, its stack, and the trailer `Node.js v<version>`. `lines` are the lines above the
  * file's own entry; only the last block takes part, so a setup log, another file's output or a stack
- * frame that names another file never stands in for the error.
+ * frame that names another file never stands in for the error. With no block, node's late-error
+ * diagnostic among the lines is the message: that file's tests ran, it did not crash at startup.
  */
 export function crashBlockError(lines: readonly string[]): string | undefined {
   const trailer = lastIndexWhere(lines, (text) => CRASH_TRAILER.test(text));
-  const location = trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text), trailer);
-  return location < 0 ? undefined : firstErrorLine(lines.slice(location, trailer));
+  const location =
+    trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text) && errorLine(text) === undefined, trailer);
+  if (location >= 0) return firstErrorLine(lines.slice(location, trailer));
+  return lines.find((text) => LATE_ERROR.test(text))?.trimEnd();
 }
 
-/** A read failure counts only when it names the test file itself, quoted: `open '/dir/a.test.js'`, not `'/dir/a.test.json'`. */
+function realPathOf(file: string): string {
+  try {
+    return fs.realpathSync(file);
+  } catch {
+    return file;
+  }
+}
+
+/**
+ * A read failure counts only when it names the test file itself, quoted: `open '/dir/a.test.js'`, not
+ * `'/dir/a.test.json'`. The entry carries the path as given, node's error the real path: either counts.
+ */
 export function isFileReadFailure(subprocessError: string, file: string | null): boolean {
-  return FILE_READ_FAILURE.test(subprocessError) && file !== null && subprocessError.includes(`'${file}'`);
+  if (!FILE_READ_FAILURE.test(subprocessError) || file === null) return false;
+  return [file, realPathOf(file)].some((candidate) => subprocessError.includes(`'${candidate}'`));
 }

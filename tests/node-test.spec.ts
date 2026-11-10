@@ -6,6 +6,7 @@ import { clustersOf } from "./helpers/digest.js";
 import {
   MISSING_EXPORT_MESSAGE,
   MODULE_NOT_FOUND,
+  RED,
   REPORTERS,
   SPEC,
   clusterOf,
@@ -250,7 +251,7 @@ describe("node --test, nested suites, same-named tests and file-level failures",
       ]);
 
       const red = await runNodeCart(
-        ["--no-jev", "--tdd-phase=red", `--scope-id=same-${reporter}`],
+        ["--no-jev", ...RED, `--scope-id=same-${reporter}`],
         [...reporterFlag(reporter), "same-name.test.js"],
       );
       expect(red.code).toBe(0);
@@ -319,7 +320,7 @@ describe("node --test, nested suites, same-named tests and file-level failures",
       expect(exportCluster?.error_kind).toBe("RUNTIME_EXCEPTION");
       expect(exportCluster?.message).toBe(MISSING_EXPORT_MESSAGE);
 
-      const red = await runNodeCart(["--no-jev", "--tdd-phase=red"], files);
+      const red = await runNodeCart(["--no-jev", ...RED], files);
       expect(red.code).toBe(64);
       expect(red.stdout).toContain("INVALID_RED");
       expect(red.stdout).toContain("SYNTAX_IMPORT_ERROR");
@@ -335,7 +336,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
     },
     async (reporter) => {
       const run = await runNodeCart(
-        ["--no-jev", "--tdd-phase=red", `--scope-id=${reporter}-red`],
+        ["--no-jev", ...RED, `--scope-id=${reporter}-red`],
         [...reporterFlag(reporter), "cart.test.js"],
       );
 
@@ -351,7 +352,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
       spec: "A missing module is INVALID_RED with exit 64 and the syntax message",
     },
     async (reporter) => {
-      const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [...reporterFlag(reporter), "missing-module.test.js"]);
+      const run = await runNodeCart(["--no-jev", ...RED], [...reporterFlag(reporter), "missing-module.test.js"]);
 
       expect(run.code).toBe(64);
       expect(run.stdout).toContain("INVALID_RED");
@@ -366,7 +367,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
       spec: "A missing export is VALID_RED with exit 0 under the spec reporter",
     },
     async (reporter) => {
-      const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [...reporterFlag(reporter), "missing-export.test.js"]);
+      const run = await runNodeCart(["--no-jev", ...RED], [...reporterFlag(reporter), "missing-export.test.js"]);
 
       expect(run.code).toBe(0);
       expect(run.stdout.startsWith("[VALID_RED | RED]")).toBe(true);
@@ -379,7 +380,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
       spec: "A test that already passes is INVALID_RED with exit 64 under the spec reporter",
     },
     async (reporter) => {
-      const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [...reporterFlag(reporter), "passing.test.js"]);
+      const run = await runNodeCart(["--no-jev", ...RED], [...reporterFlag(reporter), "passing.test.js"]);
 
       expect(run.code).toBe(64);
       expect(run.stdout).toContain("INVALID_RED");
@@ -396,7 +397,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
     async (reporter) => {
       expectSyntaxFault(
         await runJson([...reporterFlag(reporter), "exit.test.js"], {
-          flags: ["--tdd-phase=red"],
+          flags: RED,
           files: { "exit.test.js": "process.exit(1);\n" },
         }),
       );
@@ -427,7 +428,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
   ];
   for (const { title, args, options, message } of PATH_FORMS) {
     it(`A missing module is INVALID_RED with exit 64 and the syntax message (${title})`, async () => {
-      const result = await runJson(args, { ...options, flags: ["--tdd-phase=red"] });
+      const result = await runJson(args, { ...options, flags: RED });
 
       expectSyntaxFault(result);
       if (message !== undefined) expect(clustersOf(result.envelope)[0]?.message).toContain(message);
@@ -438,7 +439,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
     const passing = "import './lib.js'; import test from 'node:test'; test('x',()=>{});\n";
     expectSyntaxFault(
       await runJson([SPEC, "a.test.js", "b.test.js"], {
-        flags: ["--tdd-phase=red"],
+        flags: RED,
         files: { "lib.js": "import './missing-helper.js';\n", "a.test.js": passing, "b.test.js": passing },
       }),
     );
@@ -446,7 +447,7 @@ describe("node --test, red-phase guards and exit-code transparency", () => {
 
   it("A missing module is INVALID_RED with exit 64 and the syntax message (unindented wrapper line after the section)", async () => {
     const { run, envelope } = await nodeRunsWrapper("spec", ["mm.test.js"], {
-      flags: ["--tdd-phase=red"],
+      flags: RED,
       epilogue: "console.log(' ELIFECYCLE  Test failed. See above for more details.');",
       files: { "mm.test.js": "import './missing.js'; import test from 'node:test'; test('x',()=>{});\n" },
     });
@@ -618,6 +619,19 @@ describe("node --test, spec reporter parity with TAP", () => {
     for (const { envelope } of [tap, spec]) {
       expect(clusterOf(envelope, "num")?.message).toBe("42");
       expect(clusterOf(envelope, "obj")?.message).toBe("{ a: 1 }");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("An uncaught exception in a timer reads the same under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('t', async () => { setTimeout(() => { throw new Error('u'); }, 5); await new Promise((r) => setTimeout(r, 50)); });",
+    );
+    const { tap, spec } = await bothReporters("timer.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "t")?.message).toBe("Error: u");
     }
     expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
   });
@@ -875,7 +889,7 @@ describe("node --test, a SyntaxError raised inside a test that ran", () => {
           reporter,
           "parses.test.js",
           source("import test from 'node:test';", `test('parses', () => { ${statement} });`),
-          ["--tdd-phase=red"],
+          RED,
         );
 
         expect(run.code).toBe(0);
@@ -887,7 +901,7 @@ describe("node --test, a SyntaxError raised inside a test that ran", () => {
 
     for (const [fault, { entry, files }] of Object.entries(SYNTAX_FAULTS)) {
       it(`A missing module is INVALID_RED with exit 64 (${fault}, ${reporter})`, async () => {
-        const result = await runJson([`--test-reporter=${reporter}`, entry], { files, flags: ["--tdd-phase=red"] });
+        const result = await runJson([`--test-reporter=${reporter}`, entry], { files, flags: RED });
 
         expectSyntaxFault(result);
         expect(clustersOf(result.envelope)).toHaveLength(1);
