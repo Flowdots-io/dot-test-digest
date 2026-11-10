@@ -53,3 +53,8 @@ Two lanes share no file and run in parallel; each is serial inside itself. Secti
   - scenarios: "A load-time error in a path with a space, in eval code, or after a partial line keeps its error", "A file whose tests ran and then failed on a late error is not a startup crash", "An unreadable test file reached through a symlinked directory is INVALID_RED", "An uncaught exception in a timer reads the same under both reporters", "A late error in a file-level timer next to failing tests keeps the run a valid red"
   - blocked-by: 4.1
   - Location line = a non-indented line that is not an error line and ends in `:<N>`; async-activity diagnostic as the no-block message; symlink-resolved path for the read-failure check; `uncaughtException` joins the nameless-error prefix rule.
+
+- [ ] 4.3 Crash-block rule: several blocks above an entry, and a continuation line ending in a number (round-5 review)
+  - scenarios: "A crash of a process started by a setup module does not hide a broken import", "A load-time error whose message continues on a line ending in a number keeps its error"
+  - blocked-by: 4.2
+  - Per trailer: location = last location-only line followed by an error line before the trailer; with several blocks the first import/syntax-error block wins, else the last block. Also: README "Before" cells against 74208cc, SPEC-002 §4.1.1 wording ("matches v0.1.2 in the measured case"), drop `evalmachine.<anonymous>` from the location examples, rename the crash-block function so its name states that it also returns the late-error diagnostic.
