@@ -272,30 +272,42 @@ const LATE_THROW = source(
 );
 
 describe("node --test, a file whose tests ran and then failed on a late error", () => {
-  it("A file whose tests ran and then failed on a late error is not a startup crash (tap)", async () => {
-    const { run, envelope } = await runJson(["asyncfail.test.js"], {
-      flags: RED,
-      files: { "asyncfail.test.js": ASYNC_FAIL },
-    });
+  eachReporter(
+    {
+      tap: "A file whose tests ran and then failed on a late error is not a startup crash (tap)",
+      spec: "A file whose tests ran and then failed on a late error is not a startup crash (spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson([...reporterFlag(reporter), "asyncfail.test.js"], {
+        flags: RED,
+        files: { "asyncfail.test.js": ASYNC_FAIL },
+      });
 
-    expect(run.code).toBe(0);
-    expect(envelope.status).toBe("VALID_RED");
-    const cluster = clusterOf(envelope, "asyncfail.test.js");
-    expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
-    expect(cluster?.message.startsWith('Error: Test "calls impl" at asyncfail.test.js')).toBe(true);
-  });
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      const cluster = clusterOf(envelope, "asyncfail.test.js");
+      expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+      expect(cluster?.message.startsWith('Error: Test "calls impl" at asyncfail.test.js')).toBe(true);
+    },
+  );
 
-  it("A file whose tests ran and then failed on a late error is not a startup crash (tap, next to failing tests)", async () => {
-    const { run, envelope } = await runJson(["cart.test.js", "latethrow.test.js"], {
-      flags: RED,
-      files: { "latethrow.test.js": LATE_THROW },
-    });
+  eachReporter(
+    {
+      tap: "A late error in a file-level timer next to failing tests keeps the run a valid red (tap)",
+      spec: "A late error in a file-level timer next to failing tests keeps the run a valid red (spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson([...reporterFlag(reporter), "cart.test.js", "latethrow.test.js"], {
+        flags: RED,
+        files: { "latethrow.test.js": LATE_THROW },
+      });
 
-    expect(run.code).toBe(0);
-    expect(envelope.status).toBe("VALID_RED");
-    expect(envelope.summary.failed).toBe(5);
-    expect(clusterOf(envelope, "latethrow.test.js")?.error_kind).toBe("RUNTIME_EXCEPTION");
-  });
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(envelope.summary.failed).toBe(5);
+      expect(clusterOf(envelope, "latethrow.test.js")?.error_kind).toBe("RUNTIME_EXCEPTION");
+    },
+  );
 });
 
 /** Runs the cart with `file` unreadable (mode 000), then restores it so the temp dir can be removed. */

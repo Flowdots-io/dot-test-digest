@@ -315,7 +315,8 @@ const SPEC_ROW_TAIL = String.raw`(?: \(\d+(?:\.\d+)?ms\)( #(?: .*)?)?)?\s*$`;
 const SPEC_NAME_ROW = new RegExp(`^✖ (.*?)${SPEC_ROW_TAIL}`);
 const SPEC_TREE_ROW = new RegExp(`^(\\s*)([✖▶]) (.*?)${SPEC_ROW_TAIL}`);
 const SPEC_ENTRY_INDENT = 2;
-const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
+const SPEC_TEST_ROW_START = /^\s*[✔✖▶﹣]/;
+const SPEC_DIAGNOSTIC_PREFIX = /^ℹ /;
 
 export function isSpecStream(lines: readonly CapturedLine[]): boolean {
   const keys = new Set<string>();
@@ -415,11 +416,14 @@ function ownFileRows(lines: readonly CapturedLine[]): Map<string, number[]> {
   return rows;
 }
 
-/** The lines node printed between the previous tree row and `row`. */
+/**
+ * The lines node printed between the previous test row and `row`. A `ℹ` row (node's diagnostics and its
+ * summary lines) is not a test row: it belongs to these lines, with the `ℹ ` dropped.
+ */
 function linesAbove(lines: readonly CapturedLine[], row: number): string[] {
   let previous = row - 1;
-  while (previous >= 0 && !SPEC_ROW_START.test(lines[previous]?.text ?? "")) previous -= 1;
-  return lines.slice(previous + 1, row).map((line) => line.text);
+  while (previous >= 0 && !SPEC_TEST_ROW_START.test(lines[previous]?.text ?? "")) previous -= 1;
+  return lines.slice(previous + 1, row).map((line) => line.text.replace(SPEC_DIAGNOSTIC_PREFIX, ""));
 }
 
 /**
