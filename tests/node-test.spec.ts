@@ -371,6 +371,32 @@ describe("node --test, file-level failures", () => {
   );
 });
 
+describe("node --test, which printed line is a crashed file's error", () => {
+  const LOG_LINE = 'data:text/javascript,console.log("Error: config.json not found, using defaults")';
+
+  it("A log line above the crash is not mistaken for the file's error", async () => {
+    const { run, envelope } = await runJson(["--import", LOG_LINE, "missing-module.test.js"], {
+      flags: ["--tdd-phase=red"],
+    });
+
+    expect(run.code).toBe(64);
+    expect(envelope.status).toBe("INVALID_RED");
+    expect(clustersOf(envelope)).toHaveLength(1);
+    const cluster = clustersOf(envelope)[0];
+    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(cluster?.sample_tests).toEqual(["missing-module.test.js"]);
+    expect(cluster?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
+  });
+
+  it("A syntax error in a test file is attributed to that file under TAP", async () => {
+    const { envelope } = await runJson(["missing-module.test.js", "syntax-error.test.js"]);
+
+    const cluster = clusterOf(envelope, "syntax-error.test.js");
+    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(cluster?.message).toBe("SyntaxError: Unexpected end of input");
+  });
+});
+
 describe("node --test, red-phase guards", () => {
   eachReporter(
     {
