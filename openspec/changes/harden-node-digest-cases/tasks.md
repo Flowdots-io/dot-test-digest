@@ -50,6 +50,6 @@ Two lanes share no file and run in parallel; each is serial inside itself. Secti
   - Replace `fileError`, the path-block and lone-crash fallbacks, `ownRunBlocks` and `linesAboveFileRow` by one function over the lines above the entry; the n-th crashed entry of a name takes the n-th row of that name; read failure needs the quoted absolute path.
 
 - [ ] 4.2 Crash-block regressions found by the round-4 review
-  - scenarios: "A load-time error in a path with a space, in eval code, or after a partial line keeps its error", "A file whose tests ran and then failed on a late error is not a startup crash", "An unreadable test file reached through a symlinked directory is INVALID_RED", "An uncaught exception in a timer reads the same under both reporters"
+  - scenarios: "A load-time error in a path with a space, in eval code, or after a partial line keeps its error", "A file whose tests ran and then failed on a late error is not a startup crash", "An unreadable test file reached through a symlinked directory is INVALID_RED", "An uncaught exception in a timer reads the same under both reporters", "A late error in a file-level timer next to failing tests keeps the run a valid red"
   - blocked-by: 4.1
   - Location line = a non-indented line that is not an error line and ends in `:<N>`; async-activity diagnostic as the no-block message; symlink-resolved path for the read-failure check; `uncaughtException` joins the nameless-error prefix rule.
