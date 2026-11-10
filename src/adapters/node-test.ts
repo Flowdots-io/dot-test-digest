@@ -269,7 +269,8 @@ function readTapEntry(
   const errorName = field("name").join(" ").trim();
   let message = cleanNodeMessage(field("error").filter((text) => text !== ""));
   if (errorName !== "" && !message.startsWith(errorName)) message = `${errorName}: ${message}`;
-  if (!block.fields.has("name") && !crashedFile && THROWN_FAILURES.has(field("failureType")[0] ?? "")) {
+  const isThrownError = block.fields.has("stack") && !block.fields.has("name") && !crashedFile;
+  if (isThrownError && THROWN_FAILURES.has(field("failureType")[0] ?? "")) {
     message = message === "" ? "Error" : `Error: ${message}`;
   }
 
