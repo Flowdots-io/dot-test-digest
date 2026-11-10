@@ -213,6 +213,52 @@ describe("node --test, the crash block directly above a file's entry is its erro
   );
 });
 
+const SPACE_DIR = "a b";
+
+/** A load-time TypeError whose location line node prints in a form the crash block must still recognise. */
+const LOCATION_FORMS: ReadonlyArray<{ form: string; file: string; contents: string }> = [
+  {
+    form: "cjs file in a directory with a space",
+    file: "typeload.test.cjs",
+    contents: source('const test = require("node:test");', "const cfg = {};", 'cfg.get("x");', 'test("x", () => {});'),
+  },
+  {
+    form: "eval code",
+    file: "evalload.test.js",
+    contents: source('import test from "node:test";', 'eval("null.x");', 'test("x", () => {});'),
+  },
+  {
+    form: "partial stdout line before the location",
+    file: "partial.test.js",
+    contents: source(
+      'import test from "node:test";',
+      'process.stdout.write("partial line no newline");',
+      "null.x;",
+      'test("x", () => {});',
+    ),
+  },
+];
+
+describe("node --test, the location line of a crash block", () => {
+  for (const { form, file, contents } of LOCATION_FORMS) {
+    for (const reporter of REPORTERS) {
+      it(`A load-time error in a path with a space, in eval code, or after a partial line keeps its error (${form}, ${reporter})`, async () => {
+        const { run, envelope } = await runJson([...reporterFlag(reporter), file], {
+          flags: RED,
+          subdir: SPACE_DIR,
+          files: { [`${SPACE_DIR}/${file}`]: contents },
+        });
+
+        expect(run.code).toBe(0);
+        expect(envelope.status).toBe("VALID_RED");
+        const cluster = clusterOf(envelope, file);
+        expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+        expect(cluster?.message.startsWith("TypeError: ")).toBe(true);
+      });
+    }
+  }
+});
+
 /** Runs the cart with `file` unreadable (mode 000), then restores it so the temp dir can be removed. */
 async function withUnreadable(file: string, args: readonly string[], options: CartOptions): Promise<JsonRun> {
   let unreadable = "";
