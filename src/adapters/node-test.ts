@@ -75,10 +75,11 @@ function nameOnlyEntry(name: string, line: number): NodeEntry {
   };
 }
 
+/** A test that ran and threw a `SyntaxError` (say `JSON.parse(undefined)`) failed behaviourally: only a file that failed to load is a syntax fault. */
 function errorKindOf(entry: NodeEntry): ErrorKind {
   if (entry.subprocessError !== undefined) return classifyMessage(entry.subprocessError);
   if (entry.crashedFile) return "SYNTAX_IMPORT_ERROR";
-  return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`);
+  return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`.replaceAll("SyntaxError", ""));
 }
 
 function toRawFailure(entry: NodeEntry): RawFailure {
@@ -230,18 +231,14 @@ function readTapEntry(
   };
 }
 
-/** node counts a timed-out test as `cancelled`, not `fail`. */
-function nodeCounts(
-  lines: readonly CapturedLine[],
-  pattern: RegExp,
-  merge: (key: string, earlier: number, value: number) => number,
-): AdapterCounts {
+/** node counts a timed-out test as `cancelled`, not `fail`. One stream can hold several node runs; each prints its own summary, so the counts are summed. */
+function nodeCounts(lines: readonly CapturedLine[], pattern: RegExp): AdapterCounts {
   const seen = new Map<string, number>();
   for (const line of lines) {
     const match = pattern.exec(line.text);
     if (match === null) continue;
     const key = match[1] ?? "";
-    seen.set(key, merge(key, seen.get(key) ?? 0, Number(match[2])));
+    seen.set(key, (seen.get(key) ?? 0) + Number(match[2]));
   }
   const counts = emptyCounts();
   counts.passed = seen.get("pass") ?? 0;
@@ -277,9 +274,7 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
     }
     index = block.endIndex;
   }
-  const counts = nodeCounts(lines, TAP_COUNT, (key, earlier, value) =>
-    key === "pass" ? Math.max(earlier, value) : value,
-  );
+  const counts = nodeCounts(lines, TAP_COUNT);
   disambiguateSameNames(entries);
   const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
   return resultOf(failures, counts);
@@ -424,7 +419,7 @@ function specResult(entries: NodeEntry[], counts: AdapterCounts): AdapterResult 
 }
 
 export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
-  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY, (_key, earlier, value) => earlier + value);
+  const counts = nodeCounts(lines, NODE_SPEC_SUMMARY);
   const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
   if (section < 0) return specResult(readSpecLeafRows(lines), counts);
 

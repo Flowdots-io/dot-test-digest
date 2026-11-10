@@ -814,9 +814,9 @@ describe("node --test, TODO and SKIP directives", () => {
 });
 
 /** node exits 0 when only an `after` hook throws. */
-const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> = {
+const SUITE_FAULTS: Readonly<Record<string, { source: string; nodeExitCode: number }>> = {
   "before hook that throws": {
-    exit: 1,
+    nodeExitCode: 1,
     source: [
       "import { describe, before, it } from 'node:test';",
       "describe('suite with failing before', () => {",
@@ -828,7 +828,7 @@ const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> =
     ].join("\n"),
   },
   "after hook that throws": {
-    exit: 0,
+    nodeExitCode: 0,
     source: [
       "import { describe, after, it } from 'node:test';",
       "describe('suite with failing after', () => {",
@@ -839,7 +839,7 @@ const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> =
     ].join("\n"),
   },
   "describe body that throws": {
-    exit: 1,
+    nodeExitCode: 1,
     source: [
       "import { describe, it } from 'node:test';",
       "describe('suite whose body throws', () => {",
@@ -861,13 +861,13 @@ async function digestOf(reporter: string, file: string, source: string) {
 }
 
 describe("node --test, summary.failed is never below the failures reported", () => {
-  for (const [fault, { source, exit }] of Object.entries(SUITE_FAULTS)) {
+  for (const [fault, { source, nodeExitCode }] of Object.entries(SUITE_FAULTS)) {
     for (const reporter of ["tap", "spec"]) {
       it(`Nested suite with a deep-equal failure and a timeout (${fault}, ${reporter})`, async () => {
         const { run, envelope } = await digestOf(reporter, "suite-fault.test.js", source);
 
         const reported = clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0);
-        expect(run.code).toBe(exit);
+        expect(run.code).toBe(nodeExitCode);
         expect(reported).toBeGreaterThan(0);
         expect(envelope.summary.failed).toBeGreaterThanOrEqual(reported);
       });
@@ -913,6 +913,54 @@ describe("node --test, summary.failed is never below the failures reported", () 
     expect(envelope.summary).toMatchObject({ passed: 3, failed: 2, total_clusters: 2 });
   });
 
+  it("Nested suite with a deep-equal failure and a timeout (two node runs in one stream sum their counts, TAP equals spec)", async () => {
+    const wrapperFor = (reporter: string): string =>
+      [
+        "import { spawnSync } from 'node:child_process';",
+        "let status = 0;",
+        "for (const file of ['many-fail.test.js', 'many-pass.test.js']) {",
+        `  const run = spawnSync(process.execPath, ['--test', '--test-reporter=${reporter}', file], { stdio: 'inherit' });`,
+        "  status = status || (run.status ?? 1);",
+        "}",
+        "process.exit(status);",
+        "",
+      ].join("\n");
+    const tests = {
+      "many-fail.test.js": [
+        "import test, { describe, it } from 'node:test';",
+        "test('good one', () => {});",
+        "test('bad one', () => { throw new Error('one'); });",
+        "test('skipped a', { skip: true }, () => {});",
+        "test('skipped b', { skip: true }, () => {});",
+        "describe('group', () => {",
+        "  it('nested good', () => {});",
+        "  it('nested bad', () => { throw new RangeError('two'); });",
+        "});",
+        "",
+      ].join("\n"),
+      "many-pass.test.js": [
+        "import test from 'node:test';",
+        "test('fine a', () => {});",
+        "test('fine b', () => {});",
+        "test('skipped c', { skip: true }, () => {});",
+        "",
+      ].join("\n"),
+    };
+    const summaryOf = async (reporter: string) => {
+      const run = await runInCart(["--no-jev", "--format=json"], [process.execPath, "wrapper.js"], {
+        files: { "wrapper.js": wrapperFor(reporter), ...tests },
+      });
+      return { code: run.code, summary: (JSON.parse(run.stdout) as DigestEnvelope).summary };
+    };
+
+    const tap = await summaryOf("tap");
+    const spec = await summaryOf("spec");
+
+    expect(tap.code).toBe(1);
+    expect(tap.summary).toMatchObject({ passed: 4, failed: 2, skipped: 3 });
+    expect(spec.summary).toEqual(tap.summary);
+  });
+
   it("Nested suite and timeout under the spec reporter (after hook that throws, same counts as TAP)", async () => {
     const source = SUITE_FAULTS["after hook that throws"]?.source ?? "";
     const tap = await digestOf("tap", "suite-fault.test.js", source);
@@ -921,4 +969,46 @@ describe("node --test, summary.failed is never below the failures reported", () 
     expect(tap.envelope.summary).toEqual({ passed: 1, failed: 1, skipped: 0, total_clusters: 1 });
     expect(spec.envelope.summary).toEqual(tap.envelope.summary);
   });
+});
+
+describe("node --test, a JSON parse failure raised inside a test that ran", () => {
+  const RUNTIME_SYNTAX_ERROR = [
+    "import test from 'node:test';",
+    "test('parses', () => { JSON.parse(undefined); });",
+    "",
+  ].join("\n");
+  const DYNAMIC_IMPORT = [
+    "import test from 'node:test';",
+    "test('loads late', async () => { await import('./no-such-module.js'); });",
+    "",
+  ].join("\n");
+
+  for (const reporter of ["tap", "spec"]) {
+    it(`A missing export is VALID_RED with exit 0 (JSON.parse(undefined) inside a test, ${reporter})`, async () => {
+      const run = await runNodeCart(
+        ["--no-jev", "--format=json", "--tdd-phase=red"],
+        [`--test-reporter=${reporter}`, "parses.test.js"],
+        { files: { "parses.test.js": RUNTIME_SYNTAX_ERROR } },
+      );
+      const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["RUNTIME_EXCEPTION"]);
+      expect(clustersOf(envelope)[0]?.message).toContain("SyntaxError");
+    });
+
+    it(`A missing module is INVALID_RED with exit 64 (dynamic import of a missing module inside a test, ${reporter})`, async () => {
+      const run = await runNodeCart(
+        ["--no-jev", "--format=json", "--tdd-phase=red"],
+        [`--test-reporter=${reporter}`, "late.test.js"],
+        { files: { "late.test.js": DYNAMIC_IMPORT } },
+      );
+      const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+
+      expect(run.code).toBe(64);
+      expect(envelope.status).toBe("INVALID_RED");
+      expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["SYNTAX_IMPORT_ERROR"]);
+    });
+  }
 });
