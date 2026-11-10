@@ -32,7 +32,8 @@ function lastIndexWhere(lines: readonly string[], test: (text: string) => boolea
  * The error of the crash block node printed for a crashed file: a location-only line, the source and
  * caret, the error, its stack, and the trailer `Node.js v<version>`. `lines` are the lines above the
  * file's own entry; only the last block takes part, so a setup log, another file's output or a stack
- * frame that names another file never stands in for the error.
+ * frame that names another file never stands in for the error. With no block, node's late-error
+ * diagnostic among the lines is the message: that file's tests ran, it did not crash at startup.
  */
 export function crashBlockError(lines: readonly string[]): string | undefined {
   const trailer = lastIndexWhere(lines, (text) => CRASH_TRAILER.test(text));
