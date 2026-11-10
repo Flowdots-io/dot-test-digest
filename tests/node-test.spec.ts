@@ -395,6 +395,45 @@ describe("node --test, which printed line is a crashed file's error", () => {
     expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
     expect(cluster?.message).toBe("SyntaxError: Unexpected end of input");
   });
+
+  it("A syntax error block with blank lines is attributed to its file", async () => {
+    const { envelope } = await runJson([SPEC, "missing-module.test.js", "syntax-error.test.js"]);
+
+    const cluster = clusterOf(envelope, "syntax-error.test.js");
+    expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+    expect(cluster?.message).toBe("SyntaxError: Unexpected end of input");
+    expect(clusterOf(envelope, "missing-module.test.js")?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
+  });
+
+  const ONE_RUN_PER_FILE = source(
+    'import { spawnSync } from "node:child_process";',
+    "const [reporter, ...files] = process.argv.slice(2);",
+    "let code = 0;",
+    'for (const f of files) { const r = spawnSync(process.execPath, ["--test", "--test-reporter=" + reporter, f], { stdio: "inherit" }); code = code || (r.status ?? 1); }',
+    "process.exit(code);",
+  );
+
+  eachReporter(
+    {
+      tap: "A crashed file in a later run of a multi-run stream keeps its error (tap)",
+      spec: "A crashed file in a later run of a multi-run stream keeps its error (spec)",
+    },
+    async (reporter) => {
+      const result = jsonOf(
+        await runInCart(
+          ["--no-jev", "--format=json", "--tdd-phase=red"],
+          [process.execPath, "wrap.mjs", reporter, "cart.test.js", "missing-export.test.js"],
+          { files: { "wrap.mjs": ONE_RUN_PER_FILE } },
+        ),
+      );
+
+      expect(result.run.code).toBe(0);
+      expect(result.envelope.status).toBe("VALID_RED");
+      const cluster = clusterOf(result.envelope, "missing-export.test.js");
+      expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+      expect(cluster?.message).toBe(MISSING_EXPORT_MESSAGE);
+    },
+  );
 });
 
 describe("node --test, a runtime error thrown at load keeps its error line", () => {
