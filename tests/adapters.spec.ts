@@ -262,7 +262,7 @@ describe("node TAP diagnostic blocks", () => {
   it("A recorded TAP log parses to the same records at the adapter seam", () => {
     const root = path.join(process.cwd(), "tests", "fixtures", "node-cart");
     const text = fs
-      .readFileSync(path.join("tests", "fixtures", "logs", "node-tap-cart.log"), "utf8")
+      .readFileSync(path.join(process.cwd(), "tests", "fixtures", "logs", "node-tap-cart.log"), "utf8")
       .replaceAll("__ROOT__", root)
       .replace(/\n$/, "");
     const result = runGear0(lines(text));

@@ -5,6 +5,9 @@ import type { DigestEnvelope, FailureCluster } from "../src/types/schema.js";
 import { clustersOf } from "./helpers/digest.js";
 import { runInCart, runNodeCart } from "./helpers/node-cart.js";
 
+const SYNTAX_MESSAGE =
+  "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
+
 function baselineOf(home: string, scope: string): string[] {
   const raw = fs.readFileSync(path.join(home, `state-${scope}.json`), "utf8");
   return (JSON.parse(raw) as { baseline: string[] }).baseline;
@@ -278,9 +281,7 @@ describe("node --test, TAP red-phase guards (missing module)", () => {
     expect(run.code).toBe(64);
     expect(run.stdout).toContain("INVALID_RED");
     expect(run.stdout).toContain("SYNTAX_IMPORT_ERROR");
-    expect(run.stderr).toContain(
-      "Test failed due to syntax or unresolved module import rather than a behavioral assertion.",
-    );
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 });
 
@@ -495,17 +496,17 @@ describe("node --test, spec run cut before the failing-tests section", () => {
     expect(envelope.summary).toEqual({ passed: 2, failed: 4, skipped: 0, total_clusters: 1 });
     expect(clustersOf(envelope)).toHaveLength(1);
     const cluster = clustersOf(envelope)[0];
-    expect(cluster.cluster_id).toBe("c_11eac407");
-    expect(cluster.error_kind).toBe("RUNTIME_EXCEPTION");
-    expect(cluster.affected_count).toBe(4);
-    expect(cluster.top_frame).toBe("unknown:0:0");
-    expect(cluster.message).toBe("Unknown test failure");
-    expect(cluster.sample_tests).toEqual([
+    expect(cluster?.cluster_id).toBe("c_11eac407");
+    expect(cluster?.error_kind).toBe("RUNTIME_EXCEPTION");
+    expect(cluster?.affected_count).toBe(4);
+    expect(cluster?.top_frame).toBe("unknown:0:0");
+    expect(cluster?.message).toBe("Unknown test failure");
+    expect(cluster?.sample_tests).toEqual([
       "discount 10% leaves 90%",
       "total with 10% off",
       "total with 100% off is free",
     ]);
-    expect(cluster.raw_log_lines).toBe("L3-L6");
+    expect(cluster?.raw_log_lines).toBe("L3-L6");
   });
 });
 
@@ -572,16 +573,11 @@ describe("node --test, spec red-phase guards (missing module)", () => {
     expect(run.code).toBe(64);
     expect(run.stdout).toContain("INVALID_RED");
     expect(run.stdout).toContain("SYNTAX_IMPORT_ERROR");
-    expect(run.stderr).toContain(
-      "Test failed due to syntax or unresolved module import rather than a behavioral assertion.",
-    );
+    expect(run.stderr).toContain(SYNTAX_MESSAGE);
   });
 });
 
 describe("node --test, spec red-phase guards (missing module, path forms)", () => {
-  const SYNTAX_MESSAGE =
-    "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
-
   it("A missing module is INVALID_RED with exit 64 and the syntax message (absolute path)", async () => {
     const run = await runNodeCart(
       ["--no-jev", "--format=json", "--tdd-phase=red"],
@@ -626,8 +622,6 @@ describe("node --test, spec red-phase guards (missing module, path forms)", () =
 });
 
 describe("node --test, spec red-phase guards (crashes with no attributable error)", () => {
-  const SYNTAX_MESSAGE =
-    "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
   const PASSING_TEST = "import './lib.js'; import test from 'node:test'; test('x',()=>{});\n";
 
   it("A missing module is INVALID_RED with exit 64 and the syntax message (two files crash through a shared import)", async () => {
@@ -664,9 +658,6 @@ describe("node --test, spec red-phase guards (crashes with no attributable error
 });
 
 describe("node --test, TAP red-phase guards (crashes with no attributable error)", () => {
-  const SYNTAX_MESSAGE =
-    "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
-
   it("A missing module is INVALID_RED with exit 64 (a test file that exits at load time)", async () => {
     const run = await runNodeCart(["--no-jev", "--format=json", "--tdd-phase=red"], ["exit.test.js"], {
       files: { "exit.test.js": "process.exit(1);\n" },
@@ -770,7 +761,6 @@ describe("node --test, spec red-phase guards (assertion failures)", () => {
   });
 });
 
-/** `exit` is node's own exit code for the file (a throwing `after` hook leaves it 0); the digest passes it through. */
 const DIRECTIVE_TESTS = [
   "import test, { describe, it } from 'node:test';",
   "test('not yet', { todo: true }, () => { throw new Error('x'); });",
@@ -823,6 +813,7 @@ describe("node --test, TODO and SKIP directives", () => {
   });
 });
 
+/** `exit` is node's own exit code for the file (a throwing `after` hook leaves it 0); the digest passes it through. */
 const SUITE_FAULTS: Readonly<Record<string, { source: string; exit: number }>> = {
   "before hook that throws": {
     exit: 1,

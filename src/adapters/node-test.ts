@@ -391,10 +391,11 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
     // node indents every line of an entry by two spaces; anything shallower is output of a wrapper.
     if (leadingSpaces(raw) < SPEC_ENTRY_INDENT) break;
     last = index;
-    if (/^at /.test(text)) inFrames = true;
+    const isFrame = /^at /.test(text);
+    if (isFrame) inFrames = true;
     if (!inFrames) {
       messageLines.push(text);
-    } else if (/^at /.test(text)) {
+    } else if (isFrame) {
       stack.push(nodePath(text.slice(3).replace(/ \{$/, "")));
     } else if (text !== "}") {
       propertyIndent ??= leadingSpaces(raw);
