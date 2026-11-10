@@ -397,6 +397,27 @@ describe("node --test, which printed line is a crashed file's error", () => {
   });
 });
 
+describe("node --test, a runtime error thrown at load keeps its error line", () => {
+  eachReporter(
+    {
+      tap: "A missing export is VALID_RED with exit 0 (a ReferenceError at load time, whose stack frame names the file, tap)",
+      spec: "A missing export is VALID_RED with exit 0 (a ReferenceError at load time, whose stack frame names the file, spec)",
+    },
+    async (reporter) => {
+      const { run, envelope } = await runJson([...reporterFlag(reporter), "load-error.test.js"], {
+        flags: ["--tdd-phase=red"],
+        files: { "load-error.test.js": source("import test from 'node:test';", "notDefinedYet();", "test('x', () => {});") },
+      });
+
+      expect(run.code).toBe(0);
+      expect(envelope.status).toBe("VALID_RED");
+      expect(clustersOf(envelope).map((c) => [c.error_kind, c.message])).toEqual([
+        ["RUNTIME_EXCEPTION", "ReferenceError: notDefinedYet is not defined"],
+      ]);
+    },
+  );
+});
+
 describe("node --test, red-phase guards", () => {
   eachReporter(
     {
