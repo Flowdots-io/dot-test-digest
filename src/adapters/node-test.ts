@@ -164,7 +164,7 @@ function finish(entries: NodeEntry[], foreign: RawFailure[], counts: AdapterCoun
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
 
-/** node escapes a `#` inside a TAP test name as `\#`, so an unescaped ` # TODO` / ` # SKIP` is a directive. */
+/** node escapes a `#` inside a TAP test name as `\#` and a backslash as `\\`, so an unescaped ` # TODO` / ` # SKIP` is a directive. */
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)(\s+#\s*(?:TODO|SKIP)\b.*)?\s*$/;
 const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
 const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
@@ -249,6 +249,9 @@ function tapSubprocessError(
   return fileError(comments, file);
 }
 
+/** node prints the class of an error in `name:` except for a plain `Error`, which the spec reporter shows as `Error: <text>`. */
+const THROWN_FAILURES: ReadonlySet<string> = new Set(["testCodeFailure", "hookFailed"]);
+
 function readTapEntry(
   lines: readonly CapturedLine[],
   index: number,
@@ -257,14 +260,17 @@ function readTapEntry(
 ): NodeEntry {
   const startLine = lines[index]?.line ?? 0;
   const field = (key: string): string[] => block.fields.get(key) ?? [];
+  const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
   const errorName = field("name").join(" ").trim();
   let message = cleanNodeMessage(field("error").filter((text) => text !== ""));
   if (errorName !== "" && !message.startsWith(errorName)) message = `${errorName}: ${message}`;
+  if (!block.fields.has("name") && !crashedFile && THROWN_FAILURES.has(field("failureType")[0] ?? "")) {
+    message = message === "" ? "Error" : `Error: ${message}`;
+  }
 
   const place = /^(.*?):(\d+)(?::\d+)?$/.exec(field("location")[0] ?? "");
   const expected = field("expected");
   const actual = field("actual");
-  const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
   const subprocessError = crashedFile ? tapSubprocessError(lines, index, place?.[1] ?? "") : undefined;
   return {
     name,
@@ -308,7 +314,7 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
   for (let index = 0; index < lines.length; index += 1) {
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
-    const name = (notOk[2] ?? "").replaceAll("\\#", "#");
+    const name = (notOk[2] ?? "").replace(/\\([\\#])/g, "$1");
     const isDirective = notOk[3] !== undefined;
     const block = readTapBlock(lines, index);
     if (!isDirective) {
@@ -346,7 +352,7 @@ export function isSpecStream(lines: readonly CapturedLine[]): boolean {
 }
 
 function inspectedString(value: string): string {
-  return unquote(value, "'\"", (inner, quote) => (inner.includes(quote) ? undefined : inner));
+  return unquote(value, "'\"`", (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
 function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
