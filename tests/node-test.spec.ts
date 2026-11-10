@@ -359,6 +359,32 @@ describe("node --test, spec reporter parity with TAP", () => {
   });
 });
 
+describe("node --test, a message node prints in backticks", () => {
+  it("The spec reporter yields the same clusters as the TAP reporter (a message node prints in backticks)", async () => {
+    const files = {
+      "html.test.js": "import test from 'node:test';\ntest('html', () => { JSON.parse('<html>'); });\n",
+    };
+    const view = async (reporter: string): Promise<DigestEnvelope> =>
+      JSON.parse(
+        (
+          await runNodeCart(
+            ["--no-jev", "--format=json"],
+            [`--test-reporter=${reporter}`, "html.test.js"],
+            { files },
+          )
+        ).stdout,
+      ) as DigestEnvelope;
+    const spec = await view("spec");
+    const tap = await view("tap");
+
+    expect(clustersOf(tap).map((c) => c.message)).toEqual(clustersOf(spec).map((c) => c.message));
+    expect(clustersOf(tap).map((c) => c.message)).toEqual([
+      `SyntaxError: Unexpected token '<', "<html>" is not valid JSON`,
+    ]);
+    expect(clustersOf(tap).map((c) => c.cluster_id)).toEqual(clustersOf(spec).map((c) => c.cluster_id));
+  });
+});
+
 describe("node --test, test names containing a hash", () => {
   it("The spec reporter yields the same clusters as the TAP reporter (names containing #)", async () => {
     const view = async (reporter: string): Promise<DigestEnvelope> =>
