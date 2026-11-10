@@ -14,6 +14,7 @@ import {
   reporterFlag,
   runJson,
   source,
+  type CartArgs,
   type CartOptions,
   type JsonRun,
   type Reporter,
@@ -298,14 +299,14 @@ describe("node --test, a file whose tests ran and then failed on a late error", 
 });
 
 /** Runs the cart with `file` unreadable (mode 000), then restores it so the temp dir can be removed. */
-async function withUnreadable(file: string, args: readonly string[], options: CartOptions): Promise<JsonRun> {
+async function withUnreadable(file: string, args: CartArgs, options: CartOptions): Promise<JsonRun> {
   let unreadable = "";
   try {
     return await runJson(
       (dir) => {
         unreadable = path.join(dir, file);
         fs.chmodSync(unreadable, 0o000);
-        return args;
+        return typeof args === "function" ? args(dir) : args;
       },
       { ...options, flags: RED },
     );
@@ -390,5 +391,33 @@ describe("node --test, a file the runner cannot read", () => {
         expect(clustersOf(envelope)[0]?.message.startsWith("Error: EACCES: permission denied")).toBe(true);
       });
     }
+  }
+});
+
+describe("node --test, an unreadable test file reached through a symlinked directory", () => {
+  for (const reporter of REPORTERS) {
+    itUnlessRoot(
+      `An unreadable test file reached through a symlinked directory is INVALID_RED (${reporter})`,
+      async () => {
+        let link = "";
+        try {
+          const { run, envelope } = await withUnreadable(
+            "noread.test.js",
+            (dir) => {
+              link = `${dir}-link`;
+              fs.symlinkSync(dir, link);
+              return [...reporterFlag(reporter), path.join(link, "noread.test.js")];
+            },
+            { files: { "noread.test.js": source("import test from 'node:test';", "test('x', () => {});") } },
+          );
+
+          expect(run.code).toBe(64);
+          expect(envelope.status).toBe("INVALID_RED");
+          expect(clustersOf(envelope).map((c) => c.error_kind)).toEqual(["SYNTAX_IMPORT_ERROR"]);
+        } finally {
+          if (link !== "") fs.rmSync(link, { force: true });
+        }
+      },
+    );
   }
 });
