@@ -208,7 +208,7 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
   for (let index = subtest - 1; index >= 0; index -= 1) {
     const text = lines[index]?.text ?? "";
     if (!text.startsWith("#")) break;
-    comments.unshift(text.replace(/^#\s+/, ""));
+    comments.unshift(text.replace(/^# ?/, ""));
   }
   return crashBlockError(comments);
 }

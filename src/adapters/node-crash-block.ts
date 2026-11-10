@@ -1,6 +1,7 @@
 const NODE_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
 const CRASH_TRAILER = /^Node\.js v\d/;
-const CRASH_LOCATION = /^(?:file:\/\/|node:|\/|[A-Za-z]:[\\/])\S*:\d+$/;
+/** A non-indented line ending in `:<N>`; a stack frame is indented and an error line is excluded where it is used. */
+const CRASH_LOCATION = /^\S.*:\d+$/;
 /** node could not read the test file at all, so no test ran: the runner's startup crash. */
 const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM)\b/;
 
@@ -31,7 +32,8 @@ function lastIndexWhere(lines: readonly string[], test: (text: string) => boolea
  */
 export function crashBlockError(lines: readonly string[]): string | undefined {
   const trailer = lastIndexWhere(lines, (text) => CRASH_TRAILER.test(text));
-  const location = trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text), trailer);
+  const location =
+    trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text) && errorLine(text) === undefined, trailer);
   return location < 0 ? undefined : firstErrorLine(lines.slice(location, trailer));
 }
 
