@@ -110,8 +110,15 @@ function isRuntimeSyntaxError(entry: NodeEntry): boolean {
   );
 }
 
+/** node could not read the test file at all, so no test ran: the runner's startup crash. */
+const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM|EISDIR)\b/;
+
 function errorKindOf(entry: NodeEntry): ErrorKind {
-  if (entry.subprocessError !== undefined) return classifyMessage(entry.subprocessError);
+  if (entry.subprocessError !== undefined) {
+    return FILE_READ_FAILURE.test(entry.subprocessError)
+      ? "SYNTAX_IMPORT_ERROR"
+      : classifyMessage(entry.subprocessError);
+  }
   if (entry.crashedFile) return "SYNTAX_IMPORT_ERROR";
   if (isRuntimeSyntaxError(entry)) return "RUNTIME_EXCEPTION";
   return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`);
