@@ -106,6 +106,7 @@ export async function runInCart(
   return { ...run, dir: realDir, home };
 }
 
+export const RED: readonly string[] = ["--tdd-phase=red"];
 export const SPEC = "--test-reporter=spec";
 export const MODULE_NOT_FOUND = "Error: Cannot find module '";
 export const MISSING_EXPORT_MESSAGE =

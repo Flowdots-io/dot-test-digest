@@ -6,6 +6,7 @@ import { clustersOf } from "./helpers/digest.js";
 import {
   MISSING_EXPORT_MESSAGE,
   MODULE_NOT_FOUND,
+  RED,
   REPORTERS,
   SPEC,
   clusterOf,
@@ -27,7 +28,6 @@ const LOG_ONLY = source(
   'console.log("TypeError: cfg.get is not a function (handled)");',
   'test("x", () => {});',
 );
-const RED = ["--tdd-phase=red"];
 
 /**
  * Split in two so a failing run does not print the words "SyntaxError: ..." that the digest of this
