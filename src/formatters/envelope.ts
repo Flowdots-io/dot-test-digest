@@ -157,56 +157,59 @@ function byteSums(texts: readonly string[]): number[] {
   return sums;
 }
 
+/** The digest, without its final newline, is at most this many bytes: 2,400 with the newline and 600 EstimatedTokens. */
+const FAIL_BODY_BYTES = Math.min(FAIL_BYTE_CEILING - 1, MAX_FAIL_TOKENS * BYTES_PER_TOKEN);
+
 function renderFailBody(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   rawText: string | undefined,
 ): string {
   for (const renderBlock of rawText === undefined ? LADDER.slice(0, 1) : LADDER) {
-    const { header, text } = renderLevel(envelope, omitted, renderBlock);
-    const bounded = truncateBytes(`${header}\n${text}`, FAIL_BYTE_CEILING - 1);
+    const { header, body } = renderLevel(envelope, omitted, renderBlock);
+    const bounded = truncateBytes(body, FAIL_BODY_BYTES);
     if (rawText === undefined || byteLength(bounded) <= byteLength(rawText) + byteLength(header)) return bounded;
   }
   const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText}`;
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
-/** INV-2's ceiling cuts the tail of the listing first, then the blocks: the `+N more clusters` line is never the part cut. */
+/**
+ * The limit decides the full blocks first, with the `+N more clusters (see log)` line reserved, then fills what is
+ * left with whole listed lines, so the footer is never the part cut and a long listing never takes blocks away.
+ */
 function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   renderBlock: (cluster: FailureCluster) => string,
-): { header: string; text: string } {
+): { header: string; body: string } {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
-  const blocks = clusters.map(renderBlock);
-  const lines = all.map((c) => `\n${renderOmittedLine(c)}`);
-  const footerHead = (count: number): string => `\n+${count} more clusters (see log)`;
+  const blocks = clusters.map((cluster) => `\n${renderBlock(cluster)}`);
+  const lines = all.map((cluster) => `\n${renderOmittedLine(cluster)}`);
+  const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
   const blockEnds = byteSums(blocks);
   const lineEnds = byteSums(lines);
-  const fits = (kept: number, listed: number): boolean => {
-    const count = all.length - kept;
-    const footer = count > 0 ? byteLength(footerHead(count)) + (lineEnds[kept + listed] ?? 0) - (lineEnds[kept] ?? 0) : 0;
-    const bytes =
-      byteLength(headerLine(envelope, kept)) + 1 + (blockEnds[kept] ?? 0) + Math.max(0, kept - 1) + footer;
-    return Math.ceil(bytes / BYTES_PER_TOKEN) <= MAX_FAIL_TOKENS;
-  };
+  const blocksBytes = (kept: number): number =>
+    byteLength(headerLine(envelope, kept)) + (blockEnds[kept] ?? 0) + byteLength(footerOf(all.length - kept));
 
   let kept = clusters.length;
-  while (kept > 1 && !fits(kept, all.length - kept)) kept -= 1;
+  while (kept > 1 && blocksBytes(kept) > FAIL_BODY_BYTES) kept -= 1;
   let listed = all.length - kept;
-  while (listed > 0 && !fits(kept, listed)) listed -= 1;
+  while (listed > 0 && blocksBytes(kept) + (lineEnds[kept + listed] ?? 0) - (lineEnds[kept] ?? 0) > FAIL_BODY_BYTES) {
+    listed -= 1;
+  }
 
   const header = headerLine(envelope, kept);
-  const keptBlocks = blocks.slice(0, kept).join("\n");
-  const footer = all.length > kept ? footerHead(all.length - kept) : "";
-  const room = FAIL_BYTE_CEILING - 1 - byteLength(`${header}\n`) - byteLength(footer);
-  const text =
+  const footer = footerOf(all.length - kept);
+  const keptBlocks = blocks.slice(0, kept).join("");
+  const room = FAIL_BODY_BYTES - byteLength(header) - byteLength(footer);
+  const rest =
     byteLength(keptBlocks) > room
       ? `${truncateBytes(keptBlocks, room)}${footer}`
       : `${keptBlocks}${footer}${lines.slice(kept, kept + listed).join("")}`;
-  return { header, text };
+  return { header, body: `${header}${rest}` };
 }
 
 export function formatEnvelope(

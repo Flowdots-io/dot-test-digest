@@ -222,6 +222,123 @@ describe("omitted-cluster footer", () => {
     expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
   });
 
+  it("Many omitted clusters do not take blocks away from the kept ones", () => {
+    const tscCluster = (n: number): FailureCluster =>
+      omissionCluster({
+        cluster_id: `c_${String(n).padStart(8, "0")}`,
+        error_kind: "TYPE_COMPILE_ERROR",
+        top_frame: `src/m${n}.ts:1:14`,
+        message: "TS2322: Type 'string' is not assignable to type 'number'.",
+        raw_log_lines: `L${n}-L${n}`,
+        signal_window: [
+          `  1 > export const v${n}: number = "text ${n}";`,
+          "  2 | export {};",
+          "  3 | // padding row ......................",
+        ].join("\n"),
+      });
+    const clusters = [1, 2, 3, 4, 5].map(tscCluster);
+    const omitted = Array.from({ length: 25 }, (_, i) => tscCluster(i + 6));
+    const out = formatEnvelope(failEnvelope(30, "/tmp/logs/run_e.log", clusters), "compact-md", { omitted });
+
+    const lines = out.split("\n");
+    expect(lines[0]).toBe("[FAIL] 30 failed, 0 passed in 10ms | 5 clusters | log: /tmp/logs/run_e.log");
+    expect(lines.filter((line) => line.startsWith("c_")).map((line) => line.slice(0, 10))).toEqual(
+      [1, 2, 3, 4, 5].map((n) => `c_${String(n).padStart(8, "0")}`),
+    );
+    const footerAt = lines.indexOf("+25 more clusters (see log)");
+    expect(footerAt).toBeGreaterThan(0);
+    const listed = lines.slice(footerAt + 1, -1);
+    const lineOf = (n: number): string =>
+      `  c_${String(n).padStart(8, "0")} TYPE_COMPILE_ERROR x1 src/m${n}.ts:1:14 TS2322: Type 'string' is not assignable to type 'number'.`;
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed).toEqual(Array.from({ length: listed.length }, (_, i) => lineOf(i + 6)));
+    const size = Buffer.byteLength(out, "utf8");
+    expect(size).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+    expect(listed.length).toBeLessThan(25);
+    expect(size + Buffer.byteLength(`${lineOf(listed.length + 6)}\n`, "utf8")).toBeGreaterThan(FAIL_BYTE_CEILING);
+  });
+
+  it("The more-clusters line survives a block that alone exceeds the limit", () => {
+    const big = omissionCluster({
+      cluster_id: "c_30000001",
+      top_frame: "tests/big.test.ts:5:1",
+      message: "AssertionError: expected values to be strictly deep-equal",
+      diff: { expected: "e".repeat(1200), received: "r".repeat(1200) },
+      sample_tests: ["big > huge diff"],
+    });
+    const omitted = [
+      omissionCluster({ cluster_id: "c_30000002", top_frame: "src/a.ts:1:1", sample_tests: ["big > second"] }),
+      omissionCluster({ cluster_id: "c_30000003", top_frame: "src/b.ts:2:2", sample_tests: ["big > third"] }),
+    ];
+    const out = formatEnvelope(failEnvelope(3, "/tmp/logs/run_f.log", [big]), "compact-md", { omitted });
+
+    const lines = out.split("\n");
+    expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+    expect(lines.at(-1)).toBe("");
+    expect(lines.at(-2)).toBe("+2 more clusters (see log)");
+    expect(lines.at(-3)?.endsWith("...")).toBe(true);
+  });
+
+  describe("A listing that fills the limit exactly is not cut mid-line", () => {
+    const longTest =
+      "cart > a test name that is deliberately long so that the omitted-cluster label has to be truncated at eighty bytes";
+    const omittedLine = (n: number): string =>
+      `  c_2000000${n.toString(16)} ASSERTION_FAILURE x1 src/features/module-${n}/handlers/very-long-handler-name.ts:120:40 cart > a test name that is deliberately long so that the omitted-cluster labe...`;
+    const omitted = Array.from({ length: 14 }, (_, i) =>
+      omissionCluster({
+        cluster_id: `c_2000000${(i + 1).toString(16)}`,
+        top_frame: `src/features/module-${i + 1}/handlers/very-long-handler-name.ts:120:40`,
+        sample_tests: [longTest],
+      }),
+    );
+    const only = omissionCluster({
+      cluster_id: "c_20000000",
+      top_frame: "src/cart.ts:3:10",
+      message: "AssertionError: expected 100 to be 900",
+      raw_log_lines: "L1-L4",
+    });
+    const headerOf = (logPath: string): string => `[FAIL] 15 failed, 0 passed in 10ms | 1 cluster | log: ${logPath}`;
+    const bodyOf = (logPath: string, listedCount: number): string =>
+      [
+        headerOf(logPath),
+        "c_20000000 ASSERTION_FAILURE x1 src/cart.ts:3:10",
+        "  AssertionError: expected 100 to be 900",
+        "  raw: L1-L4",
+        "+14 more clusters (see log)",
+        ...Array.from({ length: listedCount }, (_, i) => omittedLine(i + 1)),
+      ].join("\n");
+    const logPathFor = (listedCount: number, bytesBeforeNewline: number): string => {
+      const bare = Buffer.byteLength(bodyOf("/tmp/x.log", listedCount), "utf8");
+      return `/tmp/${"p".repeat(bytesBeforeNewline - bare)}x.log`;
+    };
+
+    it("the input of 'When the listing itself does not fit, the tail is only counted' lists the largest whole prefix", () => {
+      const logPath = "/tmp/logs/run_d.log";
+      const out = formatEnvelope(failEnvelope(15, logPath, [only]), "compact-md", { omitted });
+      const size = Buffer.byteLength(out, "utf8");
+      expect(size).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+      const lines = out.split("\n");
+      const listed = lines.slice(lines.indexOf("+14 more clusters (see log)") + 1, -1);
+      expect(listed).toEqual(Array.from({ length: listed.length }, (_, i) => omittedLine(i + 1)));
+      expect(listed.length).toBeLessThan(14);
+      expect(size + Buffer.byteLength(`${omittedLine(listed.length + 1)}\n`, "utf8")).toBeGreaterThan(FAIL_BYTE_CEILING);
+    });
+
+    it("twelve lines ending at 2,399 bytes before the newline are all listed, whole", () => {
+      const logPath = logPathFor(12, FAIL_BYTE_CEILING - 1);
+      const out = formatEnvelope(failEnvelope(15, logPath, [only]), "compact-md", { omitted });
+      expect(Buffer.byteLength(out, "utf8")).toBe(FAIL_BYTE_CEILING);
+      expect(out).toBe(`${bodyOf(logPath, 12)}\n`);
+    });
+
+    it("twelve lines that would end at 2,400 bytes before the newline list eleven whole lines instead of cutting the twelfth", () => {
+      const logPath = logPathFor(12, FAIL_BYTE_CEILING);
+      const out = formatEnvelope(failEnvelope(15, logPath, [only]), "compact-md", { omitted });
+      expect(Buffer.byteLength(out, "utf8")).toBeLessThanOrEqual(FAIL_BYTE_CEILING);
+      expect(out).toBe(`${bodyOf(logPath, 11)}\n`);
+    });
+  });
+
   it("Clusters beyond --max-clusters are listed instead of silently dropped (oversize block: the one kept block alone exceeds the ceiling)", () => {
     const huge = omissionCluster({
       cluster_id: "c_40000000",
@@ -275,12 +392,8 @@ describe("omitted-cluster footer at volume", () => {
     let expected = base;
     for (let n = 1; n <= COUNT; n += 1) {
       const next = `${expected}\n${omittedLine(n)}`;
-      if (Buffer.byteLength(next, "utf8") > FAIL_BYTE_CEILING) break;
+      if (Buffer.byteLength(next, "utf8") > FAIL_BYTE_CEILING - 1) break;
       expected = next;
-    }
-    const withoutNewline = FAIL_BYTE_CEILING - 1;
-    if (Buffer.byteLength(expected, "utf8") > withoutNewline) {
-      expected = `${expected.slice(0, withoutNewline - "...".length)}...`;
     }
 
     const envelope = failEnvelope(COUNT + 1, "/tmp/logs/run_e.log", [only]);
