@@ -444,6 +444,38 @@ describe("node --test, which printed line is a crashed file's error", () => {
       expect(cluster?.message).toBe(MISSING_EXPORT_MESSAGE);
     },
   );
+
+  eachReporter(
+    {
+      tap: "A startup crash is not blamed on another run's output (tap)",
+      spec: "A startup crash is not blamed on another run's output (spec)",
+    },
+    async (reporter) => {
+      const result = jsonOf(
+        await runInCart(
+          ["--no-jev", "--format=json", "--tdd-phase=red"],
+          [process.execPath, "wrap.mjs", reporter, "exitload.test.js", "logc.test.js"],
+          {
+            files: {
+              "wrap.mjs": ONE_RUN_PER_FILE,
+              "exitload.test.js": source("process.exit(1);"),
+              "logc.test.js": source(
+                'import test from "node:test";',
+                'console.log("TypeError: cfg.get is not a function (handled)");',
+                'test("x", () => {});',
+              ),
+            },
+          },
+        ),
+      );
+
+      expect(result.run.code).toBe(64);
+      expect(result.envelope.status).toBe("INVALID_RED");
+      const cluster = clusterOf(result.envelope, "exitload.test.js");
+      expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
+      expect(cluster?.message).toBe("test failed");
+    },
+  );
 });
 
 describe("node --test, a runtime error thrown at load keeps its error line", () => {
