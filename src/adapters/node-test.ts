@@ -75,11 +75,23 @@ function nameOnlyEntry(name: string, line: number): NodeEntry {
   };
 }
 
-/** A test that ran and threw a `SyntaxError` (say `JSON.parse(undefined)`) failed behaviourally: only a file that failed to load is a syntax fault. */
+const MODULE_LOADER_FRAME = "node:internal/modules/";
+
+/**
+ * A `SyntaxError` a test threw while it ran (`JSON.parse(undefined)`, `new Function("a b")`)
+ * is behavioural; one raised while node parsed a module has loader frames in its stack.
+ */
+function isRuntimeSyntaxError(entry: NodeEntry): boolean {
+  return (
+    /^SyntaxError\b/.test(entry.message) && !entry.stack.some((frame) => frame.includes(MODULE_LOADER_FRAME))
+  );
+}
+
 function errorKindOf(entry: NodeEntry): ErrorKind {
   if (entry.subprocessError !== undefined) return classifyMessage(entry.subprocessError);
   if (entry.crashedFile) return "SYNTAX_IMPORT_ERROR";
-  return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`.replaceAll("SyntaxError", ""));
+  if (isRuntimeSyntaxError(entry)) return "RUNTIME_EXCEPTION";
+  return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`);
 }
 
 function toRawFailure(entry: NodeEntry): RawFailure {
