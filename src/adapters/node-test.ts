@@ -111,11 +111,16 @@ function isRuntimeSyntaxError(entry: NodeEntry): boolean {
 }
 
 /** node could not read the test file at all, so no test ran: the runner's startup crash. */
-const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM|EISDIR)\b/;
+const FILE_READ_FAILURE = /^Error: (?:EACCES|EPERM)\b/;
+
+/** A read failure counts only when it names the crashed file itself: another file read at load is the test's own fault. */
+function isFileReadFailure(entry: NodeEntry, subprocessError: string): boolean {
+  return FILE_READ_FAILURE.test(subprocessError) && mentionsFile(subprocessError, entry.file ?? "");
+}
 
 function errorKindOf(entry: NodeEntry): ErrorKind {
   if (entry.subprocessError !== undefined) {
-    return FILE_READ_FAILURE.test(entry.subprocessError)
+    return isFileReadFailure(entry, entry.subprocessError)
       ? "SYNTAX_IMPORT_ERROR"
       : classifyMessage(entry.subprocessError);
   }
