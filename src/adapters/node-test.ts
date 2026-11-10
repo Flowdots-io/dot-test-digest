@@ -253,7 +253,7 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
     if (!text.startsWith("#")) break;
     comments.unshift(text.replace(/^#\s+/, ""));
   }
-  return firstErrorLine(lines.filter((line) => line.text.startsWith("#")).map((line) => line.text.replace(/^#\s+/, "")));
+  return crashBlockError(comments);
 }
 
 /** node prints the class of an error in `name:` except for a plain `Error`, which the spec reporter shows as `Error: <text>`. */
