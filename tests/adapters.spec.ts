@@ -5,7 +5,7 @@ import { describe, expect, it } from "vitest";
 import { ADAPTERS, classifyMessage, runGear0, selectAdapter, type AdapterResult } from "../src/adapters/index.js";
 import { jsTestAdapter } from "../src/adapters/js-test.js";
 import type { CapturedLine } from "../src/runner/capture.js";
-import { tempDir } from "./helpers/node-cart.js";
+import { nodeRunsWrapperSource, tempDir } from "./helpers/node-cart.js";
 
 function lines(text: string): CapturedLine[] {
   return text.split("\n").map((line, index) => ({
@@ -506,17 +506,12 @@ describe("node spec reporter at the adapter seam", () => {
       ].join("\n"),
     );
     fs.writeFileSync(
-      path.join(dir, "wrap.mjs"),
-      [
-        'import { spawnSync } from "node:child_process";',
-        "const [reporter, ...files] = process.argv.slice(2);",
-        "for (const f of files) spawnSync(process.execPath, ['--test', '--test-reporter=' + reporter, f], { stdio: 'inherit' });",
-        "",
-      ].join("\n"),
+      path.join(dir, "wrapper.js"),
+      nodeRunsWrapperSource("spec", ["twice.test.js", "twice.test.js"]),
     );
     const captured = path.join(dir, "stream.txt");
     const fd = fs.openSync(captured, "w");
-    spawnSync(process.execPath, ["wrap.mjs", "spec", "twice.test.js", "twice.test.js"], {
+    spawnSync(process.execPath, ["wrapper.js"], {
       cwd: dir,
       stdio: ["ignore", fd, fd],
     });
