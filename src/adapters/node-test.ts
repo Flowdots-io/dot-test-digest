@@ -74,15 +74,25 @@ function firstErrorLine(block: readonly string[]): string | undefined {
   return undefined;
 }
 
+function lastErrorLine(block: readonly string[]): string | undefined {
+  for (let index = block.length - 1; index >= 0; index -= 1) {
+    const error = errorLine(block[index] ?? "");
+    if (error !== undefined) return error;
+  }
+  return undefined;
+}
+
 /**
  * The error a crashed file printed: the first error line at or after the last line naming the file,
  * so a log line printed earlier does not stand in for it. A frame naming the file can come after
- * its error (`ReferenceError ... at file:///x.test.js:2:1`), so the first error line is the fallback.
+ * its error (`ReferenceError ... at file:///x.test.js:2:1`), so with none at or after the mention the
+ * last error line before it is the file's; with no mention at all, the first error line.
  */
 function fileError(lines: readonly string[], file: string): string | undefined {
-  let anchor = lines.length - 1;
-  while (anchor > 0 && !mentionsFile(lines[anchor] ?? "", file)) anchor -= 1;
-  return firstErrorLine(lines.slice(anchor)) ?? firstErrorLine(lines);
+  let mention = lines.length - 1;
+  while (mention >= 0 && !mentionsFile(lines[mention] ?? "", file)) mention -= 1;
+  if (mention < 0) return firstErrorLine(lines);
+  return firstErrorLine(lines.slice(mention)) ?? lastErrorLine(lines.slice(0, mention));
 }
 
 function nameOnlyEntry(name: string, line: number): NodeEntry {
