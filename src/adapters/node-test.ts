@@ -256,8 +256,30 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
   return crashBlockError(comments);
 }
 
-/** node prints the class of an error in `name:` except for a plain `Error`, which the spec reporter shows as `Error: <text>`. */
+/**
+ * node prints the class of an error in `name:` except for a plain `Error`, which the spec reporter shows as
+ * `Error: <text>`. Only an error a test or hook threw has a `stack:` key: a thrown string or number and a
+ * failed `t.plan` have none and keep their text.
+ */
 const THROWN_FAILURES: ReadonlySet<string> = new Set(["testCodeFailure", "hookFailed"]);
+
+function tapField(block: TapBlock, key: string): string[] {
+  return block.fields.get(key) ?? [];
+}
+
+function readTapMessage(block: TapBlock, crashedFile: boolean): string {
+  const field = (key: string): string[] => tapField(block, key);
+  const text = cleanNodeMessage(field("error").filter((line) => line !== ""));
+  const errorName = field("name").join(" ").trim();
+  if (errorName !== "") return text.startsWith(errorName) ? text : `${errorName}: ${text}`;
+  const isPlainError =
+    block.fields.has("stack") &&
+    !block.fields.has("name") &&
+    !crashedFile &&
+    THROWN_FAILURES.has(field("failureType")[0] ?? "");
+  if (!isPlainError) return text;
+  return text === "" ? "Error" : `Error: ${text}`;
+}
 
 function readTapEntry(
   lines: readonly CapturedLine[],
@@ -266,15 +288,9 @@ function readTapEntry(
   block: TapBlock,
 ): NodeEntry {
   const startLine = lines[index]?.line ?? 0;
-  const field = (key: string): string[] => block.fields.get(key) ?? [];
+  const field = (key: string): string[] => tapField(block, key);
   const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
-  const errorName = field("name").join(" ").trim();
-  let message = cleanNodeMessage(field("error").filter((text) => text !== ""));
-  if (errorName !== "" && !message.startsWith(errorName)) message = `${errorName}: ${message}`;
-  const isThrownError = block.fields.has("stack") && !block.fields.has("name") && !crashedFile;
-  if (isThrownError && THROWN_FAILURES.has(field("failureType")[0] ?? "")) {
-    message = message === "" ? "Error" : `Error: ${message}`;
-  }
+  const message = readTapMessage(block, crashedFile);
 
   const place = /^(.*?):(\d+)(?::\d+)?$/.exec(field("location")[0] ?? "");
   const file = place?.[1] ?? null;
