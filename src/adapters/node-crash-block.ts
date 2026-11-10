@@ -40,7 +40,7 @@ export function crashBlockError(lines: readonly string[]): string | undefined {
   const location =
     trailer < 0 ? -1 : lastIndexWhere(lines, (text) => CRASH_LOCATION.test(text) && errorLine(text) === undefined, trailer);
   if (location >= 0) return firstErrorLine(lines.slice(location, trailer));
-  return lines.find((text) => LATE_ERROR.test(text))?.trimEnd();
+  return undefined;
 }
 
 function realPathOf(file: string): string {
