@@ -622,6 +622,19 @@ describe("node --test, spec reporter parity with TAP", () => {
     expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
   });
 
+  it("An uncaught exception in a timer reads the same under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('t', async () => { setTimeout(() => { throw new Error('u'); }, 5); await new Promise((r) => setTimeout(r, 50)); });",
+    );
+    const { tap, spec } = await bothReporters("timer.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "t")?.message).toBe("Error: u");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
   it("A failed t.plan keeps its text under both reporters", async () => {
     const contents = source(
       "import test from 'node:test';",
