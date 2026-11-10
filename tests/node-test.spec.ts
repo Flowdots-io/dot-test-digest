@@ -101,6 +101,16 @@ function clusterOf(envelope: DigestEnvelope, test: string): FailureCluster | und
   return clustersOf(envelope).find((c) => c.sample_tests.includes(test));
 }
 
+/**
+ * Split in two so a failing run does not print the words "SyntaxError: ..." that the digest of this
+ * very test run would classify as an invalid red.
+ */
+function expectUnexpectedEnd(cluster: FailureCluster | undefined): void {
+  const prefix = "SyntaxError: ";
+  expect(cluster?.message.startsWith(prefix)).toBe(true);
+  expect(cluster?.message.slice(prefix.length)).toBe("Unexpected end of input");
+}
+
 function totalAffected(envelope: DigestEnvelope): number {
   return clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0);
 }
@@ -393,7 +403,7 @@ describe("node --test, which printed line is a crashed file's error", () => {
 
     const cluster = clusterOf(envelope, "syntax-error.test.js");
     expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expect(cluster?.message).toBe("SyntaxError: Unexpected end of input");
+    expectUnexpectedEnd(cluster);
   });
 
   it("A syntax error block with blank lines is attributed to its file", async () => {
@@ -401,7 +411,7 @@ describe("node --test, which printed line is a crashed file's error", () => {
 
     const cluster = clusterOf(envelope, "syntax-error.test.js");
     expect(cluster?.error_kind).toBe("SYNTAX_IMPORT_ERROR");
-    expect(cluster?.message).toBe("SyntaxError: Unexpected end of input");
+    expectUnexpectedEnd(cluster);
     expect(clusterOf(envelope, "missing-module.test.js")?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
   });
 
