@@ -883,6 +883,19 @@ describe("node --test, the same failure reads the same under both reporters", ()
     expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
   });
 
+  it("A failed t.plan keeps its text under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('planned', (t) => { t.plan(2); t.assert.ok(true); });",
+    );
+    const { tap, spec } = await bothReporters("planned.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "planned")?.message).toBe("plan expected 2 assertions but received 1");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
   it("A test name with a backslash is the same under both reporters", async () => {
     const contents = source(
       "import test from 'node:test';",
