@@ -1,27 +1,125 @@
 # dot-test-digest
 
-Bounded output compressor for test runs, compilers and build tools.
-Implements [`specs/SPEC-002-DOT-TEST-DIGEST.md`](specs/SPEC-002-DOT-TEST-DIGEST.md).
+**A wrapper that turns the noisy output of a test run, compiler or build into a short, bounded digest, and passes the child's exit code through unchanged.**
+
+You put `dot-test-digest [flags] --` in front of the command you already run. A passing run becomes one line. A failing run becomes a few deduplicated failure clusters, each with a pruned stack and the source lines around the failure, capped at about 600 tokens. The full raw output is always saved to a log file, so nothing is lost.
 
 ```bash
-dot-test-digest --tdd-phase=green -- vitest run
-dot-test-digest --format=json -- cargo build
-dot-test-digest --no-jev -- tsc --noEmit
+dot-test-digest -- vitest run                       # test run: one line on pass, clusters on failure
+dot-test-digest --no-jev -- tsc --noEmit            # compiler, fully offline
+dot-test-digest --format=json -- cargo build        # structured JSON for another program to read
+dot-test-digest --tdd-phase=red -- node --test      # check that a new test fails for the right reason
 ```
 
-- **Pass:** one line, at most 160 bytes (`[PASS | GREEN] 240 passed, 0 failed (delta: +3 newly passing, 0 regressions) in 640ms | log: …`).
-- **Fail:** deduplicated failure clusters with a pruned stack and an inlined source window, at most 600 tokens.
-- **Always:** the child's exit code (or `128 + signal`) is returned unchanged, and the full raw stream is kept in `~/.cache/dot-test-digest/logs/<run_id>.log`.
+Implements [`specs/SPEC-002-DOT-TEST-DIGEST.md`](specs/SPEC-002-DOT-TEST-DIGEST.md).
 
-Gear 1 (Jev `jev-1.13.0`) is used only for unstructured failures above 150 lines and needs `TYPESAFE_API_KEY`.
-Without it, the heuristic fallback still narrows the log.
+## What problem it solves
 
-**Privacy.** Gear 1 is the only part of the tool that uses the network. When `TYPESAFE_API_KEY` is set and `--no-jev`
-is not passed, it sends excerpts of the failing run's log (the failure windows and the tail, bounded in size) to
-`api.typesafe.ai`. Pass `--no-jev` to keep every run local. Without a key, nothing leaves your machine.
+A test run prints hundreds of lines (passing test names, banners, deprecation warnings, repeated stack traces through `node_modules`). Whoever reads that output, a person or an AI coding agent, pays for every line in time or in context window, and the one useful fact (which test failed, where, and why) is buried in it. One bug in a shared helper can also fail 50 tests and print the same stack 50 times.
 
-TDD state lives in `~/.cache/dot-test-digest/state-<scope_id>.json`; `--scope-id` isolates concurrent runs.
-`DOT_TEST_DIGEST_HOME` relocates both caches.
+`dot-test-digest` keeps the useful part and bounds the size:
+
+- **Pass:** one line, at most 160 bytes: `[PASS] 240 passed, 0 failed in 640ms | log: …` (with `--tdd-phase=green` it reads `[PASS | GREEN] … (delta: +3 newly passing, 0 regressions) …`).
+- **Fail:** failures with the same root cause are collapsed into one *cluster* (shown once, with a count and up to 3 sample test names). Each cluster has the error, a diff when there is one, a stack with the `node_modules` and runtime frames removed, and a source window around the failing line. The whole digest is at most 600 estimated tokens (2,400 bytes). Clusters that do not fit are listed one per line after `+N more clusters (see log)`, so nothing is dropped silently.
+- **Always:** the child's exit code (or `128 + signal`) is returned unchanged, and the complete raw stream is kept in `~/.cache/dot-test-digest/logs/<run_id>.log`. Every cluster has a `raw:` line range that points into that log.
+
+## When to use it
+
+Use it when:
+
+- an **AI coding agent** (or a CI log reader) runs your tests and you want it to see the failure, not 4,000 bytes of scaffolding around it;
+- one cause makes **many tests fail** and you want to see the cause once;
+- you work **test first** and want a tool to say whether a new test failed for the *right* reason (an assertion, not a typo in an import). See [the TDD gate](#the-tdd-gate);
+- you want **machine-readable** results from a runner that has no JSON reporter (`--format=json`).
+
+Do not expect much from it when:
+
+- the raw output is already short. The digest never prints more than the raw output plus its header line, but on a 5-line `tsc` run it saves nothing (see [the table below](#where-it-works-well-and-where-it-does-not));
+- the tool has no grammar here and prints no recognisable failure block. You still get the exit code and the log, with a heuristic tail instead of clusters;
+- you need every passing test name or every warning. The digest hides them on purpose (the log has them).
+
+## Install
+
+Needs Node >= 20 and [pnpm](https://pnpm.io). Clone, build, and put the `dot-test-digest` bin on your `PATH`:
+
+```bash
+git clone https://github.com/OctavioSardi/dot-test-digest && cd dot-test-digest
+pnpm install && pnpm build && pnpm link --global
+dot-test-digest --version
+```
+
+If `dot-test-digest` is not found afterwards, run `pnpm setup` and restart your shell: it puts pnpm's global bin directory on your `PATH`. After you pull new commits, run `pnpm build` again: the linked binary is `dist/index.js`, and it does not rebuild itself.
+
+## How to use it
+
+Put the flags before `--` and the command you would normally run after it. Everything after `--` is passed to the command untouched, and a missing `--` is a usage error (exit `64`).
+
+```bash
+dot-test-digest -- pnpm test                         # no flags: digest only
+dot-test-digest --no-jev -- pytest -q                # never touch the network
+dot-test-digest --max-clusters=10 -- vitest run      # show more clusters (1 to 15, default 5)
+dot-test-digest --context-lines=4 -- vitest run      # larger source window (0 to 5, default 2)
+dot-test-digest --format=json -- vitest run | jq .   # the full structured envelope
+```
+
+| Flag | Default | What it does |
+| --- | --- | --- |
+| `--tdd-phase <red\|green\|refactor\|none>` | `none` | Turns on the [TDD gate](#the-tdd-gate) and the newly-passing / regression counts. |
+| `--format <compact-md\|json>` | `compact-md` | `compact-md` is the bounded text digest. `json` is the complete structured document (not size-capped). |
+| `--max-clusters <1..15>` | `5` | How many clusters go into the envelope. In `compact-md` the rest are counted and listed, not hidden. |
+| `--context-lines <0..5>` | `2` | Lines above and below the failing line in each source window. |
+| `--scope-id <string>` | hash of the working directory | Names the TDD state file, so concurrent runs in different projects (or worktrees) do not share state. |
+| `--no-jev` | off | Never call the Jev API. Use this to keep every run local. |
+| `--retry-flakes` | off | Re-run once when Gear 1 is at least 80% sure the failure was a flake. |
+| `-h`, `--help` / `-v`, `--version` | | Print usage / version and exit `0`. |
+
+Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`).
+
+### What you get back
+
+The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed> failed in <time> | <n> clusters | log: <path>` (`[<STATUS> | <PHASE>]` when `--tdd-phase` is set; the cluster count appears only when there are clusters). The status is one of:
+
+| Status | Meaning |
+| --- | --- |
+| `PASS` | The command exited `0` (and, with `--tdd-phase`, the phase was satisfied). |
+| `FAIL` | The command failed and a grammar found failure clusters. |
+| `BUILD_ERROR` | The command failed but no grammar recognised the output (compile errors from an unknown tool, a crash). The digest shows a narrowed tail of the log. |
+| `VALID_RED` | `--tdd-phase=red` and the test failed for a behavioural reason. A *successful* gate run: exit `0`. |
+| `INVALID_RED` | `--tdd-phase=red` and the test passed, or failed for a non-behavioural reason (syntax error, broken import, runner crash). Exit `64`. |
+| `REGRESSION_DETECTED` | `--tdd-phase=refactor` and something that passed before now fails. |
+
+**Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase, or a usage error in the flags. A failure to write the log or the state file is reported on `stderr` and never changes the exit code.
+
+## The TDD gate
+
+`--tdd-phase` makes the tool check that a test-first loop is honest. State lives in `~/.cache/dot-test-digest/state-<scope_id>.json`.
+
+| Phase | When you run it | Result |
+| --- | --- | --- |
+| `red` | After writing a new test, before the code | `VALID_RED` (exit `0`) only if the test fails on a behavioural assertion or a missing export under test; the failing tests are recorded as the baseline. `INVALID_RED` (exit `64`) if it passes, or fails on a syntax error, an unresolved import or a runner startup crash. |
+| `green` | After writing the code | `PASS` when the command exits `0`, with the count of baseline tests that now pass. `FAIL` (the child's exit code) otherwise, with any re-broken baseline test listed as a regression. |
+| `refactor` | While restructuring | `PASS`, or `REGRESSION_DETECTED` with the newly broken tests. |
+| `none` | Everything else | Plain digest, no state. |
+
+This is what stops an agent (or a tired human) from calling a test "red" when it fails only because of a typo in its own import.
+
+## What it understands
+
+The digest picks a grammar from the shape of the output (no flag needed):
+
+| Output from | Grammar | Checked against real projects? |
+| --- | --- | --- |
+| vitest | `js-test` | Yes (see the example below) |
+| `node --test` (default, `tap` and `spec` reporters) | `js-test` | Yes, on Node 22.23.4 only |
+| `tsc` | `tsc-eslint` | Yes, small projects |
+| jest, Playwright, eslint | `js-test`, `tsc-eslint` | Fixtures only |
+| pytest | `python` | Fixtures only |
+| `cargo test`, `cargo build`, `go test` | `rust-go` | Fixtures only |
+| Anything else | Gear 1 / heuristic tail | No grammar: you get a narrowed log tail, status `BUILD_ERROR` |
+
+The three gears: **Gear 0** is the local grammars above (no network). **Gear 1** is optional: for an *unstructured* failure above 150 lines it asks Jev (`jev-1.13.0`) to pick the relevant windows of the log, and needs `TYPESAFE_API_KEY`. Without a key, or with `--no-jev`, it falls back to a local heuristic. See [Things to know](#where-it-works-well-and-where-it-does-not) for what was and was not measured.
+
+**Privacy.** Gear 1 is the only part of the tool that uses the network. When `TYPESAFE_API_KEY` is set and `--no-jev` is not passed, it sends excerpts of the failing run's log (the failure windows and the tail, bounded in size) to `api.typesafe.ai`. Pass `--no-jev` to keep every run local. Without a key, nothing leaves your machine.
 
 ## Example
 
@@ -170,7 +268,7 @@ The `node --test` labels are now the right ones for what I checked: with `--form
   The earlier measurements still hold: a `syntax-error.test.js` run next to `missing-module.test.js` under the spec reporter reads `SyntaxError: Unexpected end of input`. A stream with several node runs (a wrapper that runs `node --test` once per file) gives each crashed entry the block above its own `✖` row, so the same file crashing in two runs keeps each run's own error (checked at the adapter, on the real stream of `node wrap.mjs spec twice.test.js twice.test.js`: `TypeError: first run`, then `RangeError: second run`). This rule reads where node relays the subprocess's output (node's stdout on 22.23.4) and the layout of that version's reporters; I did not run other Node versions, and I did not run a wrapper that sends the subprocess's stderr somewhere else.
 - Two failing tests with the same name in one file are kept as two failures, and the test name carries the line it was declared on: `handles empty @4` and `handles empty @7` in a `node --test` run (default, tap and spec reporters all printed it). The suffix is added only when a name is shared by two or more failures of the same file, and it uses the line of the test, so the same name in different files stays plain. I only checked this with `node --test`.
 - The child process's exit code is passed through unchanged (observed in every run above).
-- Grammars for pytest, `cargo test`, `go test`, jest, mocha, Playwright and eslint exist and are covered by fixtures in this repo's tests, but **I did not run them against real projects**. Treat them as untested in practice.
+- Grammars for pytest, `cargo test`, `go test`, jest, Playwright and eslint exist and are covered by fixtures in this repo's tests, but **I did not run them against real projects**. Treat them as untested in practice.
 - Gear 1 (the optional Jev call) was not exercised: every measurement used `--no-jev`.
 
 **How these were measured.** Each project was copied to a fresh temporary directory (the vitest and tsc copies use this repo's `node_modules`), then each command was run twice with stdout and stderr redirected to a file, so vitest ran non-TTY: once raw and once through the digest, with `DOT_TEST_DIGEST_HOME` pointing at a temporary directory. Lines and bytes are `wc -l` and `wc -c`. Commands, with `D` standing for `node dist/index.js --no-jev`:
@@ -188,18 +286,6 @@ D --tdd-phase=red --scope-id <id> -- <the same commands>   # red-phase table; mi
 The many-omitted-clusters bullet was measured on 2026-11-10 from three throwaway builds (worktrees at `4f540a8`, `2e2613a` and `c240b9b`, each built with `npx tsc -p . --outDir dist`), on a project of 30 files `src/m1.ts` ... `src/m30.ts` (`export const vN: number = "text N";`) with the `tsconfig.json` of `tests/fixtures/tsc-small/`, command `D --max-clusters=5 -- npx tsc --noEmit`. The unreadable-file and crashed-file rows ran in a copy of `tests/fixtures/node-cart/` with `noread.test.js` (`import test from "node:test"; test("x", () => {});`, mode `000`) added. The crash-block table ran on 2026-11-10 from two throwaway builds (the base `9cae136` and this branch, each built with `npx tsc -p . --outDir dist`), in copies of the same fixture with `helper.js`, `deep.test.js`, `throw42.test.js`, `exitload.test.js`, `logc.test.js`, `cfg.test.js` and `cfg.test.json` (mode `000`, run as a user who is not root) added, as `node dist/index.js --no-jev --format=json --tdd-phase=red -- node --test [--test-reporter=spec] <files>`.
 
 For the red-phase table's vitest missing-module case, a one-test project imported `../src/nope`, which does not exist. The all-passing vitest row is the cart fixture with the two bugs fixed.
-
-## Install
-
-Needs Node >= 20 and [pnpm](https://pnpm.io). Clone, build, and put the `dot-test-digest` bin on your `PATH`:
-
-```bash
-git clone https://github.com/OctavioSardi/dot-test-digest && cd dot-test-digest
-pnpm install && pnpm build && pnpm link --global
-dot-test-digest --version
-```
-
-If `dot-test-digest` is not found afterwards, run `pnpm setup` and restart your shell: it puts pnpm's global bin directory on your `PATH`.
 
 ## Develop
 
