@@ -27,7 +27,7 @@ When the failing-tests section reports a whole test file (`✖ <file> (<duration
 - **THEN** the cluster with `sample_tests` `["syntax-error.test.js"]` has `error_kind` `SYNTAX_IMPORT_ERROR` and message `SyntaxError: Unexpected end of input` (before this change: `test failed`)
 
 #### Scenario: A startup crash is not blamed on another run's output
-- **GIVEN** the same working directory and `wrap.mjs`, a file `exitload.test.js` (`process.exit(1);`) and `logc.test.js` (`import test from "node:test";` / `console.log("TypeError: cfg.get is not a function (handled)");` / `test("x", () => {});`)
+- **GIVEN** the same working directory and the generated wrapper script, a file `exitload.test.js` (`process.exit(1);`) and `logc.test.js` (`import test from "node:test";` / `console.log("TypeError: cfg.get is not a function (handled)");` / `test("x", () => {});`)
 - **WHEN** `dot-test-digest --no-jev --format=json --tdd-phase=red -- <wrapper> spec exitload.test.js logc.test.js` runs, and the same with `tap`
 - **THEN** under each reporter the exit code is `64`, `status` is `"INVALID_RED"` and the cluster with `sample_tests` `["exitload.test.js"]` has `error_kind` `SYNTAX_IMPORT_ERROR` and message `test failed` (before this change under the spec reporter: `VALID_RED`, exit `0`, the `TypeError` of the other run)
 
@@ -37,7 +37,7 @@ When the failing-tests section reports a whole test file (`✖ <file> (<duration
 - **THEN** under each reporter the exit code is `0`, `status` is `"VALID_RED"`, and the cluster with `sample_tests` `["missing-export.test.js"]` has `error_kind` `RUNTIME_EXCEPTION` and message `SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'` (before this change under the spec reporter: `INVALID_RED`, exit `64`, message `test failed`)
 
 #### Scenario: The same file crashing in two runs keeps each run's own error
-- **GIVEN** the same working directory, `wrap.mjs`, and `twice.test.js`: `import fs from "node:fs";` / `const marker = new URL("./twice.marker", import.meta.url);` / `if (fs.existsSync(marker)) { throw new RangeError("second run"); }` / `fs.writeFileSync(marker, "x");` / `throw new TypeError("first run");`
+- **GIVEN** the same working directory, the generated wrapper script, and `twice.test.js`: `import fs from "node:fs";` / `const marker = new URL("./twice.marker", import.meta.url);` / `if (fs.existsSync(marker)) { throw new RangeError("second run"); }` / `fs.writeFileSync(marker, "x");` / `throw new TypeError("first run");`
 - **WHEN** the adapter parses the output of `<wrapper> spec twice.test.js twice.test.js` (two runs, each with a crash block directly above its own `✖ twice.test.js` row)
 - **THEN** it returns two failures for `twice.test.js` (the adapter's same-name suffix names them `twice.test.js @<n>`), whose messages are `TypeError: first run` and `RangeError: second run` in that order (before this change both read `TypeError: first run`)
 

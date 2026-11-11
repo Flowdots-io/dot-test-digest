@@ -16,12 +16,12 @@ Two lanes share no file and run in parallel; each is serial inside itself. Secti
 - [x] 1.2 The same rule under the spec reporter, position first, multi-run streams
   - scenarios: "A syntax error block with blank lines is attributed to its file", "A crashed file in a later run of a multi-run stream keeps its error"
   - blocked-by: 1.1
-  - Lines between the previous tree row and the file's own `✖ <file>` row; fall back to the path rule and the lone rule over every line outside all failing-tests sections.
+  - Lines between the previous tree row and the file's own `✖ <file>` row. (Superseded by 4.1: no fallbacks; the crash-block rule applies.)
 
 - [x] 1.3 Unreadable test file is invalid red (amended: EACCES/EPERM naming the test file's quoted path, no EISDIR)
   - scenarios: "An unreadable test file is INVALID_RED with exit 64", "An unreadable test file is INVALID_RED with exit 64 under the spec reporter"
   - blocked-by: 1.2
-  - `errorKindOf`: a crashed file whose subprocess error starts `Error: EACCES|EPERM|EISDIR` is `SYNTAX_IMPORT_ERROR`. Tests skip when `process.getuid?.() === 0`.
+  - `errorKindOf`: a crashed file whose subprocess error starts `Error: EACCES|EPERM` and names the test file's quoted path is `SYNTAX_IMPORT_ERROR` (EISDIR dropped). Tests skip when `process.getuid?.() === 0`.
 
 - [x] 1.4 Reporter parity details
   - scenarios: "Plain errors and hook errors read as Error under both reporters", "A test name with a backslash is the same under both reporters", "A backtick string diff equals the TAP diff"
