@@ -295,6 +295,8 @@ pnpm verify     # typecheck + unit tests
 pnpm build      # emits dist/ with the dot-test-digest bin
 ```
 
+To prove a change on the real binary (not just the unit tests), use the verification skill: `.claude/skills/verify/verify.sh launch | doctor | drive | cleanup`. It builds the current commit into a scratch directory, runs it against copies of the fixtures with an isolated cache, and keeps the evidence. The journeys it should cover are in [`.dotstack/features/`](.dotstack/features/README.md).
+
 ## License
 
 [MIT](LICENSE) © 2026 Octavio Sardi and Flowdots.
