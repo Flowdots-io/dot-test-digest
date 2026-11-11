@@ -1,5 +1,5 @@
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import type { ErrorKind } from "../types/schema.js";
@@ -10,6 +10,7 @@ import {
   type AdapterResult,
 } from "./common.js";
 import { parseGeneric } from "./js-generic.js";
+import { fileErrorAbove, isFileReadFailure } from "./node-crash-block.js";
 
 interface NodeEntry {
   name: string;
@@ -25,7 +26,6 @@ interface NodeEntry {
   endLine: number;
 }
 
-const NODE_ERROR_LINE = /^([A-Za-z]*Error)(?: \[[^\]]+\])?: (.*\S)\s*$/;
 const FILE_URL = /file:\/\/[^\s()]*/g;
 const UNKNOWN_FAILURE = "Unknown test failure";
 
@@ -57,11 +57,6 @@ function cleanNodeMessage(parts: readonly string[]): string {
     .trim();
 }
 
-function errorLine(text: string): string | undefined {
-  const match = NODE_ERROR_LINE.exec(text);
-  return match === null ? undefined : `${match[1] ?? ""}: ${match[2] ?? ""}`;
-}
-
 function nameOnlyEntry(name: string, line: number): NodeEntry {
   return {
     name,
@@ -88,8 +83,11 @@ function isRuntimeSyntaxError(entry: NodeEntry): boolean {
 }
 
 function errorKindOf(entry: NodeEntry): ErrorKind {
-  if (entry.subprocessError !== undefined) return classifyMessage(entry.subprocessError);
-  if (entry.crashedFile) return "SYNTAX_IMPORT_ERROR";
+  if (entry.crashedFile) {
+    return entry.subprocessError === undefined || isFileReadFailure(entry.subprocessError, entry.file)
+      ? "SYNTAX_IMPORT_ERROR"
+      : classifyMessage(entry.subprocessError);
+  }
   if (isRuntimeSyntaxError(entry)) return "RUNTIME_EXCEPTION";
   return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`);
 }
@@ -134,7 +132,7 @@ function finish(entries: NodeEntry[], foreign: RawFailure[], counts: AdapterCoun
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
 
-/** node escapes a `#` inside a TAP test name as `\#`, so an unescaped ` # TODO` / ` # SKIP` is a directive. */
+/** node escapes a `#` as `\#` and a backslash as `\\` in a TAP test name, so an unescaped ` # TODO` / ` # SKIP` is a directive. */
 const TAP_NOT_OK = /^(\s*)not ok\s+\d+\s*(?:-\s*)?(.*?)(\s+#\s*(?:TODO|SKIP)\b.*)?\s*$/;
 const COUNT_KEYS = "tests|pass|fail|cancelled|skipped|todo";
 const TAP_COUNT = new RegExp(`^#\\s+(${COUNT_KEYS})\\s+(\\d+)\\s*$`);
@@ -210,9 +208,27 @@ function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number)
   for (let index = subtest - 1; index >= 0; index -= 1) {
     const text = lines[index]?.text ?? "";
     if (!text.startsWith("#")) break;
-    comments.unshift(text.replace(/^#\s+/, ""));
+    comments.unshift(text.replace(/^# ?/, ""));
   }
-  return firstErrorLine(comments);
+  return fileErrorAbove(comments);
+}
+
+type TapField = (key: string) => string[];
+
+const THROWN_FAILURES: ReadonlySet<string> = new Set(["testCodeFailure", "hookFailed", "uncaughtException"]);
+
+/**
+ * node prints the class of an error in `name:` except for a plain `Error`, which the spec reporter shows as
+ * `Error: <text>`. Only an error a test or hook threw has a `stack:` key: a thrown string or number and a
+ * failed `t.plan` have none and keep their text.
+ */
+function readTapMessage(block: TapBlock, field: TapField): string {
+  const text = cleanNodeMessage(field("error").filter((line) => line !== ""));
+  const errorName = field("name").join(" ").trim();
+  if (errorName !== "") return text.startsWith(errorName) ? text : `${errorName}: ${text}`;
+  const isPlainError = block.fields.has("stack") && THROWN_FAILURES.has(field("failureType")[0] ?? "");
+  if (!isPlainError) return text;
+  return text === "" ? "Error" : `Error: ${text}`;
 }
 
 function readTapEntry(
@@ -222,19 +238,18 @@ function readTapEntry(
   block: TapBlock,
 ): NodeEntry {
   const startLine = lines[index]?.line ?? 0;
-  const field = (key: string): string[] => block.fields.get(key) ?? [];
-  const errorName = field("name").join(" ").trim();
-  let message = cleanNodeMessage(field("error").filter((text) => text !== ""));
-  if (errorName !== "" && !message.startsWith(errorName)) message = `${errorName}: ${message}`;
+  const field: TapField = (key) => block.fields.get(key) ?? [];
+  const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
+  const message = readTapMessage(block, field);
 
   const place = /^(.*?):(\d+)(?::\d+)?$/.exec(field("location")[0] ?? "");
+  const file = place?.[1] ?? null;
   const expected = field("expected");
   const actual = field("actual");
-  const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
   const subprocessError = crashedFile ? tapSubprocessError(lines, index) : undefined;
   return {
     name,
-    file: place?.[1] ?? null,
+    file,
     line: place?.[2],
     message,
     ...(expected.length > 0 && actual.length > 0
@@ -274,7 +289,7 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
   for (let index = 0; index < lines.length; index += 1) {
     const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
     if (notOk === null) continue;
-    const name = (notOk[2] ?? "").replaceAll("\\#", "#");
+    const name = (notOk[2] ?? "").replace(/\\([\\#])/g, "$1");
     const isDirective = notOk[3] !== undefined;
     const block = readTapBlock(lines, index);
     if (!isDirective) {
@@ -300,7 +315,8 @@ const SPEC_ROW_TAIL = String.raw`(?: \(\d+(?:\.\d+)?ms\)( #(?: .*)?)?)?\s*$`;
 const SPEC_NAME_ROW = new RegExp(`^✖ (.*?)${SPEC_ROW_TAIL}`);
 const SPEC_TREE_ROW = new RegExp(`^(\\s*)([✖▶]) (.*?)${SPEC_ROW_TAIL}`);
 const SPEC_ENTRY_INDENT = 2;
-const SPEC_ROW_START = /^\s*[✔✖▶﹣ℹ]/;
+const SPEC_TEST_ROW_START = /^\s*[✔✖▶﹣]/;
+const SPEC_DIAGNOSTIC_PREFIX = /^ℹ /;
 
 export function isSpecStream(lines: readonly CapturedLine[]): boolean {
   const keys = new Set<string>();
@@ -312,7 +328,7 @@ export function isSpecStream(lines: readonly CapturedLine[]): boolean {
 }
 
 function inspectedString(value: string): string {
-  return unquote(value, "'\"", (inner, quote) => (inner.includes(quote) ? undefined : inner));
+  return unquote(value, "'\"`", (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
 function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
@@ -386,41 +402,41 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
   return entries;
 }
 
-function textBlocks(lines: readonly CapturedLine[]): string[][] {
-  const blocks: string[][] = [];
-  let current: string[] = [];
-  for (const line of lines) {
-    if (line.text.trim() === "" || SPEC_ROW_START.test(line.text)) {
-      if (current.length > 0) blocks.push(current);
-      current = [];
-    } else {
-      current.push(line.text);
-    }
-  }
-  if (current.length > 0) blocks.push(current);
-  return blocks;
+/**
+ * The rows of node's own `✖ <name>` lines per name, in stream order. The `✖ <name>` row directly under a
+ * `test at` line belongs to the failing-tests section, not to the file, and is skipped.
+ */
+function ownFileRows(lines: readonly CapturedLine[]): Map<string, number[]> {
+  const rows = new Map<string, number[]>();
+  lines.forEach((line, index) => {
+    const name = SPEC_NAME_ROW.exec(line.text)?.[1];
+    if (name === undefined || SPEC_TEST_AT.test(lines[index - 1]?.text ?? "")) return;
+    rows.set(name, [...(rows.get(name) ?? []), index]);
+  });
+  return rows;
 }
 
-function firstErrorLine(block: readonly string[]): string | undefined {
-  for (const text of block) {
-    const error = errorLine(text);
-    if (error !== undefined) return error;
-  }
-  return undefined;
+/**
+ * The lines node printed between the previous test row and `row`. A `ℹ` row (node's diagnostics and its
+ * summary lines) is not a test row: it belongs to these lines, with the `ℹ ` dropped.
+ */
+function linesAbove(lines: readonly CapturedLine[], row: number): string[] {
+  let previous = row - 1;
+  while (previous >= 0 && !SPEC_TEST_ROW_START.test(lines[previous]?.text ?? "")) previous -= 1;
+  return lines.slice(previous + 1, row).map((line) => line.text.replace(SPEC_DIAGNOSTIC_PREFIX, ""));
 }
 
-/** node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above the `✖ failing tests:` section. */
-function adoptSubprocessErrors(before: readonly CapturedLine[], entries: NodeEntry[]): void {
+/**
+ * node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above that file's own
+ * `✖` row. The n-th crashed entry of a name takes the n-th such row of that name (one stream can hold several runs).
+ */
+function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntry[]): void {
   const crashed = entries.filter((entry) => entry.crashedFile);
   if (crashed.length === 0) return;
-  const blocks = textBlocks(before);
+  const rows = ownFileRows(lines);
   for (const entry of crashed) {
-    const absolute = entry.file ?? "";
-    const mentions = (block: readonly string[]): boolean =>
-      block.some((text) => text.includes(absolute) || text.includes(pathToFileURL(absolute).href));
-    const error =
-      firstErrorLine(blocks.find((block) => mentions(block) && firstErrorLine(block) !== undefined) ?? []) ??
-      (crashed.length === 1 ? firstErrorLine(blocks.flat()) : undefined);
+    const row = rows.get(entry.name)?.shift();
+    const error = row === undefined ? undefined : fileErrorAbove(linesAbove(lines, row));
     if (error !== undefined) entry.subprocessError = error;
   }
 }
@@ -439,6 +455,6 @@ export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
     const entry = readSpecEntry(lines, start, starts[position + 1] ?? lines.length);
     if (entry !== null) entries.push(entry);
   });
-  adoptSubprocessErrors(lines.slice(0, section), entries);
+  adoptSubprocessErrors(lines, entries);
   return finish(entries, [], counts);
 }

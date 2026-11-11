@@ -151,11 +151,8 @@ function byteLength(text: string): number {
   return Buffer.byteLength(text, "utf8");
 }
 
-function byteSums(texts: readonly string[]): number[] {
-  const sums = [0];
-  for (const text of texts) sums.push((sums.at(-1) ?? 0) + byteLength(text));
-  return sums;
-}
+/** The digest, without its final newline, is at most this many bytes: 2,400 with the newline and 600 EstimatedTokens. */
+const FAIL_BODY_BYTES = Math.min(FAIL_BYTE_CEILING, MAX_FAIL_TOKENS * BYTES_PER_TOKEN) - 1;
 
 function renderFailBody(
   envelope: DigestEnvelope,
@@ -163,50 +160,43 @@ function renderFailBody(
   rawText: string | undefined,
 ): string {
   for (const renderBlock of rawText === undefined ? LADDER.slice(0, 1) : LADDER) {
-    const { header, text } = renderLevel(envelope, omitted, renderBlock);
-    const bounded = truncateBytes(`${header}\n${text}`, FAIL_BYTE_CEILING - 1);
+    const { header, body } = renderLevel(envelope, omitted, renderBlock);
+    const bounded = truncateBytes(body, FAIL_BODY_BYTES);
     if (rawText === undefined || byteLength(bounded) <= byteLength(rawText) + byteLength(header)) return bounded;
   }
   const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText}`;
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
-/** INV-2's ceiling cuts the tail of the listing first, then the blocks: the `+N more clusters` line is never the part cut. */
+/**
+ * The limit decides the full blocks first, with the `+N more clusters (see log)` line reserved, then fills what is
+ * left with whole listed lines, so the footer is never the part cut and a long listing never takes blocks away.
+ */
 function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   renderBlock: (cluster: FailureCluster) => string,
-): { header: string; text: string } {
+): { header: string; body: string } {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
-  const blocks = clusters.map(renderBlock);
-  const lines = all.map((c) => `\n${renderOmittedLine(c)}`);
-  const footerHead = (count: number): string => `\n+${count} more clusters (see log)`;
+  const blocks = clusters.map((cluster) => `\n${renderBlock(cluster)}`);
+  const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
-  const blockEnds = byteSums(blocks);
-  const lineEnds = byteSums(lines);
-  const fits = (kept: number, listed: number): boolean => {
-    const count = all.length - kept;
-    const footer = count > 0 ? byteLength(footerHead(count)) + (lineEnds[kept + listed] ?? 0) - (lineEnds[kept] ?? 0) : 0;
-    const bytes =
-      byteLength(headerLine(envelope, kept)) + 1 + (blockEnds[kept] ?? 0) + Math.max(0, kept - 1) + footer;
-    return Math.ceil(bytes / BYTES_PER_TOKEN) <= MAX_FAIL_TOKENS;
-  };
-
+  const fixedBytes = (kept: number): number =>
+    byteLength(headerLine(envelope, kept) + footerOf(all.length - kept));
   let kept = clusters.length;
-  while (kept > 1 && !fits(kept, all.length - kept)) kept -= 1;
-  let listed = all.length - kept;
-  while (listed > 0 && !fits(kept, listed)) listed -= 1;
+  while (kept > 1 && fixedBytes(kept) + byteLength(blocks.slice(0, kept).join("")) > FAIL_BODY_BYTES) kept -= 1;
 
   const header = headerLine(envelope, kept);
-  const keptBlocks = blocks.slice(0, kept).join("\n");
-  const footer = all.length > kept ? footerHead(all.length - kept) : "";
-  const room = FAIL_BYTE_CEILING - 1 - byteLength(`${header}\n`) - byteLength(footer);
-  const text =
-    byteLength(keptBlocks) > room
-      ? `${truncateBytes(keptBlocks, room)}${footer}`
-      : `${keptBlocks}${footer}${lines.slice(kept, kept + listed).join("")}`;
-  return { header, text };
+  const footer = footerOf(all.length - kept);
+  const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(header + footer));
+  let body = `${header}${keptBlocks}${footer}`;
+  for (const cluster of all.slice(kept)) {
+    const line = `\n${renderOmittedLine(cluster)}`;
+    if (byteLength(body) + byteLength(line) > FAIL_BODY_BYTES) break;
+    body += line;
+  }
+  return { header, body };
 }
 
 export function formatEnvelope(

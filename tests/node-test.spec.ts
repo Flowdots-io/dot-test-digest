@@ -3,53 +3,34 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import type { DigestEnvelope, FailureCluster } from "../src/types/schema.js";
 import { clustersOf } from "./helpers/digest.js";
-import { runInCart, runNodeCart, type CartArgs, type CartOptions, type CartRun } from "./helpers/node-cart.js";
+import {
+  MISSING_EXPORT_MESSAGE,
+  MODULE_NOT_FOUND,
+  RED,
+  REPORTERS,
+  SPEC,
+  clusterOf,
+  eachReporter,
+  jsonOf,
+  nodeRunsWrapper,
+  reporterFlag,
+  runInCart,
+  runJson,
+  runNodeCart,
+  source,
+  type CartArgs,
+  type CartOptions,
+  type JsonRun,
+  type Reporter,
+} from "./helpers/node-cart.js";
 
 const SYNTAX_MESSAGE =
   "Test failed due to syntax or unresolved module import rather than a behavioral assertion.";
 const PASSED_MESSAGE = "New test passed before implementation; expected a failing behavioral assertion.";
-const MODULE_NOT_FOUND = "Error: Cannot find module '";
-const MISSING_EXPORT_MESSAGE =
-  "SyntaxError: The requested module './cart.js' does not provide an export named 'applyCoupon'";
-const SPEC = "--test-reporter=spec";
-
-type Reporter = "tap" | "spec";
-const REPORTERS: readonly Reporter[] = ["tap", "spec"];
-
-/** TAP is node's default when its stdout is a pipe. */
-function reporterFlag(reporter: Reporter): string[] {
-  return reporter === "spec" ? [SPEC] : [];
-}
-
-/** One test per reporter from one body; `titles` keeps each reporter's own title. */
-function eachReporter(titles: Readonly<Record<Reporter, string>>, body: (reporter: Reporter) => Promise<void>): void {
-  for (const reporter of REPORTERS) it(titles[reporter], () => body(reporter));
-}
-
-function source(...lines: string[]): string {
-  return `${lines.join("\n")}\n`;
-}
 
 function baselineOf(home: string, scope: string): string[] {
   const raw = fs.readFileSync(path.join(home, `state-${scope}.json`), "utf8");
   return (JSON.parse(raw) as { baseline: string[] }).baseline;
-}
-
-interface JsonRun {
-  run: CartRun;
-  envelope: DigestEnvelope;
-}
-
-function jsonOf(run: CartRun): JsonRun {
-  return { run, envelope: JSON.parse(run.stdout) as DigestEnvelope };
-}
-
-async function runJson(
-  args: CartArgs,
-  options: CartOptions & { flags?: readonly string[] } = {},
-): Promise<JsonRun> {
-  const { flags = [], ...cart } = options;
-  return jsonOf(await runNodeCart(["--no-jev", "--format=json", ...flags], args, cart));
 }
 
 function digestOf(reporter: Reporter, file: string, contents?: string, flags: readonly string[] = []): Promise<JsonRun> {
@@ -59,28 +40,6 @@ function digestOf(reporter: Reporter, file: string, contents?: string, flags: re
 
 async function bothReporters(file: string, contents?: string): Promise<Record<Reporter, JsonRun>> {
   return { tap: await digestOf("tap", file, contents), spec: await digestOf("spec", file, contents) };
-}
-
-/** Two node runs in one stream, each printing its own summary. */
-async function nodeRunsWrapper(
-  reporter: Reporter,
-  tests: Readonly<Record<string, string>>,
-  options: { flags?: readonly string[]; epilogue?: string } = {},
-): Promise<JsonRun> {
-  const wrapper = source(
-    "import { spawnSync } from 'node:child_process';",
-    "let status = 0;",
-    `for (const file of ${JSON.stringify(Object.keys(tests))}) {`,
-    `  const run = spawnSync(process.execPath, ['--test', '--test-reporter=${reporter}', file], { stdio: 'inherit' });`,
-    "  status = status || (run.status ?? 1);",
-    "}",
-    ...(options.epilogue === undefined ? [] : [options.epilogue]),
-    "process.exit(status);",
-  );
-  const flags = ["--no-jev", "--format=json", ...(options.flags ?? [])];
-  return jsonOf(
-    await runInCart(flags, [process.execPath, "wrapper.js"], { files: { "wrapper.js": wrapper, ...tests } }),
-  );
 }
 
 function expectOneLine(stdout: string, prefix: string): void {
@@ -97,12 +56,14 @@ function expectSyntaxFault({ run, envelope }: JsonRun): void {
   expect(run.stderr).toContain(SYNTAX_MESSAGE);
 }
 
-function clusterOf(envelope: DigestEnvelope, test: string): FailureCluster | undefined {
-  return clustersOf(envelope).find((c) => c.sample_tests.includes(test));
-}
-
 function totalAffected(envelope: DigestEnvelope): number {
   return clustersOf(envelope).reduce((sum, c) => sum + c.affected_count, 0);
+}
+
+function clusterIds(envelope: DigestEnvelope): string[] {
+  return clustersOf(envelope)
+    .map((c) => c.cluster_id)
+    .sort();
 }
 
 const CART_BASELINE = [
@@ -216,7 +177,7 @@ describe("node --test, TAP diagnostic blocks", () => {
   });
 });
 
-describe("node --test, nested suite and timeout", () => {
+describe("node --test, nested suites, same-named tests and file-level failures", () => {
   eachReporter(
     {
       tap: "Nested suite with a deep-equal failure and a timeout",
@@ -249,9 +210,7 @@ describe("node --test, nested suite and timeout", () => {
       expect(slow?.signal_window).toBe("");
     },
   );
-});
 
-describe("node --test, same-named failures", () => {
   eachReporter(
     {
       tap: "Two same-named failing tests in one file stay two failures under TAP",
@@ -292,7 +251,7 @@ describe("node --test, same-named failures", () => {
       ]);
 
       const red = await runNodeCart(
-        ["--no-jev", "--tdd-phase=red", `--scope-id=same-${reporter}`],
+        ["--no-jev", ...RED, `--scope-id=same-${reporter}`],
         [...reporterFlag(reporter), "same-name.test.js"],
       );
       expect(red.code).toBe(0);
@@ -302,9 +261,7 @@ describe("node --test, same-named failures", () => {
       ]);
     },
   );
-});
 
-describe("node --test, file-level failures", () => {
   eachReporter(
     {
       tap: "A missing module is one SYNTAX_IMPORT_ERROR failure",
@@ -363,7 +320,7 @@ describe("node --test, file-level failures", () => {
       expect(exportCluster?.error_kind).toBe("RUNTIME_EXCEPTION");
       expect(exportCluster?.message).toBe(MISSING_EXPORT_MESSAGE);
 
-      const red = await runNodeCart(["--no-jev", "--tdd-phase=red"], files);
+      const red = await runNodeCart(["--no-jev", ...RED], files);
       expect(red.code).toBe(64);
       expect(red.stdout).toContain("INVALID_RED");
       expect(red.stdout).toContain("SYNTAX_IMPORT_ERROR");
@@ -371,7 +328,7 @@ describe("node --test, file-level failures", () => {
   );
 });
 
-describe("node --test, red-phase guards", () => {
+describe("node --test, red-phase guards and exit-code transparency", () => {
   eachReporter(
     {
       tap: "Assertion failures are VALID_RED with exit 0 and the baseline holds canonical ids",
@@ -379,7 +336,7 @@ describe("node --test, red-phase guards", () => {
     },
     async (reporter) => {
       const run = await runNodeCart(
-        ["--no-jev", "--tdd-phase=red", `--scope-id=${reporter}-red`],
+        ["--no-jev", ...RED, `--scope-id=${reporter}-red`],
         [...reporterFlag(reporter), "cart.test.js"],
       );
 
@@ -395,7 +352,7 @@ describe("node --test, red-phase guards", () => {
       spec: "A missing module is INVALID_RED with exit 64 and the syntax message",
     },
     async (reporter) => {
-      const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [...reporterFlag(reporter), "missing-module.test.js"]);
+      const run = await runNodeCart(["--no-jev", ...RED], [...reporterFlag(reporter), "missing-module.test.js"]);
 
       expect(run.code).toBe(64);
       expect(run.stdout).toContain("INVALID_RED");
@@ -410,7 +367,7 @@ describe("node --test, red-phase guards", () => {
       spec: "A missing export is VALID_RED with exit 0 under the spec reporter",
     },
     async (reporter) => {
-      const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [...reporterFlag(reporter), "missing-export.test.js"]);
+      const run = await runNodeCart(["--no-jev", ...RED], [...reporterFlag(reporter), "missing-export.test.js"]);
 
       expect(run.code).toBe(0);
       expect(run.stdout.startsWith("[VALID_RED | RED]")).toBe(true);
@@ -423,7 +380,7 @@ describe("node --test, red-phase guards", () => {
       spec: "A test that already passes is INVALID_RED with exit 64 under the spec reporter",
     },
     async (reporter) => {
-      const run = await runNodeCart(["--no-jev", "--tdd-phase=red"], [...reporterFlag(reporter), "passing.test.js"]);
+      const run = await runNodeCart(["--no-jev", ...RED], [...reporterFlag(reporter), "passing.test.js"]);
 
       expect(run.code).toBe(64);
       expect(run.stdout).toContain("INVALID_RED");
@@ -440,7 +397,7 @@ describe("node --test, red-phase guards", () => {
     async (reporter) => {
       expectSyntaxFault(
         await runJson([...reporterFlag(reporter), "exit.test.js"], {
-          flags: ["--tdd-phase=red"],
+          flags: RED,
           files: { "exit.test.js": "process.exit(1);\n" },
         }),
       );
@@ -471,7 +428,7 @@ describe("node --test, red-phase guards", () => {
   ];
   for (const { title, args, options, message } of PATH_FORMS) {
     it(`A missing module is INVALID_RED with exit 64 and the syntax message (${title})`, async () => {
-      const result = await runJson(args, { ...options, flags: ["--tdd-phase=red"] });
+      const result = await runJson(args, { ...options, flags: RED });
 
       expectSyntaxFault(result);
       if (message !== undefined) expect(clustersOf(result.envelope)[0]?.message).toContain(message);
@@ -482,21 +439,18 @@ describe("node --test, red-phase guards", () => {
     const passing = "import './lib.js'; import test from 'node:test'; test('x',()=>{});\n";
     expectSyntaxFault(
       await runJson([SPEC, "a.test.js", "b.test.js"], {
-        flags: ["--tdd-phase=red"],
+        flags: RED,
         files: { "lib.js": "import './missing-helper.js';\n", "a.test.js": passing, "b.test.js": passing },
       }),
     );
   });
 
   it("A missing module is INVALID_RED with exit 64 and the syntax message (unindented wrapper line after the section)", async () => {
-    const { run, envelope } = await nodeRunsWrapper(
-      "spec",
-      { "mm.test.js": "import './missing.js'; import test from 'node:test'; test('x',()=>{});\n" },
-      {
-        flags: ["--tdd-phase=red"],
-        epilogue: "console.log(' ELIFECYCLE  Test failed. See above for more details.');",
-      },
-    );
+    const { run, envelope } = await nodeRunsWrapper("spec", ["mm.test.js"], {
+      flags: RED,
+      epilogue: "console.log(' ELIFECYCLE  Test failed. See above for more details.');",
+      files: { "mm.test.js": "import './missing.js'; import test from 'node:test'; test('x',()=>{});\n" },
+    });
 
     expect(run.code).toBe(64);
     expect(envelope.status).toBe("INVALID_RED");
@@ -504,9 +458,7 @@ describe("node --test, red-phase guards", () => {
     expect(clustersOf(envelope)[0]?.message.startsWith(MODULE_NOT_FOUND)).toBe(true);
     expect(clustersOf(envelope)[0]?.message).not.toContain("ELIFECYCLE");
   });
-});
 
-describe("node --test, exit-code transparency", () => {
   eachReporter(
     {
       tap: "Without a TDD phase the child's exit code passes through",
@@ -640,6 +592,92 @@ describe("node --test, spec reporter parity with TAP", () => {
       expect(cluster?.sample_tests).toEqual(["label is pen"]);
     }
   });
+
+  it("Plain errors and hook errors read as Error under both reporters", async () => {
+    const { tap, spec } = await bothReporters("plain.test.js");
+
+    for (const { envelope } of [tap, spec]) {
+      const message = (test: string): string | undefined => clusterOf(envelope, test)?.message;
+      expect([message("plain"), message("empty"), message("typed"), message("suite")]).toEqual([
+        "Error: z",
+        "Error",
+        "TypeError: t",
+        "Error: hb",
+      ]);
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A thrown number keeps its text under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('num', () => { throw 42; });",
+      "test('obj', () => { throw { a: 1 }; });",
+    );
+    const { tap, spec } = await bothReporters("thrown.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "num")?.message).toBe("42");
+      expect(clusterOf(envelope, "obj")?.message).toBe("{ a: 1 }");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("An uncaught exception in a timer reads the same under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('t', async () => { setTimeout(() => { throw new Error('u'); }, 5); await new Promise((r) => setTimeout(r, 50)); });",
+    );
+    const { tap, spec } = await bothReporters("timer.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "t")?.message).toBe("Error: u");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A failed t.plan keeps its text under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "test('planned', (t) => { t.plan(2); t.assert.ok(true); });",
+    );
+    const { tap, spec } = await bothReporters("planned.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clusterOf(envelope, "planned")?.message).toBe("plan expected 2 assertions but received 1");
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A test name with a backslash is the same under both reporters", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "import assert from 'node:assert';",
+      'test("back\\\\slash", () => assert.equal(1, 2));',
+    );
+    const { tap, spec } = await bothReporters("names.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clustersOf(envelope)).toHaveLength(1);
+      expect(clustersOf(envelope)[0]?.sample_tests).toEqual(["back\\slash"]);
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
+
+  it("A backtick string diff equals the TAP diff", async () => {
+    const contents = source(
+      "import test from 'node:test';",
+      "import assert from 'node:assert';",
+      'test("bt", () => assert.equal(`a\'b"c`, `a\'b"d`));',
+    );
+    const { tap, spec } = await bothReporters("names.test.js", contents);
+
+    for (const { envelope } of [tap, spec]) {
+      expect(clustersOf(envelope)).toHaveLength(1);
+      expect(clustersOf(envelope)[0]?.diff).toEqual({ expected: `a'b"d`, received: `a'b"c` });
+    }
+    expect(clusterIds(tap.envelope)).toEqual(clusterIds(spec.envelope));
+  });
 });
 
 const DIRECTIVE_TESTS = source(
@@ -742,7 +780,7 @@ describe("node --test, summary.failed is never below the failures reported", () 
   }
 
   it("Nested suite and timeout under the spec reporter (two node runs in one stream sum their counts)", async () => {
-    const { run, envelope } = await nodeRunsWrapper("spec", {
+    const files = {
       "two-fail.test.js": source(
         "import test from 'node:test';",
         "test('good one', () => {});",
@@ -754,14 +792,15 @@ describe("node --test, summary.failed is never below the failures reported", () 
         "test('fine a', () => {});",
         "test('fine b', () => {});",
       ),
-    });
+    };
+    const { run, envelope } = await nodeRunsWrapper("spec", Object.keys(files), { files });
 
     expect(run.code).toBe(1);
     expect(envelope.summary).toMatchObject({ passed: 3, failed: 2, total_clusters: 2 });
   });
 
   it("Nested suite with a deep-equal failure and a timeout (two node runs in one stream sum their counts, TAP equals spec)", async () => {
-    const tests = {
+    const files = {
       "many-fail.test.js": source(
         "import test, { describe, it } from 'node:test';",
         "test('good one', () => {});",
@@ -780,8 +819,8 @@ describe("node --test, summary.failed is never below the failures reported", () 
         "test('skipped c', { skip: true }, () => {});",
       ),
     };
-    const tap = await nodeRunsWrapper("tap", tests);
-    const spec = await nodeRunsWrapper("spec", tests);
+    const tap = await nodeRunsWrapper("tap", Object.keys(files), { files });
+    const spec = await nodeRunsWrapper("spec", Object.keys(files), { files });
 
     expect(tap.run.code).toBe(1);
     expect(tap.envelope.summary).toMatchObject({ passed: 4, failed: 2, skipped: 3 });
@@ -850,7 +889,7 @@ describe("node --test, a SyntaxError raised inside a test that ran", () => {
           reporter,
           "parses.test.js",
           source("import test from 'node:test';", `test('parses', () => { ${statement} });`),
-          ["--tdd-phase=red"],
+          RED,
         );
 
         expect(run.code).toBe(0);
@@ -862,7 +901,7 @@ describe("node --test, a SyntaxError raised inside a test that ran", () => {
 
     for (const [fault, { entry, files }] of Object.entries(SYNTAX_FAULTS)) {
       it(`A missing module is INVALID_RED with exit 64 (${fault}, ${reporter})`, async () => {
-        const result = await runJson([`--test-reporter=${reporter}`, entry], { files, flags: ["--tdd-phase=red"] });
+        const result = await runJson([`--test-reporter=${reporter}`, entry], { files, flags: RED });
 
         expectSyntaxFault(result);
         expect(clustersOf(result.envelope)).toHaveLength(1);

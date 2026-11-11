@@ -1,8 +1,11 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { ADAPTERS, classifyMessage, runGear0, selectAdapter } from "../src/adapters/index.js";
+import { ADAPTERS, classifyMessage, runGear0, selectAdapter, type AdapterResult } from "../src/adapters/index.js";
+import { jsTestAdapter } from "../src/adapters/js-test.js";
 import type { CapturedLine } from "../src/runner/capture.js";
+import { nodeRunsWrapperSource, tempDir } from "./helpers/node-cart.js";
 
 function lines(text: string): CapturedLine[] {
   return text.split("\n").map((line, index) => ({
@@ -397,6 +400,144 @@ describe("node spec reporter at the adapter seam", () => {
       [39, 58],
       [60, 79],
       [81, 91],
+    ]);
+  });
+
+  /** One node run of crashing files: what each printed, then its `✖` row, then the summary and the failing-tests section. */
+  function specRun(crashed: ReadonlyArray<{ file: string; above: readonly string[] }>): string[] {
+    const counts = ["tests", "suites", "pass", "fail", "cancelled", "skipped", "todo"].map(
+      (key) => `ℹ ${key} ${key === "tests" || key === "fail" ? crashed.length : 0}`,
+    );
+    return [
+      ...crashed.flatMap(({ file, above }) => [...above, `✖ ${file} (5.1ms)`]),
+      ...counts,
+      "",
+      "✖ failing tests:",
+      ...crashed.flatMap(({ file }) => ["", `test at ${file}:1:1`, `✖ ${file} (5.1ms)`, "  'test failed'"]),
+    ];
+  }
+
+  function crashBlock(file: string, error: string): string[] {
+    return [
+      `file:///work/${file}:5`,
+      "throw new Error();",
+      "      ^",
+      "",
+      error,
+      `    at file:///work/${file}:5:7`,
+      "",
+      "Node.js v22.23.4",
+    ];
+  }
+
+  const crashes = (result: AdapterResult): Array<[string, string]> =>
+    result.failures.map((f) => [(f.testName ?? "").replace(/ @\d+$/, ""), f.message]);
+
+  it("Two crashing files under the spec reporter each carry the crash block directly above their own row", () => {
+    const result = jsTestAdapter.parse(
+      lines(
+        specRun([
+          { file: "crash-b.test.js", above: crashBlock("crash-b.test.js", "TypeError: boom b") },
+          { file: "crash-a.test.js", above: crashBlock("crash-a.test.js", "Error [ERR_X]: boom a") },
+        ]).join("\n"),
+      ),
+    );
+
+    expect(crashes(result)).toEqual([
+      ["crash-b.test.js", "TypeError: boom b"],
+      ["crash-a.test.js", "Error: boom a"],
+    ]);
+  });
+
+  it("Lines above a file's row that are not its crash block never give its message (other file's output, a block cut off from the row)", () => {
+    const result = jsTestAdapter.parse(
+      lines(
+        specRun([
+          { file: "log.test.js", above: ["Error: the loader gave up", "    at somewhere (node:internal/x:1:1)"] },
+          { file: "cut.test.js", above: [...crashBlock("cut.test.js", "TypeError: boom"), "✔ a test row in between (1.0ms)"] },
+          { file: "nolocation.test.js", above: ["TypeError: boom", "Node.js v22.23.4"] },
+          { file: "notrailer.test.js", above: ["file:///work/notrailer.test.js:5", "TypeError: boom"] },
+        ]).join("\n"),
+      ),
+    );
+
+    expect(result.failures.map((f) => f.message)).toEqual(Array(4).fill("test failed"));
+  });
+
+  it("A diagnostic row between a file's crash block and its row does not cut the block off, and the previous run's summary is not a block", () => {
+    const result = jsTestAdapter.parse(
+      lines(
+        specRun([
+          { file: "ok.test.js", above: ["ℹ tests 1", "ℹ pass 0", "ℹ fail 1"] },
+          { file: "crash.test.js", above: [...crashBlock("crash.test.js", "TypeError: boom"), "ℹ a diagnostic row"] },
+        ]).join("\n"),
+      ),
+    );
+
+    expect(crashes(result)).toEqual([
+      ["ok.test.js", "test failed"],
+      ["crash.test.js", "TypeError: boom"],
+    ]);
+  });
+
+  it("A crash block gives its first error line; a log line before its location line is outside it", () => {
+    const block = crashBlock("a.test.js", "TypeError: boom");
+    const above = ["Error: setup log", ...block.slice(0, -1), "RangeError: cause", ...block.slice(-1)];
+    const result = jsTestAdapter.parse(lines(specRun([{ file: "a.test.js", above }]).join("\n")));
+
+    expect(result.failures.map((f) => f.message)).toEqual(["TypeError: boom"]);
+  });
+
+  /** Two node runs of the same crashing file in one stream: each run prints its own crash block and `✖` row. */
+  function twoRunsOfOneFile(blocks: readonly [readonly string[], readonly string[]]): CapturedLine[] {
+    const run = (above: readonly string[]): string[] => specRun([{ file: "twice.test.js", above }]);
+    return lines([...run(blocks[0]), ...run(blocks[1])].join("\n"));
+  }
+
+  it("The same file crashing in two runs keeps each run's own error (direct parse)", () => {
+    const result = jsTestAdapter.parse(
+      twoRunsOfOneFile([
+        crashBlock("twice.test.js", "TypeError: first run"),
+        crashBlock("twice.test.js", "RangeError: second run"),
+      ]),
+    );
+
+    expect(crashes(result)).toEqual([
+      ["twice.test.js", "TypeError: first run"],
+      ["twice.test.js", "RangeError: second run"],
+    ]);
+  });
+
+  it("The same file crashing in two runs keeps each run's own error (a real stream)", () => {
+    const dir = tempDir("dtd-twice-");
+    fs.writeFileSync(
+      path.join(dir, "twice.test.js"),
+      [
+        'import fs from "node:fs";',
+        'const marker = new URL("./twice.marker", import.meta.url);',
+        'if (fs.existsSync(marker)) { throw new RangeError("second run"); }',
+        'fs.writeFileSync(marker, "x");',
+        'throw new TypeError("first run");',
+        "",
+      ].join("\n"),
+    );
+    fs.writeFileSync(
+      path.join(dir, "wrapper.js"),
+      nodeRunsWrapperSource("spec", ["twice.test.js", "twice.test.js"]),
+    );
+    const captured = path.join(dir, "stream.txt");
+    const fd = fs.openSync(captured, "w");
+    spawnSync(process.execPath, ["wrapper.js"], {
+      cwd: dir,
+      stdio: ["ignore", fd, fd],
+    });
+    fs.closeSync(fd);
+
+    const result = jsTestAdapter.parse(lines(fs.readFileSync(captured, "utf8").replace(/\n$/, "")));
+
+    expect(crashes(result)).toEqual([
+      ["twice.test.js", "TypeError: first run"],
+      ["twice.test.js", "RangeError: second run"],
     ]);
   });
 });
