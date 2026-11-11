@@ -1,9 +1,41 @@
-# Feature map
+# dot-test-digest verification map
 
-This directory is the maintained source for verifying this repo's user-facing behavior. `dotstack:verify` reads the index below before it drives the app, then opens the matching feature file as the recipe.
+This directory is the maintained source for verifying the user-facing behavior of `dot-test-digest`, a one-shot CLI that wraps a test, compiler or build command and prints a bounded digest. Read the index, then use the matching feature file as the recipe. The driver is the project skill `.claude/skills/verify/SKILL.md` (`verify.sh`); the repo's own checks (`pnpm run verify`, `node scripts/acceptance/run-acceptance.mjs`) are in `.dotstack/surfaces.yaml` and the README of `scripts/acceptance/`.
 
-Run `dotstack:create-verification` to generate the driver skill and fill this map: one file per user-facing feature, each marked `Prod: safe` (read-only) or `Prod: not safe`.
+## Baseline preconditions
+
+- Node >= 20 on `PATH`. The numbers in these files were measured on Node 22.23.4, `--no-jev`; the `node --test` grammar is verified on that version only.
+- `V=.claude/skills/verify/verify.sh; RUN=$($V launch)`, then `$V doctor $RUN` must show the commit under test. Run `$V cleanup $RUN` at the end.
+- Every drive adds `--no-jev` and uses the run's own `DOT_TEST_DIGEST_HOME`. Gear 1 (the Jev API) is never exercised here: it needs `TYPESAFE_API_KEY` and the network (see "Not covered").
+- Fixtures: `node-cart` (`node --test`, 6 tests in `cart.test.js`: 2 pass, 4 fail), `tsc-small` (5 type errors in 2 files), `vitest-cart` (29 vitest tests, 5 fail). They are copied per run; edit the copy only.
+- Mark each feature file `Prod: safe` (writes nothing) or `Prod: not safe`. There is no production deployment of this CLI: the marker only says whether a journey writes a log or state file.
+
+## Driving conventions
+
+- Start every recipe from a fresh `launch`, or use a distinct `--scope-id` for any TDD journey.
+- Treat every command literally. Flags go before `--`, the wrapped command after it.
+- The exit code is checked in every journey. `exit.txt` in the evidence directory holds it.
+- Sizes are the bytes of `stdout.txt` (`wc -c`). Log paths in the header are long inside a run (the isolated `home/`), so the `INV-1` pass line can be cut with `...` at 160 bytes; that is not a failure.
+
+## Proof and skip reporting
+
+- Proof for a journey: the command, stdout, stderr and exit code from `evidence/<label>/`, plus the second view the journey names.
+- Record the feature ID and journey label with every artifact.
+- Report an unreachable path with the command tried and the unmet precondition. Do not report a skipped path as verified through another one.
+
+### Not covered (report under Not verified)
+
+Gear 1 (Jev, `--retry-flakes`), the pytest, `cargo`, `go test`, jest, Playwright and eslint grammars (fixtures only, never run against a real project), Node versions other than the one `doctor` prints, Windows.
+
+## Feature entry contract
+
+Each feature file has an H1, one paragraph, then exactly four H2s: `Sub-features`, `How to get to it (user POV)`, `Driving it with verify.sh`, `Gotchas`. The driving section starts with `Preconditions:` and a `Prod:` bullet.
 
 ## Features
 
-None yet.
+- [CLI surface](./cli-surface.md): `--help`, `--version`, flag parsing and usage errors (exit 64).
+- [Exit-code transparency](./exit-codes.md): the child's exit code, a signal, a missing command.
+- [Pass digest](./pass-digest.md): a passing run is one line, at most 160 bytes, and the raw log keeps everything.
+- [Failure digest](./failure-digest.md): clusters, the 2,400-byte ceiling, omitted clusters, `raw:` pointers, the tsc raw-text fallback.
+- [TDD gate](./tdd-gate.md): `--tdd-phase` red, green and refactor, `VALID_RED`/`INVALID_RED`, exit 64, baseline state.
+- [JSON envelope](./json-envelope.md): `--format=json` and `--max-clusters`.
