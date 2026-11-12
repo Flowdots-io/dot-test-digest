@@ -23,7 +23,7 @@ Preconditions:
 - `RUN=$($V launch)` done and `$V doctor $RUN` shows the commit under test.
 - Prod: safe (none of these journeys starts a child or writes a log; confirm with step "No side effects" below).
 
-- **Help.** `$V drive $RUN help - --help`. Exit `0`; stdout starts `dot-test-digest — bounded test/build output compressor` and lists `--tdd-phase`, `--format`, `--max-clusters`, `--context-lines`, `--scope-id`, `--retry-flakes`, `--no-jev`.
+- **Help.** `$V drive $RUN help - --help`. Exit `0`; stdout starts `dot-test-digest — bounded test/build output compressor` and lists `--tdd-phase`, `--format`, `--max-clusters`, `--context-lines`, `--scope-id`, `--retry-flakes`, `--allow-no-tests`, `--no-jev`.
 - **Version.** `$V drive $RUN version - --version`. Exit `0`; stdout is `0.1.0` (the value in `package.json`/`src/version.ts` at the commit under test).
 - **Unknown flag.** `$V drive $RUN unknown - --bogus -- true`. Exit `64`; stdout empty; stderr `unknown flag: --bogus`.
 - **Missing delimiter.** `$V drive $RUN nodelim - true`. Exit `64`; stderr `missing -- delimiter before "true": dot-test-digest [flags] -- <command>`.
@@ -38,4 +38,4 @@ Preconditions:
 
 - `verify.sh drive` always inserts `--no-jev` before your flags, so `--no-jev=maybe` is parsed after it and the last value is the invalid one; the usage error still fires.
 - Usage errors come from the wrapper: the child (`true`) is never started, so an exit code 64 here is not the child's.
-- An exit code of 64 also means `INVALID_RED` (see [tdd-gate.md](./tdd-gate.md)). Tell them apart by stdout: a usage error prints nothing on stdout.
+- An exit code of 64 also means `INVALID_RED` or `INVALID_GREEN` (see [tdd-gate.md](./tdd-gate.md)). Tell them apart by stdout: a usage error prints nothing on stdout.

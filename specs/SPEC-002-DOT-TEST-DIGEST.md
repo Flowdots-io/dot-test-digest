@@ -40,10 +40,11 @@ Standard test runners (`vitest`, `jest`, `pytest`, `cargo test`, `go test`, `pla
 
 * **`INV-1` (Pass-State Ceiling, `compact-md`)**: When the wrapped command exits with code `0` (and satisfies the active `TddPhaseGate`), `dot-test-digest` MUST NOT write more than `160 bytes` **including the trailing newline** to `stdout` in the default `compact-md` format. All passing test names, compiler banners, deprecation warnings, and `stdout` logs MUST be suppressed. `--format=json` emits the structured envelope of §4.1 instead; it is exempt, because no conforming JSON document fits in 160 bytes (§4.1.1).
 * **`INV-2` (Fail-State Ceiling & Cascade Deduplication)**: When multiple tests fail with the same `RootCauseFingerprint`, the runtime MUST collapse them into a single `FailureCluster` showing the stack trace and `SignalWindow` **at most once** (never repeated; in `compact-md` the size rule of §4.1.1 may omit them when the digest would otherwise be larger than the raw output; `--format=json` always carries them), accompanied by `affected_count` and at most 3 sample test names. In `compact-md`, total `stdout` on a failed run MUST NOT exceed `600 EstimatedTokens` (`2400 bytes`); when the budget is exhausted, or a cluster lies beyond `max_clusters`, the runtime MUST drop the lowest-ranked clusters first (rank order of §4.1.1) and append `+N more clusters (see log)` followed, while the budget allows, by one line per omitted cluster, so the omission is never silent (§4.1.1). `max_clusters` defaults to `5`.
-* **`INV-3` (Strict Exit-Code Transparency)**: Except when explicitly blocking an invalid TDD phase transition under `INV-5`, `dot-test-digest` MUST exit with the exact integer exit code (`0..255`) or POSIX signal termination code (`128 + signal number`) of the underlying child process. A failure to persist the raw log or the TDD state file MUST NOT alter that code: it is reported on `stderr` and the run continues.
+* **`INV-3` (Strict Exit-Code Transparency)**: Except when explicitly blocking an invalid TDD phase transition under `INV-5` or `INV-7`, `dot-test-digest` MUST exit with the exact integer exit code (`0..255`) or POSIX signal termination code (`128 + signal number`) of the underlying child process. A failure to persist the raw log or the TDD state file MUST NOT alter that code: it is reported on `stderr` and the run continues. Neither may a reader that closed `stdout` before the digest was written (`… | head -1`): the digest is dropped, the raw log is still written, and nothing about the closed pipe (`EPIPE`, a stack trace) is printed on `stderr`.
 * **`INV-4` (Zero Third-Party Stack Pollution)**: Emitted stack traces MUST strip all frames originating from language internals or external package directories (`node:internal/*`, `node_modules/*`, `/nix/store/*`, `.venv/*`, `site-packages/*`, `/usr/lib/*`, Go/Rust stdlib) **and** all engine-only frames that name no file (`<anonymous>`, `(index N)`, `<frozen …>`), which are dropped outright and never occupy a slot. A `FailureCluster` retains at most 1 external boundary frame — the exact third-party function called by repository code, and only if it follows a repository frame — plus up to 5 repository frames, in original order: at most 6 entries.
 * **`INV-5` (TDD Red-Phase Behavioral Gate)**: When invoked with `--tdd-phase=red`, the run is valid **if and only if** the child process fails (`exit_code != 0`) due to a behavioral test assertion failure or a **missing exported symbol under test** (`does not provide an export named`, `has no exported member`, `is not exported from`). If the command passes (`exit_code == 0`) OR fails due to a syntax error, broken test import path, or test-runner startup crash, `dot-test-digest` MUST emit `status: "INVALID_RED"` and exit with code `64` (`EX_USAGE`). A missing export MUST therefore be classified before the syntax tokens, even though Node reports it as a `SyntaxError`. When no grammar produced a failure block, the log itself decides: behavioral evidence in the captured text (an `AssertionError`, an `expected … to …` mismatch, a missing export, `is not a function`, `Cannot read propert`) makes the run `VALID_RED`; its absence makes it `INVALID_RED`. This keeps the gate usable for runners without a Gear 0 grammar (`--reporter=json`, junit, TAP variants).
 * **`INV-6` (Strict Option Ceiling for Gear 1 Jev)**: Any unstructured log triage payload dispatched to the Jev API in Gear 1 MUST NOT exceed `255` candidate log-window options in a single `choice` question, and the serialized request MUST be budgeted to stay inside the model's 64k-token context. The option ceiling alone does not bound the request: window text is truncated and dropped by salience until it fits.
+* **`INV-7` (TDD Green-Phase Evidence Gate)**: When invoked with `--tdd-phase=green` or `--tdd-phase=refactor`, a child that exits `0` while the Gear 0 grammar counted `passed = 0` and `failed = 0` (skipped and todo tests do not count; output no grammar recognised counts as zero) proves nothing about the code under test. `dot-test-digest` MUST then emit `status: "INVALID_GREEN"`, exit with code `64` (`EX_USAGE`), write *"Command exited 0 but no passing test was recognized; a green run must run at least one test (pass --allow-no-tests to accept it)."* on `stderr`, and leave `state-<scope_id>.json` unchanged. `--allow-no-tests` is the explicit opt-out for runners without a grammar and restores `PASS` (exit `0`). A child that fails keeps its `FAIL` / `REGRESSION_DETECTED` verdict and exit code; the `red` and `none` phases are unaffected.
 
 ## 4. Functional Requirements & Behavioral Scenarios
 
@@ -55,13 +56,14 @@ The binary SHALL accept flags preceding the `--` delimiter and pass all argument
 
 | Flag | Type & Default | Description |
 | :--- | :--- | :--- |
-| `--tdd-phase` | `"red" \| "green" \| "refactor" \| "none"` (`"none"`) | Enforces phase transition rules (`INV-5`) and tracks `RedGreenDelta` state transitions. |
+| `--tdd-phase` | `"red" \| "green" \| "refactor" \| "none"` (`"none"`) | Enforces phase transition rules (`INV-5`, `INV-7`) and tracks `RedGreenDelta` state transitions. |
 | `--format` | `"compact-md" \| "json"` (`"compact-md"`) | Output serialization format emitted to `stdout`. |
 | `--max-clusters` | `integer` (`5`, max `15`) | Maximum number of distinct `FailureCluster` records in the envelope (`--format=json` carries at most this many). In `compact-md`, clusters beyond it are counted and listed, not silently dropped (§4.1.1). |
 | `--context-lines` | `integer` (`2`, max `5`) | Number of source lines above and below the failing `file:line` included in `SignalWindow`. |
 | `--scope-id` | `string` (auto-hashed `sha256(cwd)[0..12]`) | Scopes `state-<scope_id>.json` so concurrent runs in separate directories never collide. Explicit ids are sanitised to `[A-Za-z0-9._-]`. |
 | `--no-jev` | `boolean` (`false`) | Disables Gear 1 Jev API fallback for offline execution, falling back to heuristic tail extraction. |
 | `--retry-flakes` | `boolean` (`false`) | Permits one automatic re-run when Gear 1 reports the failure as transient (§4.4.3). |
+| `--allow-no-tests` | `boolean` (`false`) | Accepts a `green` or `refactor` run that exited `0` with no recognised test as `PASS` instead of `INVALID_GREEN` (`INV-7`). |
 | `-h`, `--help` | — | Prints usage to `stdout`; exits `0`. |
 | `-v`, `--version` | — | Prints the version to `stdout`; exits `0`. |
 
@@ -76,7 +78,7 @@ Boolean flags also accept an explicit value (`--no-jev=false`); any value other 
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["PASS", "FAIL", "VALID_RED", "INVALID_RED", "REGRESSION_DETECTED", "BUILD_ERROR"]
+      "enum": ["PASS", "FAIL", "VALID_RED", "INVALID_RED", "INVALID_GREEN", "REGRESSION_DETECTED", "BUILD_ERROR"]
     },
     "tdd_phase": {
       "type": "string",
@@ -95,6 +97,7 @@ Boolean flags also accept an explicit value (`--no-jev=false`); any value other 
         "passed": { "type": "integer" },
         "failed": { "type": "integer" },
         "skipped": { "type": "integer" },
+        "warnings": { "type": "integer", "minimum": 1 },
         "total_clusters": { "type": "integer" }
       }
     },
@@ -144,10 +147,10 @@ Boolean flags also accept an explicit value (`--no-jev=false`); any value other 
 
 | Format | Payload | Ceiling |
 | :--- | :--- | :--- |
-| `compact-md` (default) | One line on `PASS`/`VALID_RED`; one clustered body on every other status | `INV-1` (`160 bytes`) / `INV-2` (`600 EstimatedToken`) |
+| `compact-md` (default) | One line on `PASS`/`VALID_RED`/`INVALID_GREEN`; one clustered body on every other status | `INV-1` (`160 bytes`) / `INV-2` (`600 EstimatedToken`) |
 | `json` | The complete envelope of §4.1, pretty-printed and newline-terminated | Not byte-bounded; truncating it would break its consumer |
 
-`INV-1` and `INV-2` bind `compact-md` only: a conforming JSON envelope cannot fit in 160 bytes, so exempting JSON is the only self-consistent reading. The raw log path is shortened to `~/…` before the pass line is measured. The status word for a satisfied green phase is `PASS` — there is no `VALID_GREEN` status.
+`INV-1` and `INV-2` bind `compact-md` only: a conforming JSON envelope cannot fit in 160 bytes, so exempting JSON is the only self-consistent reading. The raw log path is shortened to `~/…` before the pass line is measured. The status word for a satisfied green phase is `PASS` — there is no `VALID_GREEN` status. **Header counts.** The one line reads `[<STATUS>] <passed> passed, <failed> failed…` and a clustered body's header `[<STATUS>] <failed> failed, <passed> passed…`; both append `, <N> skipped` when `summary.skipped > 0` (skipped and todo tests) and then `, <N> warnings` when `summary.warnings > 0` (compiler and linter warnings, which the `tsc-eslint` grammar counts but does not cluster; `summary.warnings` is present in the JSON only when nonzero). A `PASS` whose output no Gear 0 grammar recognised has no counts to show and reads `[PASS] exit 0 in <t>ms | log: <path>` (`[PASS | <PHASE>]` with a phase); a run a grammar matched keeps its counts even when they are zero, and `--format=json` is unchanged. `INV-1`'s 160 bytes apply with these segments included (the log path is cut with `...` first).
 
 **Cluster rank order.** `dedupeFailures` orders clusters by `affected_count` descending, then by the cluster's first raw-log line ascending (numerically, never as a string: `L5-L9` precedes `L11-L12`), then by its last raw-log line ascending, then by `cluster_id` ascending. Lower-ranked clusters are dropped first by `--max-clusters` and by `INV-2`'s budget. Before 0.1.3 the tie-break compared the `raw_log_lines` string, so `L11-…` sorted before `L5-…`; under `--max-clusters` that chose different surviving clusters in `--format=json` too (a bug fix, not a schema change).
 
@@ -239,9 +242,11 @@ Baseline entries and `RedGreenDelta` MUST use a canonical identity of the form `
 | **`red`** | `!= 0` | `SYNTAX_IMPORT_ERROR` (e.g. `SyntaxError`, `Cannot find module`, `TS2307`, `Failed to load url`) | **`INVALID_RED`** | Exits `64`; reports: *"Test failed due to syntax or unresolved module import rather than a behavioral assertion."* |
 | **`red`** | `!= 0` | `ASSERTION_FAILURE`, `RUNTIME_EXCEPTION`, or a missing exported symbol under test | **`VALID_RED`** | Records baseline failing test identifiers in `state-<scope_id>.json`; exits `0`. |
 | **`red`** | `!= 0` | No failure block and no behavioral evidence in the log | **`INVALID_RED`** | Exits `64`; reports: *"Test run failed before any test executed (runner startup crash or no tests collected)."* |
-| **`green`** | `0` (All Pass) | None | **`PASS`** | Verifies previously recorded failing test identifiers now pass; exits `0`. |
+| **`green`** | `0` (All Pass) | None, and at least one test passed or failed (or `--allow-no-tests`) | **`PASS`** | Verifies previously recorded failing test identifiers now pass; exits `0`. |
+| **`green`** | `0` | None, and `passed = 0`, `failed = 0` (skipped tests do not count) without `--allow-no-tests` | **`INVALID_GREEN`** | Exits `64`; reports: *"Command exited 0 but no passing test was recognized; a green run must run at least one test (pass --allow-no-tests to accept it)."*; the state file is not written (`INV-7`). |
 | **`green`** | `!= 0` | Any failure | **`FAIL`** | Exits with the child's exit code; `RedGreenDelta` is populated. A re-broken baseline test surfaces as `newly_broken_regressions`. |
-| **`refactor`** | `0` (All Pass) | None | **`PASS`** | Exits `0`. |
+| **`refactor`** | `0` (All Pass) | None, and at least one test passed or failed (or `--allow-no-tests`) | **`PASS`** | Exits `0`. |
+| **`refactor`** | `0` | None, and `passed = 0`, `failed = 0` without `--allow-no-tests` | **`INVALID_GREEN`** | As for `green` (`INV-7`). |
 | **`refactor`** | `!= 0` | Any failure | **`REGRESSION_DETECTED`** | Emits `newly_broken_regressions` diff; exits with the child process's non-zero exit code. |
 | **`none`** | `0` | — | **`PASS`** | Exits `0`. |
 | **`none`** | `!= 0` | A grammar adapter produced a cluster | **`FAIL`** | Exits with the child's exit code. |

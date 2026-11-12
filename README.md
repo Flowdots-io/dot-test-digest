@@ -19,7 +19,7 @@ A test run prints hundreds of lines (passing test names, banners, deprecation wa
 
 `dot-test-digest` keeps the useful part and bounds the size:
 
-- **Pass:** one line, at most 160 bytes: `[PASS] 240 passed, 0 failed in 640ms | log: …` (with `--tdd-phase=green` it reads `[PASS | GREEN] … (delta: +3 newly passing, 0 regressions) …`).
+- **Pass:** one line, at most 160 bytes: `[PASS] 240 passed, 0 failed in 640ms | log: …` (with `--tdd-phase=green` it reads `[PASS | GREEN] … (delta: +3 newly passing, 0 regressions) …`). Skipped tests and lint or compiler warnings are added when there are any (`240 passed, 0 failed, 2 skipped, 3 warnings`). When no grammar recognised the output there is nothing to count, and the line says only `[PASS] exit 0 in 12ms | log: …`.
 - **Fail:** failures with the same root cause are collapsed into one *cluster* (shown once, with a count and up to 3 sample test names). Each cluster has the error, a diff when there is one, a stack with the `node_modules` and runtime frames removed, and a source window around the failing line. The whole digest is at most 600 estimated tokens (2,400 bytes). Clusters that do not fit are listed one per line after `+N more clusters (see log)`, so nothing is dropped silently.
 - **Always:** the child's exit code (or `128 + signal`) is returned unchanged, and the complete raw stream is kept in `~/.cache/dot-test-digest/logs/<run_id>.log`. Every cluster has a `raw:` line range that points into that log.
 
@@ -71,13 +71,14 @@ dot-test-digest --format=json -- vitest run | jq .   # the full structured envel
 | `--scope-id <string>` | hash of the working directory | Names the TDD state file, so concurrent runs in different projects (or worktrees) do not share state. |
 | `--no-jev` | off | Never call the Jev API. Use this to keep every run local. |
 | `--retry-flakes` | off | Re-run once when Gear 1 is at least 80% sure the failure was a flake. |
+| `--allow-no-tests` | off | Accept a `green` or `refactor` run that exited `0` without any recognised test (a runner with no grammar). Without it such a run is `INVALID_GREEN`. |
 | `-h`, `--help` / `-v`, `--version` | | Print usage / version and exit `0`. |
 
 Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`).
 
 ### What you get back
 
-The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed> failed in <time> | <n> clusters | log: <path>` (`[<STATUS> | <PHASE>]` when `--tdd-phase` is set; the cluster count appears only when there are clusters). The status is one of:
+The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed> failed in <time> | <n> clusters | log: <path>` (`[<STATUS> | <PHASE>]` when `--tdd-phase` is set; the cluster count appears only when there are clusters; `, <n> skipped` and `, <n> warnings` follow the counts only when nonzero; a pass whose output no grammar recognised reads `exit 0` instead of the counts). Skipped counts skipped and todo tests; warnings are lint and compiler warnings, which are counted (`summary.warnings` in the JSON, present only when nonzero) but are not failure clusters. The status is one of:
 
 | Status | Meaning |
 | --- | --- |
@@ -86,9 +87,10 @@ The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed
 | `BUILD_ERROR` | The command failed but no grammar recognised the output (compile errors from an unknown tool, a crash). The digest shows a narrowed tail of the log. |
 | `VALID_RED` | `--tdd-phase=red` and the test failed for a behavioural reason. A *successful* gate run: exit `0`. |
 | `INVALID_RED` | `--tdd-phase=red` and the test passed, or failed for a non-behavioural reason (syntax error, broken import, runner crash). Exit `64`. |
+| `INVALID_GREEN` | `--tdd-phase=green` or `refactor`, the command exited `0`, but no passed or failed test was recognised (skipped tests do not count). Exit `64`, a one-line message on `stderr`, and the TDD state is left as it was. `--allow-no-tests` turns it back into `PASS`. |
 | `REGRESSION_DETECTED` | `--tdd-phase=refactor` and something that passed before now fails. |
 
-**Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase, or a usage error in the flags. A failure to write the log or the state file is reported on `stderr` and never changes the exit code.
+**Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase (`INVALID_RED`), a green or refactor run that ran no test (`INVALID_GREEN`), or a usage error in the flags. A failure to write the log or the state file is reported on `stderr` and never changes the exit code, and neither does a reader that closes stdout early (`dot-test-digest -- … | head -1`): the digest is dropped, the log is still written and no `EPIPE` trace is printed.
 
 ## The TDD gate
 
@@ -97,8 +99,8 @@ The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed
 | Phase | When you run it | Result |
 | --- | --- | --- |
 | `red` | After writing a new test, before the code | `VALID_RED` (exit `0`) only if the test fails on a behavioural assertion or a missing export under test; the failing tests are recorded as the baseline. `INVALID_RED` (exit `64`) if it passes, or fails on a syntax error, an unresolved import or a runner startup crash. |
-| `green` | After writing the code | `PASS` when the command exits `0`, with the count of baseline tests that now pass. `FAIL` (the child's exit code) otherwise, with any re-broken baseline test listed as a regression. |
-| `refactor` | While restructuring | `PASS`, or `REGRESSION_DETECTED` with the newly broken tests. |
+| `green` | After writing the code | `PASS` when the command exits `0` and at least one test was recognised, with the count of baseline tests that now pass. `INVALID_GREEN` (exit `64`, state unchanged) when it exits `0` but no passed or failed test was recognised; pass `--allow-no-tests` for a runner without a grammar. `FAIL` (the child's exit code) otherwise, with any re-broken baseline test listed as a regression. |
+| `refactor` | While restructuring | `PASS`, `INVALID_GREEN` as for `green`, or `REGRESSION_DETECTED` with the newly broken tests. |
 | `none` | Everything else | Plain digest, no state. |
 
 This is what stops an agent (or a tired human) from calling a test "red" when it fails only because of a typo in its own import.

@@ -37,5 +37,5 @@ Each feature file has an H1, one paragraph, then exactly four H2s: `Sub-features
 - [Exit-code transparency](./exit-codes.md): the child's exit code, a signal, a missing command.
 - [Pass digest](./pass-digest.md): a passing run is one line, at most 160 bytes, and the raw log keeps everything.
 - [Failure digest](./failure-digest.md): clusters, the 2,400-byte ceiling, omitted clusters, `raw:` pointers, the tsc raw-text fallback.
-- [TDD gate](./tdd-gate.md): `--tdd-phase` red, green and refactor, `VALID_RED`/`INVALID_RED`, exit 64, baseline state.
+- [TDD gate](./tdd-gate.md): `--tdd-phase` red, green and refactor, `VALID_RED`/`INVALID_RED`/`INVALID_GREEN`, exit 64, `--allow-no-tests`, baseline state.
 - [JSON envelope](./json-envelope.md): `--format=json` and `--max-clusters`.
