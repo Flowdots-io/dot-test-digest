@@ -32,6 +32,7 @@ export async function runMain(
 ): Promise<MainRun> {
   const originalCwd = process.cwd();
   const originalHome = process.env["DOT_TEST_DIGEST_HOME"];
+  const originalConfigHome = process.env["XDG_CONFIG_HOME"];
   let stdout = "";
   let stderr = "";
   const outSpy = vi.spyOn(process.stdout, "write").mockImplementation((chunk: string | Uint8Array) => {
@@ -45,8 +46,11 @@ export async function runMain(
 
   process.chdir(where.cwd);
   process.env["DOT_TEST_DIGEST_HOME"] = where.home;
+  // The user's own config file must never reach a test: an empty config home stands in for it.
+  process.env["XDG_CONFIG_HOME"] = path.join(where.home, "config-home");
   try {
-    const code = await main([...argv], where.deps);
+    // Color follows the terminal; a test sees a pipe unless it says otherwise.
+    const code = await main([...argv], { stdoutIsTTY: false, ...where.deps });
     return { stdout, stderr, code };
   } finally {
     outSpy.mockRestore();
@@ -54,6 +58,8 @@ export async function runMain(
     process.chdir(originalCwd);
     if (originalHome === undefined) delete process.env["DOT_TEST_DIGEST_HOME"];
     else process.env["DOT_TEST_DIGEST_HOME"] = originalHome;
+    if (originalConfigHome === undefined) delete process.env["XDG_CONFIG_HOME"];
+    else process.env["XDG_CONFIG_HOME"] = originalConfigHome;
   }
 }
 
