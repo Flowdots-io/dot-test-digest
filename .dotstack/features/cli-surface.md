@@ -52,7 +52,7 @@ Run record and `show` (Prod: not safe, they write and read a log and a record in
 - **Record file.** `$V drive $RUN record node-cart show last --record`. Stdout equals the `.json` file byte for byte (`cmp`).
 - **Bad selectors.** `show last L500-L600` exits `64` with `the log has <N> lines`; `show last L9-L3` exits `64` with `invalid range: L9-L3`; `show last c_00000000` exits `64` with `no cluster c_00000000 in <run>`.
 - **References.** `show run_a` exits `64` with `run reference "run_a" is too short (6 characters minimum)`; `show run_zzzzzz` exits `66` with `no such run: run_zzzzzz`; the first 10 characters of the cart run id resolve to the same output as `last`.
-- **Removed log.** Delete the cart run's `.log`, then `show <run id>` exits `66` with `log of <run> was removed`.
+- **Removed log.** Delete the cart run's `.log`, then `show <run id>` exits `66` with `log of <run> was removed`. Restore it and delete the `.json` instead: `66` with `record of <run> is missing or unreadable`.
 
 ## Gotchas
 
