@@ -35,6 +35,8 @@ export interface DigestInput {
   command: readonly string[];
   /** Where source windows are read from. */
   repoRoot: string;
+  /** The log came from outside the tool: read source windows only from files under `repoRoot`. */
+  confineWindows?: boolean;
   /** The log the `raw:` pointers name. */
   logPath: string;
   settings: DigestSettings;
@@ -105,6 +107,7 @@ async function analyze(output: CapturedOutput, input: DigestInput): Promise<Anal
           contextLines: settings.contextLines,
           keep: settings.maxClusters,
           logPath: input.logPath,
+          ...(input.confineWindows === true ? { windowRoot: repoRoot } : {}),
         });
   let gear: ExecutionGear = gear0 === null ? "GEAR_0_HEURISTIC_FALLBACK" : "GEAR_0_GRAMMAR";
   let retryWanted = false;

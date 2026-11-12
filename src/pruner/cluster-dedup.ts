@@ -17,6 +17,8 @@ export interface RawFailure {
 
 export interface DedupeOptions {
   repoRoot: string;
+  /** Source windows are read only from files under this directory (a log the tool did not produce). */
+  windowRoot?: string;
   contextLines: number;
   keep: number;
   logPath: string;
@@ -111,7 +113,7 @@ export function dedupeFailures(
     top
       ? {
           ...cluster,
-          signal_window: readSignalWindow(top.file, top.line, options.contextLines, options.repoRoot),
+          signal_window: readSignalWindow(top.file, top.line, options.contextLines, options.repoRoot, options.windowRoot),
         }
       : cluster,
   );

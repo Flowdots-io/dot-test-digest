@@ -7,13 +7,13 @@ import { finishRun } from "../runner/finish-run.js";
 import { RawLogWriter } from "../runner/raw-log.js";
 import { resolveScopeId } from "../state/tdd-gate.js";
 import { OutputFormatSchema, type OutputFormat } from "../types/schema.js";
-import { readInt } from "./args.js";
+import { readBoolean, readInt } from "./args.js";
 import { wantsColor } from "./color.js";
 import type { Subcommand } from "./dispatch.js";
 import { NoInputError, UsageError } from "./errors.js";
 
 const DIGEST_USAGE =
-  "dot-test-digest digest <file|-> [--exit-code N] [--format F] [--max-clusters N] [--context-lines N] [--no-jev]";
+  "dot-test-digest digest <file|-> [--exit-code N] [--format F] [--max-clusters N] [--context-lines N] [--no-jev] (-- <file> for a name starting with -)";
 const STDIN = "-";
 
 interface DigestArgs {
@@ -22,7 +22,7 @@ interface DigestArgs {
   format?: OutputFormat;
   maxClusters?: number;
   contextLines?: number;
-  noJev: boolean;
+  noJev?: boolean;
 }
 
 function readExitCode(raw: string): number {
@@ -35,18 +35,23 @@ function readExitCode(raw: string): number {
 
 function parseDigestArgs(args: readonly string[]): DigestArgs {
   const positional: string[] = [];
-  const parsed: Omit<DigestArgs, "input"> = { noJev: false };
+  const parsed: Omit<DigestArgs, "input"> = {};
+  let flagsEnded = false;
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index] ?? "";
-    if (arg === STDIN || !arg.startsWith("-")) {
+    if (!flagsEnded && arg === "--") {
+      flagsEnded = true;
+      continue;
+    }
+    if (flagsEnded || arg === STDIN || !arg.startsWith("-")) {
       positional.push(arg);
       continue;
     }
     const equals = arg.indexOf("=");
     const flag = equals === -1 ? arg : arg.slice(0, equals);
     if (flag === "--tdd-phase") throw new UsageError("--tdd-phase is not supported by digest");
-    if (arg === "--no-jev") {
-      parsed.noJev = true;
+    if (flag === "--no-jev") {
+      parsed.noJev = readBoolean(flag, arg);
       continue;
     }
     const value = equals === -1 ? args[(index += 1)] : arg.slice(equals + 1);
@@ -116,7 +121,7 @@ export const runDigest: Subcommand = async (args, context) => {
     format: flags.format ?? values.format,
     maxClusters: flags.maxClusters ?? values.maxClusters,
     contextLines: flags.contextLines ?? values.contextLines,
-    noJev: flags.noJev || values.noJev,
+    noJev: flags.noJev ?? values.noJev,
     retryFlakes: false,
     allowNoTests: false,
   };
@@ -136,6 +141,7 @@ export const runDigest: Subcommand = async (args, context) => {
     },
     command: [],
     repoRoot: context.cwd,
+    confineWindows: true,
     logPath: rawLog.path,
     settings,
     previousState: null,
