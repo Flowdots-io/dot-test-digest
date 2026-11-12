@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Every run writes a record beside its log
-Each run (a wrapped command, and later `digest`) SHALL write `logs/<run>.json` next to `logs/<run>.log`, atomically (a unique temporary file, then a rename), after the digest has been rendered. The record SHALL be a JSON object with these keys: `schema` (`1`), `run_id`, `version` (the tool version), `created_at` (ISO 8601 UTC), `source` (`"run"`), `cwd`, `command` (the argv after `--`), `exit_code` (what the tool returned), `child_exit_code`, `signal`, `duration_ms`, `phase`, `scope_id`, `status`, `execution_gear`, `format`, `options` (`{ max_clusters, context_lines, no_jev, retry_flakes }`), `summary` (`{ passed, failed, skipped, warnings, total_clusters }`), `raw_lines`, `raw_bytes`, `digest_bytes` and `clusters` (every cluster, kept and omitted, as `{ cluster_id, error_kind, affected_count, raw_log_lines }`). `raw_lines` and `raw_bytes` describe the log file; `digest_bytes` is the number of bytes written to stdout.
+Each run (a wrapped command, and later `digest`) SHALL write `logs/<run>.json` next to `logs/<run>.log`, atomically (a unique temporary file, then a rename), after the digest has been rendered. The record SHALL be a JSON object with these keys: `schema` (`1`), `run_id`, `version` (the tool version), `created_at` (ISO 8601 UTC), `source` (`"run"`), `cwd`, `command` (the argv after `--`), `exit_code` (what the tool returned), `child_exit_code`, `signal`, `duration_ms`, `phase`, `scope_id`, `status`, `execution_gear`, `format`, `options` (`{ max_clusters, context_lines, no_jev, retry_flakes, allow_no_tests }`), `summary` (`{ passed, failed, skipped, warnings, total_clusters }`), `raw_lines`, `raw_bytes`, `digest_bytes` and `clusters` (every cluster, kept and omitted, as `{ cluster_id, error_kind, affected_count, raw_log_lines }`). `raw_lines` and `raw_bytes` describe the log file; `digest_bytes` is the number of bytes written to stdout.
 
 #### Scenario: A failing node run leaves a complete record
 - **GIVEN** the cart and a fresh home
@@ -14,7 +14,7 @@ Each run (a wrapped command, and later `digest`) SHALL write `logs/<run>.json` n
 #### Scenario: The record keeps the phase, scope and options
 - **GIVEN** the cart and a fresh home
 - **WHEN** `--tdd-phase=red --scope-id=r1 --max-clusters=2 --context-lines=0 -- node --test cart.test.js` runs
-- **THEN** the record has `phase` `"red"`, `scope_id` `"r1"`, `status` `"VALID_RED"`, `exit_code` `0`, `child_exit_code` `1` and `options` `{ "max_clusters": 2, "context_lines": 0, "no_jev": true, "retry_flakes": false }`
+- **THEN** the record has `phase` `"red"`, `scope_id` `"r1"`, `status` `"VALID_RED"`, `exit_code` `0`, `child_exit_code` `1` and `options` `{ "max_clusters": 2, "context_lines": 0, "no_jev": true, "retry_flakes": false, "allow_no_tests": false }`
 
 #### Scenario: A killed child is recorded with its signal
 - **GIVEN** a fresh home
