@@ -78,7 +78,7 @@ export const runReplay: Subcommand = async (args, context) => {
     format: flags.format ?? record.format,
     maxClusters: flags.maxClusters ?? record.options.max_clusters,
     contextLines: flags.contextLines ?? record.options.context_lines,
-    noJev: record.options.no_jev,
+    noJev: true,
     retryFlakes: false,
     allowNoTests: record.options.allow_no_tests,
   };
