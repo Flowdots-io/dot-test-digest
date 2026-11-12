@@ -78,7 +78,7 @@ Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, 
 
 ### What you get back
 
-The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed> failed in <time> | <n> clusters | log: <path>` (`[<STATUS> | <PHASE>]` when `--tdd-phase` is set; the cluster count appears only when there are clusters; `, <n> skipped` and `, <n> warnings` follow the counts only when nonzero; a pass whose output no grammar recognised reads `exit 0` instead of the counts). Skipped counts skipped and todo tests; warnings are lint and compiler warnings, which are counted (`summary.warnings` in the JSON, present only when nonzero) but are not failure clusters. The status is one of:
+The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed> failed in <time> | <n> clusters | log: <path>` (`[<STATUS> | <PHASE>]` when `--tdd-phase` is set; the cluster count appears only when there are clusters; `, <n> skipped` and `, <n> warnings` follow the counts only when nonzero; a pass whose output no grammar recognised reads `exit 0` instead of the counts). Skipped counts skipped and todo tests; warnings are lint and compiler warnings, which are counted (`summary.warnings` in the JSON, present only when nonzero) and become failure clusters only when the command failed with no error to show (a linter run with `--max-warnings=0`). The status is one of:
 
 | Status | Meaning |
 | --- | --- |
