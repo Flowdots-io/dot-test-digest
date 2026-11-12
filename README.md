@@ -147,7 +147,7 @@ c_9721831d ASSERTION_FAILURE x1 cart.test.js:7:46
   raw: L15-L39
 ```
 
-The `next:` line is not printed on a pass, when the digest falls back to the raw text (the small `tsc` case), or for an envelope a program builds without a `run_id`. Both lines count toward the 2,400-byte limit (together about 130 bytes), so a digest can show one full block fewer than before; the clusters that lose their block are listed or counted, as always.
+If the run record could not be written (a full disk; the digest says `could not write the run record` on `stderr`), the `next:` line still names the run, and `show` answers it with exit `66` and `record of <run> is missing or unreadable` (it needs the record for any selector); the lines are still in the log the header names. The `next:` line is not printed on a pass, when the digest falls back to the raw text (the small `tsc` case), or for an envelope a program builds without a `run_id`. Both lines count toward the 2,400-byte limit (together about 130 bytes), so a digest can show one full block fewer than before; the clusters that lose their block are listed or counted, as always.
 
 **Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase (`INVALID_RED`), a green or refactor run that ran no test (`INVALID_GREEN`), or a usage error in the flags. Subcommands never return a child's code: `0` on success, `64` for a usage error, `66` (`EX_NOINPUT`) when the run, its record or its log does not exist. A failure to write the log or the state file is reported on `stderr` and never changes the exit code, and neither does a reader that closes stdout early (`dot-test-digest -- … | head -1`): the digest is dropped, the log is still written and no `EPIPE` trace is printed.
 
@@ -165,13 +165,13 @@ The [JSON Schema](schema/digest-envelope.schema.json) (draft 2020-12) of this do
 | --- | --- | --- |
 | `node --test` | `node --test --test-name-pattern '^<test>$' <file>` | run: it reports `# tests 1` |
 | `vitest` | `<prefix> run <file> -t '<test>'` (`npx vitest run ...` for `-- npx vitest run`) | run: `1 failed \| 28 skipped (29)` in the example project |
-| `jest` | `<prefix> <file> -t '<test>'` | fixture logs only |
+| `jest` | `<prefix> <file> --testNamePattern=<test>` (one word, so a name that starts with `-` is not read as a flag) | fixture logs only |
 | `pytest` (also `python -m pytest`) | `<prefix> <file>::<test>` (other options such as `-q` are dropped) | fixture logs only |
 | `cargo` | `cargo test <test> -- --exact` | fixture logs only |
 | `go` | `go test -run '^<test>$' ./...` | fixture logs only |
 | `eslint` | `eslint <file>` | fixture logs only |
 
-The test name is the last part of the name (after the last ` > `), with regular-expression characters escaped for the runners that take a pattern. Every word is quoted for a POSIX shell (`sh`, `bash`, `zsh`; Windows shells are not covered). There is no `rerun` for a command without a runner word (`pnpm test`, `npm test`, `make test`: the tool cannot see what the script runs), for `tsc`, or when the output did not name the test or file the runner needs. The jest, pytest, cargo, go and eslint forms were checked against the grammars' fixture logs, not by running those tools.
+The test name is the last part of the name (after the last ` > `), with regular-expression characters escaped for the runners that take a pattern. Every word is quoted for a POSIX shell (`sh`, `bash`, `zsh`; Windows shells are not covered). Only the runners of the grammar that read the output count (`node`, `vitest` and `jest` for JavaScript tests, `pytest`, `cargo` and `go`, `eslint`), and a word that contains whitespace is never a runner, so `sh -c "npm run build && vitest"` and a JavaScript failure under `pnpm --dir packages/go test` get no `rerun`. There is no `rerun` for a command without a runner word (`pnpm test`, `npm test`, `make test`: the tool cannot see what the script runs), for `tsc`, or when the output did not name the test or file the runner needs. The jest, pytest, cargo, go and eslint forms were checked against the grammars' fixture logs, not by running those tools.
 
 ### Looking back at a run
 
@@ -473,6 +473,8 @@ pnpm verify     # typecheck + unit tests
 pnpm build      # emits dist/ with the dot-test-digest bin
 pnpm run schema # regenerates schema/digest-envelope.schema.json from src/types/schema.ts (commit it with any envelope change)
 ```
+
+`pnpm run schema` imports `src/types/schema.ts` directly, so it needs Node 22.18 or later (type stripping on by default); the tool itself still runs on Node 20. `pnpm verify` runs the test that regenerates the schema, so it needs the same Node.
 
 To prove a change on the real binary (not just the unit tests), use the verification skill: `.claude/skills/verify/verify.sh launch | doctor | drive | cleanup`. It builds the current commit into a scratch directory, runs it against copies of the fixtures with an isolated cache, and keeps the evidence. The journeys it should cover are in [`.dotstack/features/`](.dotstack/features/README.md).
 
