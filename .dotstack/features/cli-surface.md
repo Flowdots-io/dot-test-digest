@@ -10,7 +10,7 @@
 - `cli-missing-delimiter` a command without `--` is a usage error.
 - `cli-bad-value` a missing, out-of-range or malformed flag value is a usage error.
 - `cli-no-command` `--` with nothing after it is a usage error.
-- `cli-subcommand` the first bare word `show`, `config`, `gc`, `replay`, `stats` or `digest` dispatches (`config`: see [config.md](./config.md); `gc`: see [cache.md](./cache.md); `replay`, `stats`: see [replay-stats.md](./replay-stats.md); `digest`: see [digest-input.md](./digest-input.md)); `doctor`, `init`, `mcp`, `schema` are listed in `--help` and exit 64 `<name> is not available in this version`; any other bare word, or a subcommand name after a flag, is the missing-delimiter error; after `--` it is a program.
+- `cli-subcommand` the first bare word `show`, `config`, `gc`, `replay`, `stats`, `digest` or `schema` dispatches (`config`: see [config.md](./config.md); `gc`: see [cache.md](./cache.md); `replay`, `stats`: see [replay-stats.md](./replay-stats.md); `digest`: see [digest-input.md](./digest-input.md); `schema`: see [json-envelope.md](./json-envelope.md)); `doctor`, `init`, `mcp` are listed in `--help` and exit 64 `<name> is not available in this version`; any other bare word, or a subcommand name after a flag, is the missing-delimiter error; after `--` it is a program.
 - `run-record` every wrapped run writes `logs/<run>.json` (command, cwd, exit codes, signal, phase, options, summary, log and digest sizes, every cluster) atomically after the digest.
 - `show` `show <run> [L<a>-L<b>|<a>-<b>|L<a>|cluster_id] [--numbers] [--record]`; `<run>` is `last` (newest record of this directory), a run id or a 6+ character prefix; a missing run exits 66.
 
