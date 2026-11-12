@@ -76,6 +76,29 @@ describe("configuration layers (config-file)", () => {
     expect(run.code).toBe(0);
   });
 
+  it("the walk stops at a symlinked home, compared by real path", async () => {
+    const root = fs.realpathSync(tempDir("dtd-symhome-"));
+    fs.writeFileSync(path.join(root, PROJECT_FILE), '{ "maxClusters": 9 }');
+    fs.mkdirSync(path.join(root, "real-home", "work"), { recursive: true });
+    fs.symlinkSync(path.join(root, "real-home"), path.join(root, "home-link"));
+    const env = { ...userConfig().env, HOME: path.join(root, "home-link") };
+    const run = await config(path.join(root, "real-home", "work"), env);
+    expect(run.stdout.split("\n")).toContain("maxClusters = 5 (default)");
+  });
+
+  it("outside home, a directory without .git above it uses no project file", async () => {
+    const shared = fs.realpathSync(tempDir("dtd-shared-"));
+    fs.writeFileSync(path.join(shared, PROJECT_FILE), '{ "maxClusters": 9 }');
+    fs.mkdirSync(path.join(shared, "scratch"));
+    const env = { ...userConfig().env, HOME: fs.realpathSync(tempDir("dtd-elsewhere-home-")) };
+    const run = await config(path.join(shared, "scratch"), env);
+    expect(run.stdout.split("\n")).toContain("maxClusters = 5 (default)");
+    const bounded = project({ [PROJECT_FILE]: '{ "maxClusters": 9 }' });
+    fs.mkdirSync(path.join(bounded, "sub"));
+    const inRepo = await config(path.join(bounded, "sub"), env);
+    expect(inRepo.stdout.split("\n")).toContain(`maxClusters = 9 (project ${path.join(bounded, PROJECT_FILE)})`);
+  });
+
   it("An unknown key is a usage error naming file and key", async () => {
     const dir = project({ [PROJECT_FILE]: '{ "maxCluster": 3 }' });
     const run = await runMain(["--", "true"], { cwd: dir, home: tempDir("dtd-cfg-"), deps: { env: userConfig().env } });
