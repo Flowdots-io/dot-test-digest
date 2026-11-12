@@ -48,6 +48,7 @@ export const RunRecordSchema = z.object({
     context_lines: z.number().int(),
     no_jev: z.boolean(),
     retry_flakes: z.boolean(),
+    allow_no_tests: z.boolean(),
   }),
   summary: z.object({
     passed: count,

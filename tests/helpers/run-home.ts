@@ -32,7 +32,7 @@ export function syntheticRecord(run: Pick<SyntheticRun, "id" | "cwd" | "createdA
     status: "PASS",
     execution_gear: "GEAR_0_HEURISTIC_FALLBACK",
     format: "compact-md",
-    options: { max_clusters: 5, context_lines: 2, no_jev: true, retry_flakes: false },
+    options: { max_clusters: 5, context_lines: 2, no_jev: true, retry_flakes: false, allow_no_tests: false },
     summary: { passed: 0, failed: 0, skipped: 0, warnings: 0, total_clusters: 0 },
     raw_lines: 0,
     raw_bytes: 0,

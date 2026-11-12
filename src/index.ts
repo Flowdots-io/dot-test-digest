@@ -239,6 +239,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
         context_lines: options.contextLines,
         no_jev: options.noJev,
         retry_flakes: options.retryFlakes,
+        allow_no_tests: options.allowNoTests,
       },
       summary: { ...envelope.summary, warnings: envelope.summary.warnings ?? 0 },
       raw_lines: rawLog.linesWritten,
