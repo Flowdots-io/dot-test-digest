@@ -103,7 +103,7 @@ Most flags can also be set once, so every run gets them without typing. Each set
 | `retention.stateMaxAgeDays` | integer `0` or more | `90` | none |
 | `mcp.allow` | list of argv prefixes, e.g. `[["pnpm", "test"]]` | empty | none; user file only |
 
-Booleans accept `true`, `false`, `1` and `0` (in a file, also as JSON `true`/`false`); an empty environment variable counts as unset. `--tdd-phase`, `--scope-id` and `--allow-no-tests` are per-run and stay flags. `progress` and the `retention.*` keys are read by the features that use them. The configuration is strict: an unknown key (`<path>: unknown key "maxCluster"`), a wrong value (`<path>: maxClusters must be between 1 and 15, got 99`, `DOT_TEST_DIGEST_MAX_CLUSTERS must be an integer between 1 and 15, got abc`) or a file that is not valid JSON (`<path>: invalid JSON: …`) is a usage error, exit `64`, before the command is started. A project file may not set `mcp`: the key is ignored and `dot-test-digest: ignoring "mcp" in <path>: the command allowlist is read from the user config only` is printed on `stderr`, so a repository you cloned cannot widen what the MCP server runs.
+Booleans accept `true`, `false`, `1` and `0` (in a file, also as JSON `true`/`false`); an empty environment variable counts as unset. `--tdd-phase`, `--scope-id` and `--allow-no-tests` are per-run and stay flags. `progress` is read by the feature that uses it; the `retention.*` keys drive the cache prune and `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)). The configuration is strict: an unknown key (`<path>: unknown key "maxCluster"`), a wrong value (`<path>: maxClusters must be between 1 and 15, got 99`, `DOT_TEST_DIGEST_MAX_CLUSTERS must be an integer between 1 and 15, got abc`) or a file that is not valid JSON (`<path>: invalid JSON: …`) is a usage error, exit `64`, before the command is started. A project file may not set `mcp`: the key is ignored and `dot-test-digest: ignoring "mcp" in <path>: the command allowlist is read from the user config only` is printed on `stderr`, so a repository you cloned cannot widen what the MCP server runs.
 
 `dot-test-digest config` prints the effective value of every setting and where it came from, one line each (flags play no part):
 
@@ -149,7 +149,32 @@ dot-test-digest show last --record         # the record file itself
 
 A `<run>` is `last` (the newest record whose `cwd` is the current directory, so runs in other repositories never answer), a full run id, or a unique prefix of at least 6 characters. A range running past the end is clamped. Errors are one line on `stderr`: `no run recorded for this directory` and `no such run: <ref>` exit `66`; `log of <run> was removed` and `record of <run> is missing or unreadable` (a log from before records existed) exit `66`; an ambiguous or too-short prefix, a range that starts past the end (`the log has <N> lines`), a reversed range (`invalid range: L9-L3`) or an unknown cluster id (`no cluster <id> in <run>`) exit `64`.
 
-`--help` also lists `config` (see [Configuration](#configuration)) and `replay`, `digest`, `gc`, `stats`, `doctor`, `init`, `mcp` and `schema`. Those last eight are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)) and `replay`, `digest`, `stats`, `doctor`, `init`, `mcp` and `schema`. Those last seven are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+
+### The cache and what is deleted
+
+Everything the tool writes lives in one directory, `~/.cache/dot-test-digest/` (or `$DOT_TEST_DIGEST_HOME`): runs in `logs/` (`<run>.log` and `<run>.json`, a pair counts as one run) and TDD state in `state-<scope_id>.json`. Nothing else in it, and nothing outside it, is ever deleted.
+
+After each run has printed its digest, the tool prunes the cache:
+
+- It keeps the newest 50 runs (`retention.keepRuns`; the run that just finished is one of them) whatever their age.
+- Among the older ones it deletes those created more than 14 days ago (`retention.maxAgeDays`). A log from before run records existed counts by its modification time; a record whose log is gone is deleted.
+- It deletes `state-*.json` files not modified for 90 days (`retention.stateMaxAgeDays`), never the current scope's.
+- It never deletes the current run, a file modified in the last hour (another run may be writing it), a symbolic link, or a file that is not named like a run (`run_<id>.log`, `run_<id>.json`) or a state file.
+- It deletes at most 200 files per run, oldest first; the rest goes on the next runs.
+
+A failure while pruning prints `dot-test-digest: could not prune the cache: <reason>` on `stderr` and never changes the exit code. `DOT_TEST_DIGEST_PRUNE=0` or `"retention": { "auto": false }` turns the automatic prune off (see [Configuration](#configuration)).
+
+`gc` runs the same rule on demand, without the 200-file cap, and says what it did:
+
+```bash
+dot-test-digest gc                                  # removed 10 runs (0 state files), kept 50 runs
+dot-test-digest gc --keep 10 --max-age-days 2       # stricter numbers for this call
+dot-test-digest gc --state-max-age-days 30
+dot-test-digest gc --dry-run                        # would remove 10 runs (0 state files), keeping 50 runs
+```
+
+Its defaults are the `retention.*` settings (50, 14 and 90 unless configured). A value that is not a non-negative integer exits `64` with `--keep must be a non-negative integer, got -1`. On a cache that does not exist it prints `removed 0 runs (0 state files), kept 0 runs`, exits `0` and creates nothing. The one-hour protection applies to `gc` too.
 
 ## The TDD gate
 

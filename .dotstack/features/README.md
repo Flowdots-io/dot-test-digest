@@ -39,4 +39,5 @@ Each feature file has an H1, one paragraph, then exactly four H2s: `Sub-features
 - [Failure digest](./failure-digest.md): clusters, the 2,400-byte ceiling, omitted clusters, `raw:` pointers, the tsc raw-text fallback.
 - [TDD gate](./tdd-gate.md): `--tdd-phase` red, green and refactor, `VALID_RED`/`INVALID_RED`/`INVALID_GREEN`, exit 64, `--allow-no-tests`, baseline state.
 - [JSON envelope](./json-envelope.md): `--format=json` and `--max-clusters`.
+- [Cache retention](./cache.md): the automatic prune after each run, `gc` and `--dry-run`, what is never deleted, `DOT_TEST_DIGEST_PRUNE`.
 - [Configuration and color](./config.md): project and user config files, `DOT_TEST_DIGEST_*` variables, `config`, the `mcp` warning, `--color` and `NO_COLOR`.
