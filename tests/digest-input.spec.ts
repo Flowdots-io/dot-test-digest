@@ -97,11 +97,11 @@ describe("digest (digest-input)", () => {
   it("digest as JSON", async () => {
     const where = workspace();
     const run = await digest([TAP_LOG, "--format=json"], where);
+    expect(run.code, run.stderr).toBe(1);
     const envelope = JSON.parse(run.stdout) as DigestEnvelope;
     expect(envelope.status).toBe("FAIL");
     expect(envelope.exit_code).toBe(1);
     expect(envelope.duration_ms).toBe(0);
-    expect(run.code).toBe(1);
   });
 
   it("Bad input is rejected", async () => {
