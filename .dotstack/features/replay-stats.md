@@ -4,7 +4,7 @@
 
 ## Sub-features
 
-- `replay-same` `replay last` with the stored options prints the original run's stdout byte for byte and exits with the record's `exit_code` (`1` for the cart).
+- `replay-same` `replay last` with the stored options prints the original run's stdout byte for byte and exits with the record's `exit_code` (`1` for the cart), for a run whose digest came from Gear 0 (grammar or heuristic fallback) without a retry. A Gear 1 digest is replayed through the heuristic (Gear 1 is off), and a `--retry-flakes` run that retried is replayed from its whole log (both attempts) while the live digest used the second only, so neither is byte-identical.
 - `replay-override` `--format=json`, `--max-clusters <1..15>` and `--context-lines <0..5>` (also `--flag value`) override the stored option; a bad value exits 64 with the run's flag message (`--max-clusters must be between 1 and 15, got 99`); an unknown flag exits 64 `unknown flag: <flag>`; no run exits 64 `replay needs a run: ...`.
 - `replay-verdict` a TDD run keeps its verdict: a replayed `INVALID_RED` exits `64`, its header starts `[INVALID_RED | RED]` and stderr repeats the INV-5 message; a replayed green prints no `(delta: ...)`.
 - `replay-readonly` no child process, no network, no state file read or written, no new log or record, no prune: the cache home is unchanged (names and mtimes).
@@ -40,5 +40,6 @@ Preconditions:
 
 - `last` is the newest record of the current directory: drive `replay last` with the fixture the run used (`node-cart`), not `-`.
 - A replay reads source windows from the run's directory as it is now; an edited fixture shows its new lines.
+- Byte-identity holds only for Gear 0 runs without a retry (see `replay-same`); neither Gear 1 nor `--retry-flakes` can be driven here.
 - The digest bytes and the log path in the header depend on the path length of the run's `home/`, so byte counts differ between launches; compare a replay with its own run, never with a number from another launch.
 - `stats` counts records only: a log from before records existed, or a run that ended before its digest (exit `127` or `70`), is not counted.

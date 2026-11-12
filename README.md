@@ -154,12 +154,12 @@ A `<run>` is `last` (the newest record whose `cwd` is the current directory, so 
 `replay` prints the digest of a recorded run again, from its record and its log, without running anything:
 
 ```bash
-dot-test-digest replay last                                   # the same digest, byte for byte
+dot-test-digest replay last                                   # the same digest (see below for when it is byte for byte)
 dot-test-digest replay last --format=json --max-clusters=15   # every cluster, as JSON
 dot-test-digest replay last --context-lines=0                 # only the failing source line
 ```
 
-It reads the stored lines through the same pipeline as a run, with the stored `phase`, `command`, `child_exit_code`, `duration_ms` and options, unless `--format`, `--max-clusters` or `--context-lines` overrides one of them, and exits with the record's `exit_code` (a replayed `INVALID_RED` exits `64` and prints its message on `stderr` again). The size rules are those of a run, so `--format=json` is how to see more than the compact budget allows. Replay never starts a process, never calls the network (Gear 1 is off), never reads or writes a TDD state file and never writes a log or a record, so no `(delta: ...)` is printed. A log from before records existed exits `66` with `<run> has no record (written by an older version); replay needs one`; a record whose log was pruned exits `66` with `log of <run> was removed`. A source window is read from the run's directory as it is now, so an edited file shows its new lines.
+It reads the stored lines through the same pipeline as a run, with the stored `phase`, `command`, `child_exit_code`, `duration_ms` and options, unless `--format`, `--max-clusters` or `--context-lines` overrides one of them, and exits with the record's `exit_code` (a replayed `INVALID_RED` exits `64` and prints its message on `stderr` again). The size rules are those of a run, so `--format=json` is how to see more than the compact budget allows. The digest is byte for byte the original only for a run whose digest came from Gear 0 (a grammar or the heuristic fallback) and that was not retried: a Gear 1 (Jev) digest is replayed through the heuristic instead, and a `--retry-flakes` run is replayed from its whole log, both attempts, where the live digest used the second only. Replay never starts a process, never calls the network (Gear 1 is off), never reads or writes a TDD state file and never writes a log or a record, so no `(delta: ...)` is printed. A log from before records existed exits `66` with `<run> has no record (written by an older version); replay needs one`; a record whose log was pruned exits `66` with `log of <run> was removed`. A source window is read from the run's directory as it is now, so an edited file shows its new lines.
 
 `stats` totals what the recorded runs of every directory saved:
 
