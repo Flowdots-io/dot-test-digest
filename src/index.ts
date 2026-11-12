@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { runGear0, type AdapterCounts } from "./adapters/index.js";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
@@ -10,6 +11,7 @@ import { dedupeFailures, type DedupeResult, type RawFailure } from "./pruner/clu
 import { canonicalTestId, uniqueFailures } from "./pruner/failure-identity.js";
 import { runChild, type CapturedLine } from "./runner/capture.js";
 import { RawLogWriter } from "./runner/raw-log.js";
+import { recordClusters, recordPathFor, writeRunRecord, type RunRecord } from "./runner/run-record.js";
 import {
   evaluatePhase,
   loadState,
@@ -40,6 +42,8 @@ interface Attempt {
 export interface MainDeps {
   /** Injection point for tests; production builds a JevClient inside triageUnstructured. */
   client?: JevAsker;
+  /** Writes `logs/<run>.json`; tests replace it to simulate a full disk. */
+  writeRecord?: (file: string, record: RunRecord) => void;
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
@@ -68,6 +72,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
   const repoRoot = process.cwd();
   const scopeId = resolveScopeId(repoRoot, options.scopeId);
   const previousState = options.tddPhase === "none" ? null : loadState(scopeId);
+  const createdAt = new Date().toISOString();
 
   // Creating the log can fail (read-only cache). Fail loudly, but before the child
   // runs, so the child's exit code is never at stake.
@@ -202,11 +207,47 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       rawLogPath: run.logPath,
     });
 
-    process.stdout.write(
-      formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText }),
-    );
+    const digest = formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText });
+    process.stdout.write(digest);
     if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
     rawLog.close();
+
+    const record: RunRecord = {
+      schema: 1,
+      run_id: rawLog.runId,
+      version: VERSION,
+      created_at: createdAt,
+      source: "run",
+      cwd: repoRoot,
+      command,
+      exit_code: decision.exitCode,
+      child_exit_code: run.exitCode,
+      signal: run.signal,
+      duration_ms: run.durationMs,
+      phase: options.tddPhase,
+      scope_id: scopeId,
+      status: decision.status,
+      execution_gear: run.gear,
+      format: options.format,
+      options: {
+        max_clusters: options.maxClusters,
+        context_lines: options.contextLines,
+        no_jev: options.noJev,
+        retry_flakes: options.retryFlakes,
+      },
+      summary: { ...envelope.summary, warnings: envelope.summary.warnings ?? 0 },
+      raw_lines: rawLog.linesWritten,
+      raw_bytes: rawLog.bytesWritten,
+      digest_bytes: Buffer.byteLength(digest, "utf8"),
+      clusters: recordClusters([...run.ranked.kept, ...run.ranked.omitted]),
+    };
+    // INV-3: the record is bookkeeping; losing it must not change the exit code.
+    try {
+      (deps.writeRecord ?? writeRunRecord)(recordPathFor(path.dirname(rawLog.path), rawLog.runId), record);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      process.stderr.write(`dot-test-digest: could not write the run record: ${message}\n`);
+    }
     return decision.exitCode;
   } catch (error) {
     rawLog.close();
