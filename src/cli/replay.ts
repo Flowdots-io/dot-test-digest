@@ -3,7 +3,7 @@ import { loadConfig } from "../config/load.js";
 import { digestRun, type DigestSettings } from "../pipeline.js";
 import type { CapturedLine } from "../runner/capture.js";
 import { OutputFormatSchema, type OutputFormat } from "../types/schema.js";
-import { readInt } from "./args.js";
+import { FORMAT_CHOICES, readInt } from "./args.js";
 import { wantsColor } from "./color.js";
 import type { Subcommand } from "./dispatch.js";
 import { NoInputError, UsageError } from "./errors.js";
@@ -33,7 +33,7 @@ function parseReplayArgs(args: readonly string[]): ReplayArgs {
     if (value === undefined) throw new UsageError(`${flag} requires a value`);
     if (flag === "--format") {
       const format = OutputFormatSchema.safeParse(value);
-      if (!format.success) throw new UsageError(`${flag} must be compact-md or json`);
+      if (!format.success) throw new UsageError(`${flag} must be ${FORMAT_CHOICES}`);
       parsed.format = format.data;
     } else if (flag === "--max-clusters") {
       parsed.maxClusters = readInt(flag, value, 1, 15);
@@ -98,6 +98,7 @@ export const runReplay: Subcommand = async (args, context) => {
     confineWindows: record.source === "digest",
     timed: record.source !== "digest",
     logPath: run.logPath,
+    runId: run.runId,
     settings,
     previousState: null,
     color: wantsColor(config.values.color, context.stdoutIsTTY, context.env),

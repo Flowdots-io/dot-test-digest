@@ -1,13 +1,14 @@
 import os from "node:os";
 import type { AdapterCounts } from "../adapters/common.js";
-import type {
-  Delta,
-  DigestEnvelope,
-  DigestStatus,
-  ExecutionGear,
-  FailureCluster,
-  OutputFormat,
-  TddPhase,
+import {
+  ENVELOPE_SCHEMA_VERSION,
+  type Delta,
+  type DigestEnvelope,
+  type DigestStatus,
+  type ExecutionGear,
+  type FailureCluster,
+  type OutputFormat,
+  type TddPhase,
 } from "../types/schema.js";
 
 export const PASS_BYTE_CEILING = 160;
@@ -49,6 +50,10 @@ export interface BuildEnvelopeInput {
   clusters: readonly FailureCluster[];
   delta?: Delta;
   rawLogPath: string;
+  /** Clusters ranked below the kept ones (beyond `--max-clusters`). */
+  omittedCount?: number;
+  /** The run the log belongs to; a hand-built envelope has none. */
+  runId?: string;
 }
 
 export function buildEnvelope(input: BuildEnvelopeInput): DigestEnvelope {
@@ -65,10 +70,13 @@ export function buildEnvelope(input: BuildEnvelopeInput): DigestEnvelope {
       skipped: input.counts.skipped,
       ...(input.counts.warnings ? { warnings: input.counts.warnings } : {}),
       total_clusters: input.clusters.length,
+      ...(input.omittedCount ? { omitted_clusters: input.omittedCount } : {}),
     },
     ...(input.delta ? { delta: input.delta } : {}),
     ...(input.clusters.length > 0 ? { clusters: [...input.clusters] } : {}),
     raw_log_path: input.rawLogPath,
+    schema_version: ENVELOPE_SCHEMA_VERSION,
+    ...(input.runId !== undefined ? { run_id: input.runId } : {}),
   };
 }
 
@@ -250,12 +258,32 @@ function colorStatus(digest: string, status: DigestStatus): string {
   return `[${STATUS_COLOR[status]}${status}${SGR_RESET}${digest.slice(opening.length)}`;
 }
 
+/** One JSON object a line: the envelope without its clusters, each kept cluster, then each omitted one in short. */
+function renderNdjson(envelope: DigestEnvelope, omitted: readonly FailureCluster[]): string {
+  const { clusters = [], ...summary } = envelope;
+  const lines = [
+    { type: "summary", ...summary },
+    ...clusters.map((cluster) => ({ type: "cluster", ...cluster })),
+    ...omitted.map((cluster) => ({
+      type: "omitted",
+      cluster_id: cluster.cluster_id,
+      error_kind: cluster.error_kind,
+      affected_count: cluster.affected_count,
+      top_frame: cluster.top_frame,
+      label: omittedLabel(cluster),
+      raw_log_lines: cluster.raw_log_lines,
+    })),
+  ];
+  return lines.map((line) => `${JSON.stringify(line)}\n`).join("");
+}
+
 export function formatEnvelope(
   envelope: DigestEnvelope,
   format: OutputFormat,
   context: RenderContext = {},
 ): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
+  if (format === "ndjson") return renderNdjson(envelope, context.omitted ?? []);
   const { rawText, omitted = [], color = false, timed = true } = context;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED" || envelope.status === "INVALID_GREEN";
   const digest = `${oneLiner ? renderPassLine(envelope, timed) : renderFailBody(envelope, omitted, rawText, timed)}\n`;

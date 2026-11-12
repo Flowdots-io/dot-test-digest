@@ -7,7 +7,7 @@ import { finishRun } from "../runner/finish-run.js";
 import { RawLogWriter } from "../runner/raw-log.js";
 import { resolveScopeId } from "../state/tdd-gate.js";
 import { OutputFormatSchema, type OutputFormat } from "../types/schema.js";
-import { readBoolean, readInt } from "./args.js";
+import { FORMAT_CHOICES, readBoolean, readInt } from "./args.js";
 import { wantsColor } from "./color.js";
 import type { Subcommand } from "./dispatch.js";
 import { NoInputError, UsageError } from "./errors.js";
@@ -60,7 +60,7 @@ function parseDigestArgs(args: readonly string[]): DigestArgs {
       parsed.exitCode = readExitCode(value);
     } else if (flag === "--format") {
       const format = OutputFormatSchema.safeParse(value);
-      if (!format.success) throw new UsageError(`${flag} must be compact-md or json`);
+      if (!format.success) throw new UsageError(`${flag} must be ${FORMAT_CHOICES}`);
       parsed.format = format.data;
     } else if (flag === "--max-clusters") {
       parsed.maxClusters = readInt(flag, value, 1, 15);
@@ -143,6 +143,7 @@ export const runDigest: Subcommand = async (args, context) => {
     repoRoot: context.cwd,
     confineWindows: true,
     logPath: rawLog.path,
+    runId: rawLog.runId,
     settings,
     previousState: null,
     color: wantsColor(values.color, context.stdoutIsTTY, context.env),

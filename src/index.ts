@@ -85,6 +85,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       command,
       repoRoot,
       logPath: rawLog.path,
+      runId: rawLog.runId,
       settings: options,
       previousState,
       color: wantsColor(options.color ?? "auto", deps.stdoutIsTTY ?? process.stdout.isTTY === true, env),

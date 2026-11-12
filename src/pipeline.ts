@@ -39,6 +39,8 @@ export interface DigestInput {
   confineWindows?: boolean;
   /** The log the `raw:` pointers name. */
   logPath: string;
+  /** The run that log belongs to: `show <run_id>` reads it. */
+  runId: string;
   settings: DigestSettings;
   /** The scope's TDD state before this run; `null` prints no delta. */
   previousState: RunState | null;
@@ -181,6 +183,8 @@ export async function digestRun(input: DigestInput): Promise<DigestOutcome> {
     clusters: run.ranked.kept,
     ...(decision.delta ? { delta: decision.delta } : {}),
     rawLogPath: input.logPath,
+    omittedCount: run.ranked.omitted.length,
+    runId: input.runId,
   });
 
   const digest = formatEnvelope(envelope, settings.format, {
