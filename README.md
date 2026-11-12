@@ -72,9 +72,50 @@ dot-test-digest --format=json -- vitest run | jq .   # the full structured envel
 | `--no-jev` | off | Never call the Jev API. Use this to keep every run local. |
 | `--retry-flakes` | off | Re-run once when Gear 1 is at least 80% sure the failure was a flake. |
 | `--allow-no-tests` | off | Accept a `green` or `refactor` run that exited `0` without any recognised test (a runner with no grammar). Without it such a run is `INVALID_GREEN`. |
+| `--color <auto\|always\|never>` | `auto` | Color the status word of the header (green for `PASS` and `VALID_RED`, red for every other status). `auto` colors only when stdout is a terminal, `NO_COLOR` is unset or empty and `TERM` is not `dumb`; `always` ignores `NO_COLOR`. Sizes are measured on the uncolored text, and `--format=json` is never colored. |
 | `-h`, `--help` / `-v`, `--version` | | Print usage / version and exit `0`. |
 
-Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`).
+Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`), `NO_COLOR` (see `--color`), and the `DOT_TEST_DIGEST_*` settings below.
+
+### Configuration
+
+Most flags can also be set once, so every run gets them without typing. Each setting takes the first value found in this order: the flag, an environment variable, the project file, the user file, the built-in default.
+
+- **Project file:** `.dot-test-digest.json`, the nearest one found walking up from the working directory to the first directory that contains `.git` (that directory included), never above your home directory. Only that one file is read; files in parent directories are not merged in.
+- **User file:** `$XDG_CONFIG_HOME/dot-test-digest/config.json` (default `~/.config/dot-test-digest/config.json`).
+
+```json
+{ "maxClusters": 3, "noJev": true, "retention": { "keepRuns": 100 } }
+```
+
+| Key | Values | Default | Environment variable |
+| --- | --- | --- | --- |
+| `maxClusters` | integer `1` to `15` | `5` | `DOT_TEST_DIGEST_MAX_CLUSTERS` |
+| `contextLines` | integer `0` to `5` | `2` | `DOT_TEST_DIGEST_CONTEXT_LINES` |
+| `format` | `compact-md`, `json` | `compact-md` | `DOT_TEST_DIGEST_FORMAT` |
+| `noJev` | boolean | `false` | `DOT_TEST_DIGEST_NO_JEV` |
+| `retryFlakes` | boolean | `false` | `DOT_TEST_DIGEST_RETRY_FLAKES` |
+| `color` | `auto`, `always`, `never` | `auto` | `DOT_TEST_DIGEST_COLOR` |
+| `progress` | boolean | `false` | `DOT_TEST_DIGEST_PROGRESS` |
+| `retention.auto` | boolean | `true` | `DOT_TEST_DIGEST_PRUNE` (`0` turns pruning off) |
+| `retention.keepRuns` | integer `0` or more | `50` | none |
+| `retention.maxAgeDays` | integer `0` or more | `14` | none |
+| `retention.stateMaxAgeDays` | integer `0` or more | `90` | none |
+| `mcp.allow` | list of argv prefixes, e.g. `[["pnpm", "test"]]` | empty | none; user file only |
+
+Booleans accept `true`, `false`, `1` and `0` (in a file, also as JSON `true`/`false`); an empty environment variable counts as unset. `--tdd-phase`, `--scope-id` and `--allow-no-tests` are per-run and stay flags. `progress` and the `retention.*` keys are read by the features that use them. The configuration is strict: an unknown key (`<path>: unknown key "maxCluster"`), a wrong value (`<path>: maxClusters must be between 1 and 15, got 99`, `DOT_TEST_DIGEST_MAX_CLUSTERS must be an integer between 1 and 15, got abc`) or a file that is not valid JSON (`<path>: invalid JSON: …`) is a usage error, exit `64`, before the command is started. A project file may not set `mcp`: the key is ignored and `dot-test-digest: ignoring "mcp" in <path>: the command allowlist is read from the user config only` is printed on `stderr`, so a repository you cloned cannot widen what the MCP server runs.
+
+`dot-test-digest config` prints the effective value of every setting and where it came from, one line each (flags play no part):
+
+```text
+maxClusters = 3 (project /home/me/app/.dot-test-digest.json)
+contextLines = 2 (default)
+format = json (env DOT_TEST_DIGEST_FORMAT)
+...
+retention.stateMaxAgeDays = 90 (default)
+```
+
+The source is `default`, `user <path>`, `project <path>` or `env <NAME>`; `mcp.allow` is printed only when the user file sets it.
 
 ### What you get back
 
@@ -108,7 +149,7 @@ dot-test-digest show last --record         # the record file itself
 
 A `<run>` is `last` (the newest record whose `cwd` is the current directory, so runs in other repositories never answer), a full run id, or a unique prefix of at least 6 characters. A range running past the end is clamped. Errors are one line on `stderr`: `no run recorded for this directory` and `no such run: <ref>` exit `66`; `log of <run> was removed` and `record of <run> is missing or unreadable` (a log from before records existed) exit `66`; an ambiguous or too-short prefix, a range that starts past the end (`the log has <N> lines`), a reversed range (`invalid range: L9-L3`) or an unknown cluster id (`no cluster <id> in <run>`) exit `64`.
 
-`--help` also lists `replay`, `digest`, `gc`, `stats`, `doctor`, `init`, `mcp`, `config` and `schema`. They are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+`--help` also lists `config` (see [Configuration](#configuration)) and `replay`, `digest`, `gc`, `stats`, `doctor`, `init`, `mcp` and `schema`. Those last eight are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
 
 ## The TDD gate
 
