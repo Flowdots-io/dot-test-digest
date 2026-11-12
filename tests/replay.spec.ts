@@ -4,7 +4,7 @@ import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { MainDeps } from "../src/index.js";
 import type { DigestEnvelope } from "../src/types/schema.js";
-import { runMain, runNodeCart, tempDir, type CartRun } from "./helpers/node-cart.js";
+import { runInCart, runMain, runNodeCart, tempDir, type CartRun } from "./helpers/node-cart.js";
 import { syntheticHome, workDirs } from "./helpers/run-home.js";
 
 // Every spawn still runs; the spy only counts them.
@@ -112,6 +112,31 @@ describe("replay (run-replay)", () => {
     const again = await replay(["last"], red);
     expect(again.stdout).toMatch(/^\[PASS \| GREEN\] 1 passed, 0 failed in \d+ms \| log: \S+run_[0-9a-z]{9,}\.log\n$/);
     expect(again.code).toBe(0);
+  });
+
+  it("Replay never asks Jev, even for a long unstructured failure recorded without --no-jev", async () => {
+    // 200 unstructured lines (over Gear 1's 150-line floor) and a nonzero exit: Gear 1 territory.
+    const script = 'for i in $(seq 1 200); do echo "step $i done"; done; echo "fatal: something broke"; exit 3';
+    const unconfigured: MainDeps = { client: { isConfigured: () => false, ask: failIfCalled.client!.ask } };
+    const original = await runInCart([], ["sh", "-c", script], { deps: unconfigured });
+    expect(original.code).toBe(3);
+    const record = JSON.parse(
+      fs.readFileSync(path.join(original.home, "logs", fs.readdirSync(path.join(original.home, "logs")).find((name) => name.endsWith(".json")) ?? ""), "utf8"),
+    ) as { options: { no_jev: boolean }; raw_lines: number };
+    expect(record.options.no_jev).toBe(false);
+    expect(record.raw_lines).toBeGreaterThan(150);
+
+    const key = process.env["TYPESAFE_API_KEY"];
+    process.env["TYPESAFE_API_KEY"] = "test-key-never-used";
+    try {
+      const again = await replay(["last"], original);
+      expect(again.stderr).toBe("");
+      expect(again.code).toBe(3);
+      expect(again.stdout).toBe(original.stdout);
+    } finally {
+      if (key === undefined) delete process.env["TYPESAFE_API_KEY"];
+      else process.env["TYPESAFE_API_KEY"] = key;
+    }
   });
 
   it("A run without a record cannot be replayed", async () => {
