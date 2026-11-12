@@ -19,6 +19,7 @@ import {
   RECEIVED_LINE,
   SUMMARY,
 } from "./js-generic.js";
+import { rerunFor } from "./rerun.js";
 import { isNodeTapStream, isSpecStream, NODE_SPEC_SUMMARY, parseNodeSpec, parseNodeTap } from "./node-test.js";
 
 const TAP_SUMMARY = /^#\s+(?:tests|pass|fail)\s+\d+\s*$/;
@@ -338,9 +339,18 @@ export const jsTestAdapter: Adapter = {
     return score;
   },
 
-  parse(lines: readonly CapturedLine[]): AdapterResult {
-    if (isSpecStream(lines)) return parseNodeSpec(lines);
-    if (isCompactStream(lines)) return parseCompact(lines);
-    return isNodeTapStream(lines) ? parseNodeTap(lines) : parseGeneric(lines);
+  parse(lines: readonly CapturedLine[], command: readonly string[] = []): AdapterResult {
+    const result = isSpecStream(lines)
+      ? parseNodeSpec(lines)
+      : isCompactStream(lines)
+        ? parseCompact(lines)
+        : isNodeTapStream(lines)
+          ? parseNodeTap(lines)
+          : parseGeneric(lines);
+    for (const failure of result.failures) {
+      const rerun = rerunFor(command, { file: failure.testFile, name: failure.testName });
+      if (rerun !== undefined) failure.rerun = rerun;
+    }
+    return result;
   },
 };

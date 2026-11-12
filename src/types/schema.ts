@@ -72,6 +72,8 @@ export const FailureClusterSchema = z.object({
   pruned_stack: z.array(z.string()).max(MAX_PRUNED_STACK),
   signal_window: z.string(),
   raw_log_lines: z.string().regex(/^L\d+-L\d+$/),
+  /** The POSIX shell command that reruns the first sample test alone. */
+  rerun: z.string().min(1).optional(),
 });
 export type FailureCluster = z.infer<typeof FailureClusterSchema>;
 

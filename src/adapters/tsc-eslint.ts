@@ -1,6 +1,7 @@
 import type { CapturedLine } from "../runner/capture.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import { classifyMessage, type Adapter, type AdapterResult } from "./common.js";
+import { rerunFor } from "./rerun.js";
 
 const TSC = /^(.*?)\((\d+),(\d+)\):\s+(error|warning)\s+(TS\d+):\s+(.+)$/;
 const ESLINT_FILE = /^(?:\/\S+|[A-Za-z]:\\\S+)$/;
@@ -18,7 +19,7 @@ export const tscEslintAdapter: Adapter = {
     return score;
   },
 
-  parse(lines: readonly CapturedLine[]): AdapterResult {
+  parse(lines: readonly CapturedLine[], command: readonly string[] = []): AdapterResult {
     const failures: RawFailure[] = [];
     const warningFailures: RawFailure[] = [];
     let errors = 0;
@@ -55,6 +56,7 @@ export const tscEslintAdapter: Adapter = {
         const [, row, column, severity, message] = eslint;
         if (severity === "error") errors += 1;
         else warnings += 1;
+        const rerun = rerunFor(command, { file });
         (severity === "error" ? failures : warningFailures).push({
           testName: null,
           errorKind: classifyMessage(message ?? ""),
@@ -62,6 +64,7 @@ export const tscEslintAdapter: Adapter = {
           frames: [`${file}:${row ?? "0"}:${column ?? "0"}`],
           startLine: line.line,
           endLine: line.line,
+          ...(rerun !== undefined ? { rerun } : {}),
         });
       }
     }

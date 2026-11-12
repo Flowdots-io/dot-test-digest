@@ -119,6 +119,8 @@ export function renderPassLine(envelope: DigestEnvelope, timed = true): string {
 interface Detail {
   window: boolean;
   stack: boolean;
+  /** The `rerun:` row, printed on the first block only. */
+  rerun: boolean;
 }
 
 function clusterHead(cluster: FailureCluster): string {
@@ -140,6 +142,7 @@ function renderCluster(cluster: FailureCluster, detail: Detail): string {
     for (const line of cluster.signal_window.split("\n")) rows.push(`  ${line}`);
   }
   if (cluster.sample_tests.length > 0) rows.push(`  tests: ${cluster.sample_tests.join(", ")}`);
+  if (detail.rerun && cluster.rerun !== undefined) rows.push(`  rerun: ${cluster.rerun}`);
   rows.push(`  raw: ${cluster.raw_log_lines}`);
   return rows.join("\n");
 }
@@ -169,10 +172,12 @@ function renderOneLine(cluster: FailureCluster): string {
   return cluster.message === "" ? head : `${head} ${truncateBytes(cluster.message, MESSAGE_BYTE_CEILING)}`;
 }
 
-const LADDER: readonly ((cluster: FailureCluster) => string)[] = [
-  (cluster) => renderCluster(cluster, { window: true, stack: true }),
-  (cluster) => renderCluster(cluster, { window: false, stack: true }),
-  (cluster) => renderCluster(cluster, { window: false, stack: false }),
+type RenderBlock = (cluster: FailureCluster, first: boolean) => string;
+
+const LADDER: readonly RenderBlock[] = [
+  (cluster, first) => renderCluster(cluster, { window: true, stack: true, rerun: first }),
+  (cluster, first) => renderCluster(cluster, { window: false, stack: true, rerun: first }),
+  (cluster) => renderCluster(cluster, { window: false, stack: false, rerun: false }),
   renderOneLine,
 ];
 
@@ -218,12 +223,12 @@ function nextRow(envelope: DigestEnvelope, target: FailureCluster | undefined): 
 function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
-  renderBlock: (cluster: FailureCluster) => string,
+  renderBlock: RenderBlock,
   timed: boolean,
 ): { header: string; body: string } {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
-  const blocks = clusters.map((cluster) => `\n${renderBlock(cluster)}`);
+  const blocks = clusters.map((cluster, index) => `\n${renderBlock(cluster, index === 0)}`);
   const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
   // The first cluster without a full block, else the first one; every id has the same length, so the row's size
@@ -283,6 +288,7 @@ function renderNdjson(envelope: DigestEnvelope, omitted: readonly FailureCluster
       top_frame: cluster.top_frame,
       label: omittedLabel(cluster),
       raw_log_lines: cluster.raw_log_lines,
+      ...(cluster.rerun !== undefined ? { rerun: cluster.rerun } : {}),
     })),
   ];
   return lines.map((line) => `${JSON.stringify(line)}\n`).join("");

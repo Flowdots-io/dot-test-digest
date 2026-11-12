@@ -174,6 +174,10 @@
           "raw_log_lines": {
             "type": "string",
             "pattern": "^L\\d+-L\\d+$"
+          },
+          "rerun": {
+            "type": "string",
+            "minLength": 1
           }
         },
         "required": [

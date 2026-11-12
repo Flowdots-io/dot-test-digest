@@ -52,8 +52,9 @@ describe("configuration layers (config-file)", () => {
     const deps = { env: { ...env, DOT_TEST_DIGEST_MAX_CLUSTERS: "2" } };
     const fromEnv = await runNodeCart(NO_JEV, ["cart.test.js"], { files, deps });
     expect(header(fromEnv.stdout)).toMatch(/\| 2 clusters \|/);
-    const fromFlag = await runNodeCart([...NO_JEV, "--max-clusters=3"], ["cart.test.js"], { files, deps });
-    expect(header(fromFlag.stdout)).toMatch(/\| 3 clusters \|/);
+    // Three full blocks no longer fit the cart's digest with its next: and rerun: rows; the envelope keeps 3.
+    const fromFlag = await runNodeCart([...NO_JEV, "--format=json", "--max-clusters=3"], ["cart.test.js"], { files, deps });
+    expect((JSON.parse(fromFlag.stdout) as { summary: { total_clusters: number } }).summary.total_clusters).toBe(3);
   });
 
   it("The user file is the lowest layer", async () => {

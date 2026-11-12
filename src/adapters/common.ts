@@ -23,7 +23,8 @@ export interface Adapter {
   name: string;
   /** Returns 0 when the stream is not this grammar; higher is a better match. */
   detect(lines: readonly string[]): number;
-  parse(lines: readonly CapturedLine[]): AdapterResult;
+  /** `command` is the wrapped command, for the clusters' rerun hints. */
+  parse(lines: readonly CapturedLine[], command?: readonly string[]): AdapterResult;
 }
 
 const SYNTAX_TOKENS: readonly RegExp[] = [
