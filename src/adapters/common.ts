@@ -5,13 +5,18 @@ import type { ErrorKind } from "../types/schema.js";
 export interface AdapterCounts {
   passed: number;
   failed: number;
+  /** Skipped and todo tests. */
   skipped: number;
+  /** Compiler and linter warnings; set only by grammars that report them, and only when nonzero. */
+  warnings?: number;
 }
 
 export interface AdapterResult {
   adapter: string;
   failures: RawFailure[];
   counts: AdapterCounts;
+  /** Warning diagnostics: counted, not failures, unless a failing run has nothing else to show. */
+  warnings?: RawFailure[];
 }
 
 export interface Adapter {

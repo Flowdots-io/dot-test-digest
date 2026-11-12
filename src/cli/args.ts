@@ -35,6 +35,7 @@ Flags (everything after -- is passed to <command> verbatim):
   --context-lines <0..5>                  SignalWindow half-height (default: 2)
   --scope-id <string>                     TDD state scope (default: sha256(cwd)[0..12])
   --retry-flakes                          retry once when Gear 1 is >=0.80 sure it is a flake
+  --allow-no-tests                        accept a green or refactor run that ran no test
   --no-jev                                never call the Jev API (offline)
   -h, --help                              show this help
   -v, --version                           show the version
@@ -137,6 +138,9 @@ export function parseArgs(argv: readonly string[]): ParseResult {
         break;
       case "--retry-flakes":
         raw["retryFlakes"] = readBoolean(flag, token);
+        break;
+      case "--allow-no-tests":
+        raw["allowNoTests"] = readBoolean(flag, token);
         break;
       default:
         throw new UsageError(`unknown flag: ${flag}`);
