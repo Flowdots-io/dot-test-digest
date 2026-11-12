@@ -119,7 +119,7 @@ export const rustGoAdapter: Adapter = {
 
     for (const failure of failures) {
       if (failure.message === "") failure.message = "Unknown rust/go failure";
-      const rerun = rerunFor(command, { name: failure.testName });
+      const rerun = rerunFor(command, ["cargo", "go"], { name: failure.testName });
       if (rerun !== undefined) failure.rerun = rerun;
     }
     if (counts.failed === 0) counts.failed = failures.filter((f) => f.errorKind !== "TYPE_COMPILE_ERROR" || f.frames.length > 0).length;

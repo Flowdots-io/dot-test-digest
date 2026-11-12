@@ -56,7 +56,7 @@ export const tscEslintAdapter: Adapter = {
         const [, row, column, severity, message] = eslint;
         if (severity === "error") errors += 1;
         else warnings += 1;
-        const rerun = rerunFor(command, { file });
+        const rerun = rerunFor(command, ["eslint"], { file });
         (severity === "error" ? failures : warningFailures).push({
           testName: null,
           errorKind: classifyMessage(message ?? ""),

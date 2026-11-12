@@ -6,19 +6,26 @@ export interface RerunTarget {
   name?: string | null;
 }
 
-type Runner = "node" | "vitest" | "jest" | "pytest" | "cargo" | "go" | "eslint";
+/** The runners a grammar's output can come from; a grammar looks only for its own. */
+export type Runner = "node" | "vitest" | "jest" | "pytest" | "cargo" | "go" | "eslint";
 
-const RUNNERS: ReadonlySet<string> = new Set<Runner>(["vitest", "jest", "pytest", "cargo", "go", "eslint"]);
-
-/** The runner and the command's words up to and including its token (`node --test` for node). */
-function findRunner(command: readonly string[]): { runner: Runner; prefix: readonly string[] } | null {
+/**
+ * The runner and the command's words up to and including its token (`node --test` for node). A word with
+ * whitespace is a script for a shell (`sh -c "... vitest"`), never a runner, even when its basename is one.
+ */
+function findRunner(
+  command: readonly string[],
+  runners: readonly Runner[],
+): { runner: Runner; prefix: readonly string[] } | null {
   for (const [index, word] of command.entries()) {
+    if (/\s/.test(word)) continue;
     const base = path.basename(word);
     if (base === "node") {
+      if (!runners.includes("node")) continue;
       let flag = index + 1;
       while (command[flag]?.startsWith("-") === true && command[flag] !== "--test") flag += 1;
       if (command[flag] === "--test") return { runner: "node", prefix: command.slice(0, flag + 1) };
-    } else if (RUNNERS.has(base)) {
+    } else if ((runners as readonly string[]).includes(base)) {
       return { runner: base as Runner, prefix: command.slice(0, index + 1) };
     }
   }
@@ -45,7 +52,8 @@ function selector(runner: Runner, file: string | undefined, name: string | undef
     case "vitest":
       return file && leaf ? ["run", file, "-t", escapeRegExp(leaf)] : null;
     case "jest":
-      return file && leaf ? [file, "-t", escapeRegExp(leaf)] : null;
+      // One word, so a name that starts with `-` is never read as a flag.
+      return file && leaf ? [file, `--testNamePattern=${escapeRegExp(leaf)}`] : null;
     case "pytest":
       return file && name ? [`${file}::${name}`] : null;
     case "cargo":
@@ -58,8 +66,12 @@ function selector(runner: Runner, file: string | undefined, name: string | undef
 }
 
 /** The shell command that reruns the target alone, or `undefined` when the command has no runner token. */
-export function rerunFor(command: readonly string[], target: RerunTarget): string | undefined {
-  const found = findRunner(command);
+export function rerunFor(
+  command: readonly string[],
+  runners: readonly Runner[],
+  target: RerunTarget,
+): string | undefined {
+  const found = findRunner(command, runners);
   if (found === null) return undefined;
   const args = selector(found.runner, target.file ?? undefined, target.name ?? undefined);
   return args === null ? undefined : [...found.prefix, ...args].map(quote).join(" ");

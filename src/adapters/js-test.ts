@@ -348,7 +348,7 @@ export const jsTestAdapter: Adapter = {
           ? parseNodeTap(lines)
           : parseGeneric(lines);
     for (const failure of result.failures) {
-      const rerun = rerunFor(command, { file: failure.testFile, name: failure.testName });
+      const rerun = rerunFor(command, ["node", "vitest", "jest"], { file: failure.testFile, name: failure.testName });
       if (rerun !== undefined) failure.rerun = rerun;
     }
     return result;

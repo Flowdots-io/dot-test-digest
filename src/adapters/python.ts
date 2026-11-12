@@ -110,7 +110,7 @@ export const pythonAdapter: Adapter = {
 
     flush();
     for (const failure of failures) {
-      const rerun = rerunFor(command, rerunTarget(failure, nodeIds));
+      const rerun = rerunFor(command, ["pytest"], rerunTarget(failure, nodeIds));
       if (rerun !== undefined) failure.rerun = rerun;
     }
     if (counts.failed === 0) counts.failed = failures.length;
