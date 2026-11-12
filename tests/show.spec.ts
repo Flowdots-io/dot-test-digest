@@ -64,6 +64,22 @@ describe("subcommand dispatch (run-record)", () => {
     expect(run.stdout.split("\n")).toContain("hi");
   });
 
+  it("Other bare words keep the old error", async () => {
+    const where = { cwd: process.cwd(), home: tempDir("dtd-words-") };
+    const bogus = await runMain(["bogus", "--", "true"], where);
+    expect(bogus.code).toBe(64);
+    expect(bogus.stderr).toBe('missing -- delimiter before "bogus": dot-test-digest [flags] -- <command>\n');
+    const late = await runMain(["--no-jev", "show", "last"], where);
+    expect(late.code).toBe(64);
+    expect(late.stderr).toBe('missing -- delimiter before "show": dot-test-digest [flags] -- <command>\n');
+  });
+
+  it("A program called show is still a program", async () => {
+    const run = await runMain(["--", "show"], { cwd: tempDir("dtd-prog-"), home: tempDir("dtd-prog-home-") });
+    expect(run.code).toBe(127);
+    expect(run.stderr).toBe("dot-test-digest: spawn show ENOENT\n");
+  });
+
   it("The help lists the subcommands", async () => {
     const run = await runMain(["--help"], { cwd: process.cwd(), home: tempDir("dtd-help-") });
     const lines = run.stdout.split("\n");
