@@ -233,7 +233,7 @@ function renderLevel(
 
   // The first cluster without a full block, else the first one; every id has the same length, so the row's size
   // does not depend on which cluster it names.
-  const nextOf = (count: number): string => nextRow(envelope, all[count]);
+  const nextOf = (count: number): string => nextRow(envelope, all[count] ?? all[0]);
 
   const fixedBytes = (kept: number): number =>
     byteLength(headerLine(envelope, kept, timed) + nextOf(kept) + footerOf(all.length - kept));
