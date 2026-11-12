@@ -10,7 +10,13 @@ import { runMain, tempDir } from "./helpers/node-cart.js";
 const ROOT = process.cwd();
 const TSC_LOG = "tests/fixtures/tsc-small/tsc.log";
 const TAP_LOG = "tests/fixtures/logs/node-tap-cart.log";
-const CART_IDS = ["c_9721831d", "c_6edce10a", "c_fdff652c", "c_53a8182a"];
+/** The failing tests of the TAP log; cluster ids hash the log's `__ROOT__` paths, so the names identify them. */
+const TAP_FAILURES = [
+  "discount 10% leaves 90%",
+  "total with 10% off",
+  "total with 100% off is free",
+  "first of an empty cart is undefined",
+];
 
 const offline: MainDeps = {
   client: {
@@ -74,7 +80,7 @@ describe("digest (digest-input)", () => {
     const run = await digest([TAP_LOG], where);
     expect(run.code, run.stderr).toBe(1);
     expect(run.stdout.split("\n")[0]).toMatch(/^\[FAIL\] 4 failed, 2 passed \| \d clusters \| log: \S+\.log$/);
-    for (const id of CART_IDS) expect(run.stdout).toContain(id);
+    for (const test of TAP_FAILURES) expect(run.stdout).toContain(test);
     const blocks = run.stdout.split("\n").filter((line) => line.startsWith("c_")).length;
     const listed = run.stdout.split("\n").filter((line) => line.startsWith("  c_")).length;
     expect(blocks + listed).toBe(4);
