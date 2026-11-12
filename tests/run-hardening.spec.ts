@@ -99,7 +99,7 @@ describe("count-free pass line (run-hardening)", () => {
     expect(envelope.execution_gear).toBe("GEAR_0_HEURISTIC_FALLBACK");
   });
 
-  it("a grammar that counted zero passed and zero failed keeps its counts", async () => {
+  it("A grammar that found zero tests keeps its counts", async () => {
     const skipOnly = source('import test from "node:test";', 'test("s", { skip: true }, () => {});');
     const run = await runNodeCart(NO_JEV, ["skip.test.js"], { files: { "skip.test.js": skipOnly } });
     expect(header(run.stdout)).toMatch(/^\[PASS\] 0 passed, 0 failed, 1 skipped in \d+ms \| log: \S+\.log$/);
