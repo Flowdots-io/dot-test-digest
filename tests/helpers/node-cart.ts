@@ -5,6 +5,7 @@ import { afterAll, it, vi } from "vitest";
 import { main, type MainDeps } from "../../src/index.js";
 import type { DigestEnvelope, FailureCluster } from "../../src/types/schema.js";
 import { clustersOf } from "./digest.js";
+import { hermeticEnv, markRepositoryRoot } from "./hermetic-env.js";
 
 const FIXTURE = path.join(process.cwd(), "tests", "fixtures", "node-cart");
 
@@ -50,7 +51,7 @@ export async function runMain(
   process.env["XDG_CONFIG_HOME"] = path.join(where.home, "config-home");
   try {
     // Color follows the terminal; a test sees a pipe unless it says otherwise.
-    const code = await main([...argv], { stdoutIsTTY: false, ...where.deps });
+    const code = await main([...argv], { stdoutIsTTY: false, env: hermeticEnv(), ...where.deps });
     return { stdout, stderr, code };
   } finally {
     outSpy.mockRestore();
@@ -100,6 +101,7 @@ export async function runInCart(
   const dir = tempDir("dtd-node-cart-");
   const home = tempDir("dtd-node-cart-home-");
   fs.cpSync(FIXTURE, dir, { recursive: true });
+  markRepositoryRoot(dir);
   for (const [relative, contents] of Object.entries(options.files ?? {})) {
     fs.mkdirSync(path.dirname(path.join(dir, relative)), { recursive: true });
     fs.writeFileSync(path.join(dir, relative), contents);
