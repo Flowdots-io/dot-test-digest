@@ -7,8 +7,10 @@ The cache (`$DOT_TEST_DIGEST_HOME`, default `~/.cache/dot-test-digest`) holds ru
 - `auto-prune` after the digest (and after the record is written), keep the newest `retention.keepRuns` (50) runs including the current one, delete among the rest those whose `created_at` is older than `retention.maxAgeDays` (14) days; a log without a record uses its mtime; a record without a log is deleted; at most 200 files per run, oldest first.
 - `state-prune` `state-*.json` not modified for `retention.stateMaxAgeDays` (90) days are deleted, never the current scope's.
 - `prune-safety` never the current run, never a file modified in the last hour, only regular files named `run_<id>.log`, `run_<id>.json` (in `logs/`) or `state-<scope>.json` (in the cache root); symlinks are never followed or deleted.
-- `prune-switch` `DOT_TEST_DIGEST_PRUNE=0` or `{ "retention": { "auto": false } }` turns the automatic prune off; a failure prints `dot-test-digest: could not prune the cache: <reason>` and keeps the exit code.
-- `gc` `gc [--keep N] [--max-age-days D] [--state-max-age-days D] [--dry-run]`, defaults from the `retention.*` settings; prints `removed <R> runs (<S> state files), kept <K> runs` or, with `--dry-run`, `would remove <R> runs (<S> state files), keeping <K> runs`; exit 0; a bad value exits 64 `<flag> must be a non-negative integer, got <value>`; no cap on the number of files.
+- `prune-limits-trust` the three limits are read from the user file only; a project file setting one is ignored with `dot-test-digest: ignoring retention.<key> in <file>: retention limits are read from the user config only` (see [config.md](./config.md)).
+- `prune-symlinked-home` a cache directory that is a symlink is resolved once with realpath; runs and state files are pruned in the directory it names.
+- `prune-switch` `DOT_TEST_DIGEST_PRUNE=0` or `{ "retention": { "auto": false } }` (project or user file) turns the automatic prune off; a failure prints `dot-test-digest: could not prune the cache: <reason>` and keeps the exit code.
+- `gc` `gc [--keep N] [--max-age-days D] [--state-max-age-days D] [--dry-run]`, defaults from the user file's `retention.*` limits; prints `removed <R> runs (<S> state files), kept <K> runs` or, with `--dry-run`, `would remove <R> runs (<S> state files), keeping <K> runs`; exit 0; a bad value exits 64 `<flag> must be a non-negative integer, got <value>`; no cap on the number of files.
 
 ## How to get to it (user POV)
 
@@ -32,6 +34,7 @@ Preconditions:
 - **Switched off.** Re-seed, then `DOT_TEST_DIGEST_PRUNE=0 $V drive $RUN off node-cart -- node --test passing.test.js`: `61` logs.
 - **One hour.** Re-seed with `touch -d "10 minutes ago"` instead: `gc` prints `removed 0 runs (0 state files), kept 60 runs`.
 - **State.** `echo '{}' > $H/state-aaa.json; touch -d "100 days ago" $H/state-aaa.json`, then `gc`: `(1 state files)`, and the file is gone.
+- **Project file cannot tighten.** Re-seed, `mkdir -p $W/node-cart/.git` (`W=$(cat .acceptance/verify/$RUN/workdir)`) and `echo '{ "retention": { "keepRuns": 0, "maxAgeDays": 0 } }' > $W/node-cart/.dot-test-digest.json`, then `$V drive $RUN tighten node-cart -- node --test passing.test.js`: `50` logs, and stderr has `ignoring retention.keepRuns in ` and `ignoring retention.maxAgeDays in `. Delete the file afterwards.
 - **Missing cache.** `rm -rf $H`, then `$V drive $RUN gcnone - gc`: `removed 0 runs (0 state files), kept 0 runs`, exit `0`, `$H` not created.
 
 ## Gotchas

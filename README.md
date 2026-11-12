@@ -88,6 +88,8 @@ Most flags can also be set once, so every run gets them without typing. Each set
 { "maxClusters": 3, "noJev": true, "retention": { "keepRuns": 100 } }
 ```
 
+(`retention.keepRuns` in that example takes effect only in the user file; see below.)
+
 | Key | Values | Default | Environment variable |
 | --- | --- | --- | --- |
 | `maxClusters` | integer `1` to `15` | `5` | `DOT_TEST_DIGEST_MAX_CLUSTERS` |
@@ -98,12 +100,12 @@ Most flags can also be set once, so every run gets them without typing. Each set
 | `color` | `auto`, `always`, `never` | `auto` | `DOT_TEST_DIGEST_COLOR` |
 | `progress` | boolean | `false` | `DOT_TEST_DIGEST_PROGRESS` |
 | `retention.auto` | boolean | `true` | `DOT_TEST_DIGEST_PRUNE` (`0` turns pruning off) |
-| `retention.keepRuns` | integer `0` or more | `50` | none |
-| `retention.maxAgeDays` | integer `0` or more | `14` | none |
-| `retention.stateMaxAgeDays` | integer `0` or more | `90` | none |
+| `retention.keepRuns` | integer `0` or more | `50` | none; user file only |
+| `retention.maxAgeDays` | integer `0` or more | `14` | none; user file only |
+| `retention.stateMaxAgeDays` | integer `0` or more | `90` | none; user file only |
 | `mcp.allow` | list of argv prefixes, e.g. `[["pnpm", "test"]]` | empty | none; user file only |
 
-Booleans accept `true`, `false`, `1` and `0` (in a file, also as JSON `true`/`false`); an empty environment variable counts as unset. `--tdd-phase`, `--scope-id` and `--allow-no-tests` are per-run and stay flags. `progress` is read by the feature that uses it; the `retention.*` keys drive the cache prune and `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)). The configuration is strict: an unknown key (`<path>: unknown key "maxCluster"`), a wrong value (`<path>: maxClusters must be between 1 and 15, got 99`, `DOT_TEST_DIGEST_MAX_CLUSTERS must be an integer between 1 and 15, got abc`) or a file that is not valid JSON (`<path>: invalid JSON: …`) is a usage error, exit `64`, before the command is started. A project file may not set `mcp`: the key is ignored and `dot-test-digest: ignoring "mcp" in <path>: the command allowlist is read from the user config only` is printed on `stderr`, so a repository you cloned cannot widen what the MCP server runs.
+Booleans accept `true`, `false`, `1` and `0` (in a file, also as JSON `true`/`false`); an empty environment variable counts as unset. `--tdd-phase`, `--scope-id` and `--allow-no-tests` are per-run and stay flags. `progress` is read by the feature that uses it; the `retention.*` keys drive the cache prune and `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)). The configuration is strict: an unknown key (`<path>: unknown key "maxCluster"`), a wrong value (`<path>: maxClusters must be between 1 and 15, got 99`, `DOT_TEST_DIGEST_MAX_CLUSTERS must be an integer between 1 and 15, got abc`) or a file that is not valid JSON (`<path>: invalid JSON: …`) is a usage error, exit `64`, before the command is started. A project file may not set `mcp`: the key is ignored and `dot-test-digest: ignoring "mcp" in <path>: the command allowlist is read from the user config only` is printed on `stderr`, so a repository you cloned cannot widen what the MCP server runs. For the same reason a project file may not set the retention limits (`retention.keepRuns`, `retention.maxAgeDays`, `retention.stateMaxAgeDays`), which decide what is deleted across the whole cache: such a key is ignored, `config` keeps showing the value from the user file or the default, and `dot-test-digest: ignoring retention.<key> in <path>: retention limits are read from the user config only` is printed on `stderr`. A project file may still set `"retention": { "auto": false }`, which only deletes less.
 
 `dot-test-digest config` prints the effective value of every setting and where it came from, one line each (flags play no part):
 
@@ -163,7 +165,7 @@ After each run has printed its digest, the tool prunes the cache:
 - It never deletes the current run, a file modified in the last hour (another run may be writing it), a symbolic link, or a file that is not named like a run (`run_<id>.log`, `run_<id>.json`) or a state file.
 - It deletes at most 200 files per run, oldest first; the rest goes on the next runs.
 
-A failure while pruning prints `dot-test-digest: could not prune the cache: <reason>` on `stderr` and never changes the exit code. `DOT_TEST_DIGEST_PRUNE=0` or `"retention": { "auto": false }` turns the automatic prune off (see [Configuration](#configuration)).
+A failure while pruning prints `dot-test-digest: could not prune the cache: <reason>` on `stderr` and never changes the exit code. `DOT_TEST_DIGEST_PRUNE=0` or `"retention": { "auto": false }` (in either file) turns the automatic prune off; the three limits are read from the user file only (see [Configuration](#configuration)). A cache directory that is a symbolic link is followed once, to the directory it names.
 
 `gc` runs the same rule on demand, without the 200-file cap, and says what it did:
 
@@ -174,7 +176,7 @@ dot-test-digest gc --state-max-age-days 30
 dot-test-digest gc --dry-run                        # would remove 10 runs (0 state files), keeping 50 runs
 ```
 
-Its defaults are the `retention.*` settings (50, 14 and 90 unless configured). A value that is not a non-negative integer exits `64` with `--keep must be a non-negative integer, got -1`. On a cache that does not exist it prints `removed 0 runs (0 state files), kept 0 runs`, exits `0` and creates nothing. The one-hour protection applies to `gc` too.
+Its defaults are the `retention.*` limits of the user file (50, 14 and 90 unless set there). A value that is not a non-negative integer exits `64` with `--keep must be a non-negative integer, got -1`. On a cache that does not exist it prints `removed 0 runs (0 state files), kept 0 runs`, exits `0` and creates nothing. The one-hour protection applies to `gc` too.
 
 ## The TDD gate
 
