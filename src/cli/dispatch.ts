@@ -5,6 +5,7 @@ import { runGc } from "./gc.js";
 import { CliError, EX_SOFTWARE, UsageError } from "./errors.js";
 import { runReplay } from "./replay.js";
 import { runShow } from "./show.js";
+import { runStats } from "./stats.js";
 import type { SubcommandName } from "./subcommands.js";
 
 export interface SubcommandContext {
@@ -30,7 +31,7 @@ const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
   replay: runReplay,
   digest: undefined,
   gc: runGc,
-  stats: undefined,
+  stats: runStats,
   doctor: undefined,
   init: undefined,
   mcp: undefined,
