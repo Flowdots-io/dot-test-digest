@@ -44,7 +44,7 @@ function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefau
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
   const [first, ...rest] = argv;
   const env = deps.env ?? process.env;
-  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest, env);
+  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest, { ...deps, env });
 
   let config: LoadedConfig | undefined;
   let parsed;
