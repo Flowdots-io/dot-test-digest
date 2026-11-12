@@ -58,6 +58,11 @@ describe("skipped and warning counts in the header (run-hardening)", () => {
     });
   });
 
+  it("A run with no skipped test is unchanged", async () => {
+    const run = await runNodeCart(NO_JEV, ["passing.test.js"]);
+    expect(header(run.stdout)).toMatch(/^\[PASS\] 1 passed, 0 failed in \d+ms \| log: \S+\.log$/);
+  });
+
   it("A long pass line still fits the ceiling", () => {
     const home = `/tmp/${"h".repeat(115)}`;
     expect(home).toHaveLength(120);
@@ -83,6 +88,13 @@ describe("count-free pass line (run-hardening)", () => {
     const run = await runInCart(NO_JEV, ["sh", "-c", "echo hi"]);
     expect(header(run.stdout)).toMatch(/^\[PASS\] exit 0 in \d+ms \| log: \S+\.log$/);
     expect(run.code).toBe(0);
+  });
+
+  it("The JSON of an unrecognized run is unchanged", async () => {
+    const run = await runInCart([...NO_JEV, "--format=json"], ["sh", "-c", "echo hi"]);
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+    expect(envelope.summary).toEqual({ passed: 0, failed: 0, skipped: 0, total_clusters: 0 });
+    expect(envelope.execution_gear).toBe("GEAR_0_HEURISTIC_FALLBACK");
   });
 
   it("a grammar that counted zero passed and zero failed keeps its counts", async () => {

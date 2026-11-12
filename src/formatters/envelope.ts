@@ -58,7 +58,7 @@ export function buildEnvelope(input: BuildEnvelopeInput): DigestEnvelope {
       passed: input.counts.passed,
       failed: input.counts.failed,
       skipped: input.counts.skipped,
-      ...(input.counts.warnings ? { warnings: input.counts.warnings } : {}),
+      warnings: input.counts.warnings ?? 0,
       total_clusters: input.clusters.length,
     },
     ...(input.delta ? { delta: input.delta } : {}),
@@ -82,7 +82,7 @@ function deltaFragment(envelope: DigestEnvelope): string {
 function countsFragment(envelope: DigestEnvelope, lead: "passed" | "failed"): string {
   const { passed, failed, skipped, warnings = 0 } = envelope.summary;
   const pair = lead === "passed" ? `${passed} passed, ${failed} failed` : `${failed} failed, ${passed} passed`;
-  return `${pair}${skipped > 0 ? `, ${skipped} skipped` : ""}${warnings > 0 ? `, ${warnings} warnings` : ""}`;
+  return `${pair}${skipped >= 0 ? `, ${skipped} skipped` : ""}${warnings > 0 ? `, ${warnings} warnings` : ""}`;
 }
 
 /** No grammar recognized the output, so there are no counts to report, only the exit code. */
