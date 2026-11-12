@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { pruneCache } from "../src/cache/prune.js";
 import { runMain, runNodeCart, tempDir } from "./helpers/node-cart.js";
 import { syntheticHome } from "./helpers/run-home.js";
 
@@ -52,6 +53,14 @@ function numbered(prefix: string, from: number, to: number): string[] {
 function setMtime(file: string, ageMs: number): void {
   const when = new Date(Date.now() - ageMs);
   fs.utimesSync(file, when, when);
+}
+
+/** The user file a run in `home` reads: `runMain` points `XDG_CONFIG_HOME` at `<home>/config-home`. */
+function writeUserFile(home: string, contents: string): string {
+  const file = path.join(home, "config-home", "dot-test-digest", "config.json");
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, contents);
+  return file;
 }
 
 async function gc(home: string, ...args: string[]) {
@@ -146,13 +155,39 @@ describe("automatic prune after a run (cache-retention)", () => {
 describe("retention settings (config-file)", () => {
   it("The retention settings reach the prune", async () => {
     const home = oldPairs(5, 2 * HOUR);
-    const run = await runNodeCart(NO_JEV, ["passing.test.js"], {
-      home,
-      files: { [PROJECT_FILE]: '{ "retention": { "keepRuns": 2, "maxAgeDays": 0 } }' },
-    });
+    writeUserFile(home, '{ "retention": { "keepRuns": 2, "maxAgeDays": 0 } }');
+    const run = await runNodeCart(NO_JEV, ["passing.test.js"], { home });
     const left = runsIn(home);
     expect(left).toHaveLength(2);
     expect(left).toContain("run_old005");
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe("");
+  });
+
+  it("A project file cannot tighten retention", async () => {
+    const home = oldPairs(60, 20 * DAY);
+    const run = await runNodeCart(NO_JEV, ["passing.test.js"], {
+      home,
+      files: { [PROJECT_FILE]: '{ "retention": { "keepRuns": 0, "maxAgeDays": 0 } }' },
+    });
+    expect(runsIn(home)).toHaveLength(50);
+    expect(run.stderr).toContain("ignoring retention.keepRuns in ");
+    expect(run.stderr).toContain("ignoring retention.maxAgeDays in ");
+    expect(run.code).toBe(0);
+  });
+
+  it("config shows a project retention limit as not applied", async () => {
+    const cwd = fs.realpathSync(tempDir("dtd-retention-project-"));
+    fs.mkdirSync(path.join(cwd, ".git"));
+    const file = path.join(cwd, PROJECT_FILE);
+    fs.writeFileSync(file, '{ "retention": { "stateMaxAgeDays": 1, "auto": false } }');
+    const run = await runMain(["config"], { cwd, home: tempDir("dtd-retention-config-home-") });
+    const lines = run.stdout.split("\n");
+    expect(lines).toContain("retention.stateMaxAgeDays = 90 (default)");
+    expect(lines).toContain(`retention.auto = false (project ${file})`);
+    expect(run.stderr).toBe(
+      `dot-test-digest: ignoring retention.stateMaxAgeDays in ${file}: retention limits are read from the user config only\n`,
+    );
     expect(run.code).toBe(0);
   });
 
@@ -231,6 +266,13 @@ describe("gc (cache-retention)", () => {
     expect(runsIn(home, ["run_victim"])).toEqual(["run_victim"]);
   });
 
+  it("takes --keep=N in one word", async () => {
+    const home = oldPairs(60, 20 * DAY);
+    const run = await gc(home, "--keep=5");
+    expect(run.stdout).toBe("removed 55 runs (0 state files), kept 5 runs\n");
+    expect(runsIn(home)).toEqual(numbered("run_old", 56, 60));
+  });
+
   it("removes a record whose log is gone and counts state files", async () => {
     const home = oldPairs(3, 20 * DAY);
     fs.rmSync(path.join(home, "logs", "run_old001.log"));
@@ -241,5 +283,36 @@ describe("gc (cache-retention)", () => {
     expect(run.stdout).toBe("removed 1 runs (1 state files), kept 2 runs\n");
     expect(fs.existsSync(path.join(home, "logs", "run_old001.json"))).toBe(false);
     expect(fs.existsSync(stale)).toBe(false);
+  });
+});
+
+describe("pruneCache", () => {
+  const ALL_OLD = { keepRuns: 0, maxAgeDays: 0, stateMaxAgeDays: 0 };
+
+  it("never deletes the current run or the current scope's state, however old", () => {
+    const home = oldPairs(3, 20 * DAY);
+    const state = (name: string) => path.join(home, `state-${name}.json`);
+    for (const name of ["cur", "other"]) {
+      fs.writeFileSync(state(name), "{}\n");
+      setMtime(state(name), 200 * DAY);
+    }
+    const result = pruneCache(home, { ...ALL_OLD, currentRunId: "run_old001", currentScopeId: "cur" });
+    expect(runsIn(home)).toEqual(["run_old001"]);
+    expect(fs.existsSync(state("cur"))).toBe(true);
+    expect(fs.existsSync(state("other"))).toBe(false);
+    expect(result).toEqual({ removedRuns: 2, removedStates: 1, keptRuns: 1 });
+  });
+
+  it("prunes state files and runs when the home is a symlink to the cache", () => {
+    const real = oldPairs(3, 20 * DAY);
+    const stale = path.join(real, "state-stale.json");
+    fs.writeFileSync(stale, "{}\n");
+    setMtime(stale, 200 * DAY);
+    const home = path.join(tempDir("dtd-link-"), "cache");
+    fs.symlinkSync(real, home);
+    const result = pruneCache(home, ALL_OLD);
+    expect(result).toEqual({ removedRuns: 3, removedStates: 1, keptRuns: 0 });
+    expect(fs.existsSync(stale)).toBe(false);
+    expect(runsIn(real)).toEqual([]);
   });
 });
