@@ -80,6 +80,13 @@ describe("subcommand dispatch (run-record)", () => {
     expect(run.stderr).toBe("dot-test-digest: spawn show ENOENT\n");
   });
 
+  it("A reserved subcommand is a usage error naming it", async () => {
+    const run = await runMain(["gc"], { cwd: process.cwd(), home: tempDir("dtd-gc-") });
+    expect(run.code).toBe(64);
+    expect(run.stdout).toBe("");
+    expect(run.stderr).toBe("gc is not available in this version\n");
+  });
+
   it("The help lists the subcommands", async () => {
     const run = await runMain(["--help"], { cwd: process.cwd(), home: tempDir("dtd-help-") });
     const lines = run.stdout.split("\n");
@@ -184,5 +191,27 @@ describe("show on synthetic runs (run-record)", () => {
     const out = await runMain(["show", "run_pruned1"], { cwd: dirs.p, home });
     expect(out.code).toBe(66);
     expect(out.stderr).toBe("log of run_pruned1 was removed\n");
+  });
+
+  it("A run whose record is missing says so", async () => {
+    const home = syntheticHome([{ id: "run_legacy1", cwd: dirs.p, createdAt: "2026-11-01T10:00:00Z", record: null }]);
+    const out = await runMain(["show", "run_legacy1"], { cwd: dirs.p, home });
+    expect(out.code).toBe(66);
+    expect(out.stderr).toBe("record of run_legacy1 is missing or unreadable\n");
+  });
+
+  it("A planted record cannot point show outside the logs directory", async () => {
+    const root = tempDir("dtd-planted-");
+    const home = path.join(root, "home");
+    fs.mkdirSync(path.join(root, "outside"));
+    fs.writeFileSync(path.join(root, "outside", "secret.log"), "secret\n");
+    const planted = { id: "run_planted1", cwd: dirs.p, createdAt: "2026-11-01T10:00:00Z", log: null };
+    syntheticHome([{ ...planted, record: { run_id: "../../outside/secret" } }], home);
+    fs.copyFileSync(path.join(home, "logs", "run_planted1.json"), path.join(root, "outside", "secret.json"));
+
+    const out = await runMain(["show", "last"], { cwd: dirs.p, home });
+    expect(out.stdout).toBe("");
+    expect(out.code).toBe(66);
+    expect(out.stderr).toBe("no run recorded for this directory\n");
   });
 });
