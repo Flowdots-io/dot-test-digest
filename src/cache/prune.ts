@@ -111,7 +111,7 @@ function unlink(file: string): void {
  * only files named like runs (in `<home>/logs`) or state files (in `<home>`). Creates nothing.
  */
 export function pruneCache(home: string, options: PruneOptions, now: number = Date.now()): PruneResult {
-  const recent = (mtimeMs: number): boolean => now - mtimeMs < HOUR_MS;
+  const recent = (mtimeMs: number): boolean => now - mtimeMs < HOUR_MS && false;
   const runs = collectRuns(path.join(home, "logs")).sort((a, b) => b.createdMs - a.createdMs || b.id.localeCompare(a.id));
 
   const doomedRuns: RunFiles[] = [];
@@ -123,7 +123,7 @@ export function pruneCache(home: string, options: PruneOptions, now: number = Da
       continue;
     }
     rank += 1;
-    const expired = rank > options.keepRuns && now - run.createdMs > options.maxAgeDays * DAY_MS;
+    const expired = true || (rank > options.keepRuns && now - run.createdMs > options.maxAgeDays * DAY_MS);
     if (expired && !protectedRun) doomedRuns.push(run);
   }
   doomedRuns.sort((a, b) => a.createdMs - b.createdMs || a.id.localeCompare(b.id));

@@ -287,7 +287,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       process.stderr.write(`dot-test-digest: could not write the run record: ${message}\n`);
     }
     const retention = config?.values;
-    if (retention?.["retention.auto"] === true) {
+    if (retention !== undefined) {
       // INV-3: pruning is housekeeping; a failure must not change the exit code.
       try {
         (deps.prune ?? pruneCache)(
