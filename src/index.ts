@@ -7,6 +7,7 @@ import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
 import { runSubcommand } from "./cli/dispatch.js";
 import { EX_SOFTWARE } from "./cli/errors.js";
 import { isSubcommandName } from "./cli/subcommands.js";
+import { loadConfig, type LoadedConfig } from "./config/load.js";
 import { buildEnvelope, formatEnvelope } from "./formatters/envelope.js";
 import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gears/gear1-jev.js";
 import { normalizeLine } from "./pruner/ansi-stripper.js";
@@ -22,7 +23,7 @@ import {
   saveState,
   type RunState,
 } from "./state/tdd-gate.js";
-import type { ExecutionGear } from "./types/schema.js";
+import type { CliOptions, ExecutionGear } from "./types/schema.js";
 import { VERSION } from "./version.js";
 
 const COMMAND_NOT_FOUND = 127;
@@ -46,15 +47,26 @@ export interface MainDeps {
   client?: JevAsker;
   /** Writes `logs/<run>.json`; tests replace it to simulate a full disk. */
   writeRecord?: (file: string, record: RunRecord) => void;
+  /** The environment the configuration and color decisions read; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
+}
+
+/** Loads the configuration for a run, prints its warnings, and returns it with the defaults it gives the flags. */
+function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefaults: Partial<CliOptions> } {
+  const config = loadConfig({ cwd: process.cwd(), env });
+  for (const warning of config.warnings) process.stderr.write(`${warning}\n`);
+  const { maxClusters, contextLines, format, noJev, retryFlakes } = config.values;
+  return { config, flagDefaults: { maxClusters, contextLines, format, noJev, retryFlakes } };
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
   const [first, ...rest] = argv;
-  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest);
+  const env = deps.env ?? process.env;
+  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest, env);
 
   let parsed;
   try {
-    parsed = parseArgs(argv);
+    parsed = parseArgs(argv, () => configureRun(env).flagDefaults);
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(`${error.message}\n`);
