@@ -217,7 +217,13 @@ function isEntrypoint(entry: string | undefined): boolean {
   }
 }
 
+/** A reader that closed stdout early (`| head`) gets no digest; the exit code and the log stay (INV-3). */
+function ignoreClosedPipe(error: NodeJS.ErrnoException): void {
+  if (error.code !== "EPIPE") throw error;
+}
+
 if (isEntrypoint(process.argv[1])) {
+  process.stdout.on("error", ignoreClosedPipe);
   void main(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });
