@@ -23,6 +23,7 @@ case "$cmd" in
     echo "$W" >"$D/workdir"
     (cd "$REPO" && node_modules/.bin/tsc -p tsconfig.json --outDir "$D/build" >"$D/evidence/build.log" 2>&1) \
       || { cat "$D/evidence/build.log" >&2; die "build failed"; }
+    cp -r "$REPO/schema" "$D/schema"   # beside build/, as schema/ sits beside dist/ in the package
     git -C "$REPO" rev-parse HEAD >"$D/commit"
     git -C "$REPO" status --porcelain | grep -q . && echo dirty >>"$D/commit" || true
     for f in node-cart tsc-small vitest-cart; do cp -r "$REPO/tests/fixtures/$f" "$W/$f"; done
@@ -68,7 +69,7 @@ case "$cmd" in
     ;;
   cleanup)
     D="$(run_dir "${1:-}")"
-    rm -rf "$D/build" "$D/home" "$D/xdg" "$(cat "$D/workdir")" "$D/workdir"
+    rm -rf "$D/build" "$D/schema" "$D/home" "$D/xdg" "$(cat "$D/workdir")" "$D/workdir"
     echo "removed build, cache home and fixture copies; evidence kept in $D/evidence"
     ;;
   *) die "usage: verify.sh launch | doctor RUN | drive RUN label fixture [flags] -- cmd | cleanup RUN" ;;

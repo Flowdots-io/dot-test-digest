@@ -1,0 +1,223 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dot-test-digest envelope (--format=json)",
+  "type": "object",
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "FAIL",
+        "VALID_RED",
+        "INVALID_RED",
+        "INVALID_GREEN",
+        "REGRESSION_DETECTED",
+        "BUILD_ERROR"
+      ]
+    },
+    "tdd_phase": {
+      "type": "string",
+      "enum": [
+        "red",
+        "green",
+        "refactor",
+        "none"
+      ]
+    },
+    "exit_code": {
+      "type": "integer"
+    },
+    "signal": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "execution_gear": {
+      "type": "string",
+      "enum": [
+        "GEAR_0_GRAMMAR",
+        "GEAR_1_JEV",
+        "GEAR_0_HEURISTIC_FALLBACK"
+      ]
+    },
+    "duration_ms": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "passed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "failed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "skipped": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "warnings": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "total_clusters": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "omitted_clusters": {
+          "type": "integer",
+          "minimum": 1
+        }
+      },
+      "required": [
+        "passed",
+        "failed",
+        "skipped",
+        "total_clusters"
+      ],
+      "additionalProperties": false
+    },
+    "delta": {
+      "type": "object",
+      "properties": {
+        "newly_passing": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "newly_broken_regressions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "still_failing": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "newly_passing",
+        "newly_broken_regressions",
+        "still_failing"
+      ],
+      "additionalProperties": false
+    },
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "cluster_id": {
+            "type": "string",
+            "pattern": "^c_[0-9a-f]{8}$"
+          },
+          "fingerprint": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "error_kind": {
+            "type": "string",
+            "enum": [
+              "ASSERTION_FAILURE",
+              "RUNTIME_EXCEPTION",
+              "TYPE_COMPILE_ERROR",
+              "SYNTAX_IMPORT_ERROR",
+              "TIMEOUT_OR_CONN_REFUSED",
+              "UNSTRUCTURED_BUILD_ERROR"
+            ]
+          },
+          "affected_count": {
+            "type": "integer",
+            "exclusiveMinimum": 0
+          },
+          "sample_tests": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 3
+          },
+          "diff": {
+            "type": "object",
+            "properties": {
+              "expected": {
+                "type": "string"
+              },
+              "received": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "expected",
+              "received"
+            ],
+            "additionalProperties": false
+          },
+          "message": {
+            "type": "string"
+          },
+          "top_frame": {
+            "type": "string"
+          },
+          "pruned_stack": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 6
+          },
+          "signal_window": {
+            "type": "string"
+          },
+          "raw_log_lines": {
+            "type": "string",
+            "pattern": "^L\\d+-L\\d+$"
+          },
+          "rerun": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "cluster_id",
+          "fingerprint",
+          "error_kind",
+          "affected_count",
+          "sample_tests",
+          "message",
+          "top_frame",
+          "pruned_stack",
+          "signal_window",
+          "raw_log_lines"
+        ],
+        "additionalProperties": false
+      },
+      "maxItems": 15
+    },
+    "raw_log_path": {
+      "type": "string",
+      "minLength": 1
+    },
+    "schema_version": {
+      "type": "number",
+      "const": 1
+    },
+    "run_id": {
+      "type": "string",
+      "pattern": "^run_[0-9a-z]+$"
+    }
+  },
+  "required": [
+    "status",
+    "tdd_phase",
+    "exit_code",
+    "signal",
+    "execution_gear",
+    "duration_ms",
+    "summary",
+    "raw_log_path"
+  ],
+  "additionalProperties": false
+}

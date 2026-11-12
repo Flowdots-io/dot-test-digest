@@ -18,6 +18,8 @@ export interface RunParseResult {
 
 export type ParseResult = RunParseResult | { kind: "help" } | { kind: "version" };
 
+export const FORMAT_CHOICES = "compact-md, json or ndjson";
+
 export const USAGE = `dot-test-digest — bounded test/build output compressor
 
 Usage: dot-test-digest [flags] -- <command ...>
@@ -25,7 +27,7 @@ Usage: dot-test-digest [flags] -- <command ...>
 
 Flags (everything after -- is passed to <command> verbatim):
   --tdd-phase <red|green|refactor|none>   phase gate (default: none)
-  --format <compact-md|json>              stdout format (default: compact-md)
+  --format <compact-md|json|ndjson>       stdout format (default: compact-md)
   --max-clusters <1..15>                  clusters emitted on failure (default: 5)
   --context-lines <0..5>                  SignalWindow half-height (default: 2)
   --color <auto|always|never>             color the status word (default: auto, a terminal without NO_COLOR)
@@ -122,7 +124,7 @@ export function parseArgs(
       case "--format": {
         const [value, next] = readFlagValue(argv, index, flag);
         const parsed = OutputFormatSchema.safeParse(value);
-        if (!parsed.success) throw new UsageError(`${flag} must be compact-md or json`);
+        if (!parsed.success) throw new UsageError(`${flag} must be ${FORMAT_CHOICES}`);
         raw["format"] = parsed.data;
         index = next;
         break;

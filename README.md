@@ -60,19 +60,21 @@ dot-test-digest --no-jev -- pytest -q                # never touch the network
 dot-test-digest --max-clusters=10 -- vitest run      # show more clusters (1 to 15, default 5)
 dot-test-digest --context-lines=4 -- vitest run      # larger source window (0 to 5, default 2)
 dot-test-digest --format=json -- vitest run | jq .   # the full structured envelope
+dot-test-digest --format=ndjson -- vitest run        # the same, one JSON object per line
+dot-test-digest schema                               # the JSON Schema of the envelope
 ```
 
 | Flag | Default | What it does |
 | --- | --- | --- |
 | `--tdd-phase <red\|green\|refactor\|none>` | `none` | Turns on the [TDD gate](#the-tdd-gate) and the newly-passing / regression counts. |
-| `--format <compact-md\|json>` | `compact-md` | `compact-md` is the bounded text digest. `json` is the complete structured document (not size-capped). |
+| `--format <compact-md\|json\|ndjson>` | `compact-md` | `compact-md` is the bounded text digest. `json` is the complete structured document (not size-capped, see [For programs and agents](#for-programs-and-agents)). `ndjson` is the same content one JSON object per line. |
 | `--max-clusters <1..15>` | `5` | How many clusters go into the envelope. In `compact-md` the rest are counted and listed, not hidden. |
 | `--context-lines <0..5>` | `2` | Lines above and below the failing line in each source window. |
 | `--scope-id <string>` | hash of the working directory | Names the TDD state file, so concurrent runs in different projects (or worktrees) do not share state. |
 | `--no-jev` | off | Never call the Jev API. Use this to keep every run local. |
 | `--retry-flakes` | off | Re-run once when Gear 1 is at least 80% sure the failure was a flake. |
 | `--allow-no-tests` | off | Accept a `green` or `refactor` run that exited `0` without any recognised test (a runner with no grammar). Without it such a run is `INVALID_GREEN`. |
-| `--color <auto\|always\|never>` | `auto` | Color the status word of the header (green for `PASS` and `VALID_RED`, red for every other status). `auto` colors only when stdout is a terminal, `NO_COLOR` is unset or empty and `TERM` is not `dumb`; `always` ignores `NO_COLOR`. Sizes are measured on the uncolored text, and `--format=json` is never colored. |
+| `--color <auto\|always\|never>` | `auto` | Color the status word of the header (green for `PASS` and `VALID_RED`, red for every other status). `auto` colors only when stdout is a terminal, `NO_COLOR` is unset or empty and `TERM` is not `dumb`; `always` ignores `NO_COLOR`. Sizes are measured on the uncolored text, and `--format=json` and `ndjson` are never colored. |
 | `-h`, `--help` / `-v`, `--version` | | Print usage / version and exit `0`. |
 
 Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`), `NO_COLOR` (see `--color`), and the `DOT_TEST_DIGEST_*` settings below.
@@ -94,7 +96,7 @@ Most flags can also be set once, so every run gets them without typing. Each set
 | --- | --- | --- | --- |
 | `maxClusters` | integer `1` to `15` | `5` | `DOT_TEST_DIGEST_MAX_CLUSTERS` |
 | `contextLines` | integer `0` to `5` | `2` | `DOT_TEST_DIGEST_CONTEXT_LINES` |
-| `format` | `compact-md`, `json` | `compact-md` | `DOT_TEST_DIGEST_FORMAT` |
+| `format` | `compact-md`, `json`, `ndjson` | `compact-md` | `DOT_TEST_DIGEST_FORMAT` |
 | `noJev` | boolean | `false` | `DOT_TEST_DIGEST_NO_JEV` |
 | `retryFlakes` | boolean | `false` | `DOT_TEST_DIGEST_RETRY_FLAKES` |
 | `color` | `auto`, `always`, `never` | `auto` | `DOT_TEST_DIGEST_COLOR` |
@@ -133,7 +135,43 @@ The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed
 | `INVALID_GREEN` | `--tdd-phase=green` or `refactor`, the command exited `0`, but no passed or failed test was recognised (skipped tests do not count). Exit `64`, a one-line message on `stderr`, and the TDD state is left as it was. `--allow-no-tests` turns it back into `PASS`. |
 | `REGRESSION_DETECTED` | `--tdd-phase=refactor` and something that passed before now fails. |
 
+**The next step and the rerun command.** Line 2 of a failure digest names what to look at next: `next: dot-test-digest show <run> <cluster>`, where `<cluster>` is the first cluster that did not get a full block (the first of the listed lines, when it fits), or the first cluster when every one is shown. Run it as printed: `show` prints that cluster's lines from the log. The first full block also has a `rerun:` row, a shell command that runs only that block's first test, when the command you wrapped names a test runner:
+
+```text
+[FAIL] 4 failed, 2 passed in 282ms | 2 clusters | log: ~/.cache/dot-test-digest/logs/run_mwe2svamacd7d77d.log
+next: dot-test-digest show run_mwe2svamacd7d77d c_fdff652c
+c_9721831d ASSERTION_FAILURE x1 cart.test.js:7:46
+  …
+  tests: discount 10% leaves 90%
+  rerun: node --test --test-name-pattern '^discount 10% leaves 90%$' cart.test.js
+  raw: L15-L39
+```
+
+If the run record could not be written (a full disk; the digest says `could not write the run record` on `stderr`), the `next:` line still names the run, and `show` answers it with exit `66` and `record of <run> is missing or unreadable` (it needs the record for any selector); the lines are still in the log the header names. The `next:` line is not printed on a pass, when the digest falls back to the raw text (the small `tsc` case), or for an envelope a program builds without a `run_id`. Both lines count toward the 2,400-byte limit (together about 130 bytes), so a digest can show one full block fewer than before; the clusters that lose their block are listed or counted, as always.
+
 **Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase (`INVALID_RED`), a green or refactor run that ran no test (`INVALID_GREEN`), or a usage error in the flags. Subcommands never return a child's code: `0` on success, `64` for a usage error, `66` (`EX_NOINPUT`) when the run, its record or its log does not exist. A failure to write the log or the state file is reported on `stderr` and never changes the exit code, and neither does a reader that closes stdout early (`dot-test-digest -- … | head -1`): the digest is dropped, the log is still written and no `EPIPE` trace is printed.
+
+### For programs and agents
+
+`--format=json` prints one JSON document. Its top-level keys are `status`, `tdd_phase`, `exit_code`, `signal`, `execution_gear`, `duration_ms`, `summary`, `delta` (with a TDD phase), `clusters` (when there are any), `raw_log_path`, `schema_version` and `run_id`. `schema_version` is `1`, and stays `1` as long as a change only adds optional keys; `run_id` is the run's id in the cache (`show <run_id>`, `replay <run_id>`). `summary` holds `passed`, `failed`, `skipped`, `total_clusters` (the clusters in `clusters`, at most `--max-clusters`), `warnings` (only when nonzero) and `omitted_clusters` (the clusters beyond `--max-clusters`, only when nonzero). Each cluster has `cluster_id`, `fingerprint`, `error_kind`, `affected_count`, `sample_tests`, `diff` (when there is one), `message`, `top_frame`, `pruned_stack`, `signal_window`, `raw_log_lines` and `rerun` (below).
+
+The [JSON Schema](schema/digest-envelope.schema.json) (draft 2020-12) of this document is generated from the code (`pnpm run schema`), shipped in the package and printed by `dot-test-digest schema`. A test fails when the committed file is out of date and validates real envelopes against it. The schema does not allow undeclared keys, so validate output with the schema of the same version.
+
+`--format=ndjson` prints the same content one object per line: a `{"type":"summary",...}` line with every top-level key except `clusters`, one `{"type":"cluster",...}` line per cluster, then one `{"type":"omitted","cluster_id":...,"error_kind":...,"affected_count":...,"top_frame":...,"label":...,"raw_log_lines":...}` line per cluster beyond `--max-clusters` (with `rerun` when it has one; `label` is the first test name, or the message). A pass is one line. It works wherever `json` does (`--format`, the `format` setting, `replay`, `digest`).
+
+**`rerun`.** A cluster carries `rerun`, a shell command that runs its first test alone, when the command after `--` contains a known runner. The command is copied up to the runner word, then the runner's own way of picking one test is added:
+
+| Runner | `rerun` | Checked |
+| --- | --- | --- |
+| `node --test` | `node --test --test-name-pattern '^<test>$' <file>` | run: it reports `# tests 1` |
+| `vitest` | `<prefix> run <file> -t '<test>'` (`npx vitest run ...` for `-- npx vitest run`) | run: `1 failed \| 28 skipped (29)` in the example project |
+| `jest` | `<prefix> <file> -t '<test>'` | fixture logs only |
+| `pytest` (also `python -m pytest`) | `<prefix> <file>::<test>` (other options such as `-q` are dropped) | fixture logs only |
+| `cargo` | `cargo test <test> -- --exact` | fixture logs only |
+| `go` | `go test -run '^<test>$' ./...` | fixture logs only |
+| `eslint` | `eslint <file>` | fixture logs only |
+
+The test name is the last part of the name (after the last ` > `), with regular-expression characters escaped for the runners that take a pattern. For vitest and jest a pattern that would start with `-` starts with `\-` instead (`-t '\-1 is rejected'`), so the runner cannot read it as a flag; the pattern still matches the same name (executed with vitest, not with jest). Every word is quoted for a POSIX shell (`sh`, `bash`, `zsh`; Windows shells are not covered). Only the runners of the grammar that read the output count (`node`, `vitest` and `jest` for JavaScript tests, `pytest`, `cargo` and `go`, `eslint`), and a word that contains whitespace is never a runner, so `sh -c "npm run build && vitest"` and a JavaScript failure under `pnpm --dir packages/go test` get no `rerun`. There is no `rerun` for a command without a runner word (`pnpm test`, `npm test`, `make test`: the tool cannot see what the script runs), for `tsc`, or when the output did not name the test or file the runner needs. The jest, pytest, cargo, go and eslint forms were checked against the grammars' fixture logs, not by running those tools.
 
 ### Looking back at a run
 
@@ -199,7 +237,7 @@ npx dot-test-digest digest test.log --exit-code "$status" --no-jev
 
 The cache of a CI job is usually thrown away with the job; set `DOT_TEST_DIGEST_HOME` to a path you upload if you want the copied log and its record too.
 
-`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)) and `doctor`, `init`, `mcp` and `schema`. Those last four are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)), `schema` (see [For programs and agents](#for-programs-and-agents)) and `doctor`, `init` and `mcp`. Those last three are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
 
 ### The cache and what is deleted
 
@@ -259,14 +297,14 @@ The three gears: **Gear 0** is the local grammars above (no network). **Gear 1**
 
 ## Example
 
-The same small project run without and with the digest: a cart module with two bugs (`discount` returns the discount instead of the amount left, and `first` crashes on an empty cart) and 29 vitest tests, 5 of them failing. The project is in [`tests/fixtures/vitest-cart/`](tests/fixtures/vitest-cart). It is a recreation: the project I measured the first version of this example with was not kept, so the numbers below come from this one and are not comparable with the earlier ones. Measured on 2026-11-01 with dot-test-digest 0.1.0 (built from this tree), Node 22.23.4, vitest 2.1.9, `--no-jev`, in a fresh temporary copy of the fixture. The log path in the pasted digest is shortened to `~/.cache/...`; the byte count is of the real output, with a longer path.
+The same small project run without and with the digest: a cart module with two bugs (`discount` returns the discount instead of the amount left, and `first` crashes on an empty cart) and 29 vitest tests, 5 of them failing. The project is in [`tests/fixtures/vitest-cart/`](tests/fixtures/vitest-cart). It is a recreation: the project I measured the first version of this example with was not kept, so the numbers below come from this one and are not comparable with the earlier ones. First measured on 2026-11-01; re-measured on 2026-11-12 from a throwaway build of this tree (`846620d`, the version that added the `next:` line and the `rerun:` row), Node 22.23.4, vitest 2.1.9, `--no-jev`, in a fresh temporary copy of the fixture. The log path in the pasted digest is shortened to `~/.cache/...`; the byte count is of the real output, with a `/tmp/...` cache path. The raw excerpt is from the first measurement; the raw size moves by a few bytes with the directory name vitest prints on its `RUN` line and with the timings.
 
 ```bash
 vitest run                                  # raw
 dot-test-digest --no-jev -- vitest run      # through the digest
 ```
 
-**Raw:** 110 lines, 4,292 bytes, exit code `1` (excerpt)
+**Raw:** 110 lines, 4,317 bytes, exit code `1` (excerpt)
 
 ```text
  RUN  v2.1.9 /tmp/m/vc
@@ -292,10 +330,11 @@ dot-test-digest --no-jev -- vitest run      # through the digest
    Duration  787ms (transform 98ms, setup 0ms, collect 77ms, tests 48ms, environment 0ms, prepare 144ms)
 ```
 
-**Digest:** 34 lines, 2,128 bytes, same exit code (`1`)
+**Digest:** 36 lines, 2,265 bytes, same exit code (`1`)
 
 ```text
-[FAIL] 5 failed, 24 passed in 1326ms | 3 clusters | log: ~/.cache/dot-test-digest/logs/run_mvyffv735538e5b4.log
+[FAIL] 5 failed, 24 passed in 1489ms | 3 clusters | log: ~/.cache/dot-test-digest/logs/run_mwe2u35s31f1a107.log
+next: dot-test-digest show run_mwe2u35s31f1a107 c_c7823024
 c_992bb564 ASSERTION_FAILURE x1 tests/cart.test.ts:7:66
   AssertionError: expected 100 to be 900 // Object.is equality
   diff: expected 900 / received 100
@@ -305,6 +344,7 @@ c_992bb564 ASSERTION_FAILURE x1 tests/cart.test.ts:7:66
   8 |   it("discount 50% leaves half", () => expect(discount(2000, 50)).toBe(1000));
   9 |   it("total without discount", () => expect(total(items)).toBe(1815));
   tests: cart > discount 10% leaves 90%
+  rerun: vitest run tests/cart.test.ts -t 'discount 10% leaves 90%'
   raw: L5-L27
 c_95e904e3 ASSERTION_FAILURE x1 tests/cart.test.ts:9:59
   AssertionError: expected +0 to be 1815 // Object.is equality
@@ -331,21 +371,21 @@ c_cf012b19 ASSERTION_FAILURE x1 tests/cart.test.ts:10:59
   c_8bdc37b0 RUNTIME_EXCEPTION x1 src/cart.ts:10:50 cart > first of an empty cart is undefined
 ```
 
-Fair reading of this example: vitest already prints a one-line summary of every failure at the top, so the raw output is not hard to scan here. The digest drops the repeated per-failure detail and adds a source window around each failing line. It prints full detail for **3 of the 5 failures** (the `--max-clusters` default is 5, but the output is also capped at about 600 tokens); the other two are listed one per line after `+2 more clusters`, with their id, kind, location and test name, but no message, diff or window. The one that is not an assertion (the `TypeError` from `first`) is one of the two that only get a line. The full output is always in the log the header names.
+Fair reading of this example: vitest already prints a one-line summary of every failure at the top, so the raw output is not hard to scan here. The digest drops the repeated per-failure detail and adds a source window around each failing line. It prints full detail for **3 of the 5 failures** (the `--max-clusters` default is 5, but the output is also capped at about 600 tokens); the other two are listed one per line after `+2 more clusters`, with their id, kind, location and test name, but no message, diff or window. Line 2 points at the first of those two (`show <run> c_c7823024` prints its lines from the log), and the first block's `rerun:` row is a command that runs only `discount 10% leaves 90%`. The one that is not an assertion (the `TypeError` from `first`) is one of the two that only get a line. The full output is always in the log the header names.
 
 A passing run is one line: for the same project with both bugs fixed, `[PASS] 29 passed, 0 failed in 1306ms | log: …` was 86 bytes against 249 bytes raw (10 lines).
 
 ## Where it works well, and where it does not
 
-These are measurements from small hand-made projects, not a benchmark. Sizes are raw output against digest output; the digest bytes include the header line with its log path (a `/tmp/...` path here; the default `~/.cache/...` path is a little longer).
+These are measurements from small hand-made projects, not a benchmark. Sizes are raw output against digest output; the digest bytes include the header line with its log path (a `/tmp/...` path here; the default `~/.cache/...` path is a little longer). The failing rows were re-measured on 2026-11-12 from a throwaway build of `846620d`, which added the `next:` line and the first block's `rerun:` row (about 130 bytes); the passing vitest row is from 2026-11-01 (a pass line did not change).
 
 | Case | Raw | Digest | Verdict |
 | --- | --- | --- | --- |
-| vitest (non-TTY), 5 of 29 failing | 110 lines, 4,292 B | 34 lines, 2,128 B | **Good.** Distinct failures become clusters with file, line, diff and a source window. Full detail for the first 3; the others are listed one per line. |
+| vitest (non-TTY), 5 of 29 failing | 110 lines, 4,317 B | 36 lines, 2,265 B | **Good.** Distinct failures become clusters with file, line, diff and a source window. Full detail for the first 3; the others are listed one per line. |
 | vitest, all passing | 10 lines, 249 B | 1 line, 86 B | **Good.** |
-| `node --test` (default or `--test-reporter=tap`), 4 of 6 failing | 120 lines, 3,593 B (default); 3,591 B (tap) | 38 lines, 2,258 B (both) | **Good now.** The four failures are four clusters (three with file, line, diff and source window, the fourth listed in one line), not one merged cluster. |
-| `node --test --test-reporter=spec`, 4 of 6 failing | 91 lines, 3,336 B | 38 lines, 2,258 B | **Good now.** Parsed, with the same clusters as the tap reporter; no longer reported as `BUILD_ERROR`. |
-| `tsc --noEmit`, 5 errors in 2 files | 5 lines, 419 B | 6 lines, 517 B | **Not smaller.** The digest is the header line (98 B) plus the 5 raw lines unchanged: the size rule falls back to the raw text when a digest would be larger. So it costs the header and saves nothing. |
+| `node --test` (default or `--test-reporter=tap`), 4 of 6 failing | 120 lines, 3,797 B (default); 3,800 B (tap) | 39 lines, 2,395 B (both) | **Good.** The four failures are four clusters (three with file, line, diff and source window), not one merged cluster. The fourth is counted in `+1 more clusters (see log)` and named on the `next:` line; its listed line no longer fits (with a longer cache path only 2 blocks fit, and the other two are listed). |
+| `node --test --test-reporter=spec`, 4 of 6 failing | 91 lines, 3,448 B | 39 lines, 2,395 B | **Good.** Parsed, with the same clusters as the tap reporter; no longer reported as `BUILD_ERROR`. |
+| `tsc --noEmit`, 5 errors in 2 files | 5 lines, 419 B | 6 lines, 527 B | **Not smaller.** The digest is the header line (108 B with this cache path) plus the 5 raw lines unchanged: the size rule falls back to the raw text when a digest would be larger. So it costs the header and saves nothing, and has no `next:` line. |
 
 Differences from the first version of this table, so the numbers are not read as a like-for-like comparison: the `node --test` project here has 6 tests (not 26) and the `tsc` project has 5 errors (not 6), because these are the fixtures kept in `tests/fixtures/` (`node-cart`, `tsc-small`). The same-bug-in-each claim from before no longer holds; each project has its own failures.
 
@@ -368,7 +408,7 @@ The `node --test` labels are now the right ones for what I checked: with `--form
 **Things to know before relying on it**
 
 - Clusters are grouped by the shape of the error, not by root cause. One bug that produces different assertion messages makes several clusters (in the vitest example, the one bug in `discount` makes four assertion clusters, each with different expected and received values).
-- Only the first 3 clusters of the vitest run above were printed in full. The output is capped at about 600 tokens, so a run with more failures than fit shows the rest as `+N more clusters (see log)`.
+- Only the first 3 clusters of the vitest run above were printed in full (the same 3 with and without the `next:` and `rerun:` lines). The output is capped at about 600 tokens, so a run with more failures than fit shows the rest as `+N more clusters (see log)`.
 - The clusters that do not fit are no longer only counted: each one is listed on its own line with its id, kind, location and test name. When the digest would be larger than the raw output (the `tsc` row), the footer is not printed because the raw text already shows every failure.
 - Size rule: the digest is never larger than the raw output plus its header line. By design it degrades in steps (no source windows, then no stack frames, then one line per cluster, and in the end the header plus the raw text). I observed only two outcomes: the full form (every other case here) and the last step (the `tsc` case); I did not construct runs that land on the middle steps. The cap on the full-detail form is unchanged at 600 tokens and 2,400 bytes, counted with the final newline.
 - With many omitted clusters the digest keeps the full blocks the user asked for and lists what fits after them. The budget is spent in this order: first the full blocks (as many of the kept clusters as fit together with the header and the `+N more clusters (see log)` line, at least one), then as many whole listed lines as fit in what is left; clusters whose line does not fit stay counted in `N`. Measured on 2026-11-10 from throwaway builds on a project with 30 files `src/m1.ts` ... `src/m30.ts`, each `export const vN: number = "text N";` (30 distinct `tsc` errors, 2,451 bytes of raw output), run as `--no-jev --max-clusters=5 -- npx tsc --noEmit` (exit code `2` in all three):
@@ -377,9 +417,10 @@ The `node --test` labels are now the right ones for what I checked: with `--form
   | --- | --- | --- | --- | --- | --- |
   | v0.1.2 (`4f540a8`) | 5 | 5 | none | 0 | 1,026 |
   | previous shipped rule (`2e2613a`) | 1 | 1 | `+29 more clusters (see log)` | 19 | 2,366 |
-  | this version (`c240b9b`) | 5 | 5 | `+25 more clusters (see log)` | 13 | 2,377 |
+  | 0.1.4 rule (`c240b9b`) | 5 | 5 | `+25 more clusters (see log)` | 13 | 2,377 |
+  | this version, with `next:` (`846620d`, 2026-11-12) | 5 | 5 | `+25 more clusters (see log)` | 12 | 2,330 |
 
-  So this version prints the same 5 full blocks as v0.1.2, then the `+25` line, then 13 of the 25 omitted clusters on a line each; the other 12 are only counted in the 25. Bytes move by a few with the length of the log path (the previous README said 1,025 and 2,365 for the same two older builds, with a shorter path). I did not search for the number of omitted clusters at which the listing stops; I only ran 30 files. The vitest example above gives the same result with this version as before: 3 full blocks, `+2 more clusters (see log)` and the 2 listed lines (34 lines, 2,136 bytes with a long `/tmp` log path). `--format=json` still carries 5 clusters (`--max-clusters`).
+  So the 0.1.4 rule prints the same 5 full blocks as v0.1.2, then the `+25` line, then 13 of the 25 omitted clusters on a line each; the other 12 are only counted in the 25. This version adds the `next:` line (reserved before the blocks, like the `+25` line; `tsc` clusters have no `rerun:` row), keeps the 5 full blocks and lists 12 (35 lines; the byte count is with a shorter `/tmp` cache path than the older rows, so compare lines, not bytes). Bytes move by a few with the length of the log path (the previous README said 1,025 and 2,365 for the same two older builds, with a shorter path). I did not search for the number of omitted clusters at which the listing stops; I only ran 30 files. The vitest example above gives the same result with the 0.1.4 rule as before: 3 full blocks, `+2 more clusters (see log)` and the 2 listed lines (34 lines, 2,136 bytes with a long `/tmp` log path; 36 lines with `next:` and `rerun:`). `--format=json` still carries 5 clusters (`--max-clusters`).
 - A `node --test` file that crashes at load (missing module, syntax error, a throw) takes its error from the crash block node printed directly above its own entry, under both the tap and the spec reporter, and from nothing else. A block starts at a line that holds only a location, which is any line that is not indented, is not an error line, ends in `:<N>` and is followed, before the block's trailer, by an error line (so a message that continues on a line ending in a number, `/etc/app/config.json:12`, is not the location) (`file:///...:3`, `node:internal/...:275`, `/dir with a space/x.test.cjs:3`, `<anonymous_script>:1` for `eval` code, or the same text glued after a partial stdout line), runs through the source line, the error and its stack, and ends at `Node.js v22.23.4`; the digest uses the first `<Name>Error: <text>` line of it. When several blocks sit above the entry (a server a setup module started crashed after the file did), the first block whose error is an import or syntax error wins, so a broken import is never hidden, and otherwise the last block does. A line printed outside the block (a setup module's log, another file's output) never stands in for the file's error, whether or not it names the file, and a crash block that names another file (`Cannot find module '.../missing-dep.js' imported from .../helper.js`, thrown from a helper the test imports) is still the test's error. When the block has no such line (`throw 42`) or there is no block (`process.exit(1)` at load), the message stays `test failed`, which is `INVALID_RED`. Measured on Node 22.23.4 with a setup module (`--import data:text/javascript,console.log("Error: config.json not found, using defaults")`), `--no-jev --tdd-phase=red`, in a copy of `tests/fixtures/node-cart/` (a throwaway build of origin/main `74208cc`, then this version; each cell is one measured run, the cluster message trimmed):
 
   | Case | Reporter | Before | Now |
@@ -404,7 +445,8 @@ The `node --test` labels are now the right ones for what I checked: with `--form
   The earlier measurements still hold: a `syntax-error.test.js` run next to `missing-module.test.js` under the spec reporter reads `SyntaxError: Unexpected end of input`. A stream with several node runs (a wrapper that runs `node --test` once per file) gives each crashed entry the block above its own `✖` row, so the same file crashing in two runs keeps each run's own error (checked at the adapter, on the real stream of `node wrap.mjs spec twice.test.js twice.test.js`: `TypeError: first run`, then `RangeError: second run`). This rule reads where node relays the subprocess's output (node's stdout on 22.23.4) and the layout of that version's reporters; I did not run other Node versions, and I did not run a wrapper that sends the subprocess's stderr somewhere else.
 - Two failing tests with the same name in one file are kept as two failures, and the test name carries the line it was declared on: `handles empty @4` and `handles empty @7` in a `node --test` run (default, tap and spec reporters all printed it). The suffix is added only when a name is shared by two or more failures of the same file, and it uses the line of the test, so the same name in different files stays plain. I only checked this with `node --test`.
 - The child process's exit code is passed through unchanged (observed in every run above).
-- Grammars for pytest, `cargo test`, `go test`, jest, Playwright and eslint exist and are covered by fixtures in this repo's tests, but **I did not run them against real projects**. Treat them as untested in practice.
+- Grammars for pytest, `cargo test`, `go test`, jest, Playwright and eslint exist and are covered by fixtures in this repo's tests, but **I did not run them against real projects**. Treat them as untested in practice. The same holds for their `rerun` commands (jest, pytest, cargo, go, eslint): checked against fixture logs only, never run. Only the `node --test` and `vitest` rerun commands were executed.
+- `rerun` commands are quoted for a POSIX shell only; Windows was not tried.
 - Gear 1 (the optional Jev call) was not exercised: every measurement used `--no-jev`.
 
 **How these were measured.** Each project was copied to a fresh temporary directory (the vitest and tsc copies use this repo's `node_modules`), then each command was run twice with stdout and stderr redirected to a file, so vitest ran non-TTY: once raw and once through the digest, with `DOT_TEST_DIGEST_HOME` pointing at a temporary directory. Lines and bytes are `wc -l` and `wc -c`. Commands, with `D` standing for `node dist/index.js --no-jev`:
@@ -419,7 +461,7 @@ D --tdd-phase=red --scope-id <id> -- <the same commands>   # red-phase table; mi
                                                            # missing export: missing-export.test.js, already passing: passing.test.js
 ```
 
-The many-omitted-clusters bullet was measured on 2026-11-10 from three throwaway builds (worktrees at `4f540a8`, `2e2613a` and `c240b9b`, each built with `npx tsc -p . --outDir dist`), on a project of 30 files `src/m1.ts` ... `src/m30.ts` (`export const vN: number = "text N";`) with the `tsconfig.json` of `tests/fixtures/tsc-small/`, command `D --max-clusters=5 -- npx tsc --noEmit`. The unreadable-file and crashed-file rows ran in a copy of `tests/fixtures/node-cart/` with `noread.test.js` (`import test from "node:test"; test("x", () => {});`, mode `000`) added. The crash-block table ran on 2026-11-10 from two throwaway builds (the base `9cae136` and this branch, each built with `npx tsc -p . --outDir dist`), in copies of the same fixture with `helper.js`, `deep.test.js`, `throw42.test.js`, `exitload.test.js`, `logc.test.js`, `cfg.test.js` and `cfg.test.json` (mode `000`, run as a user who is not root) added, as `node dist/index.js --no-jev --format=json --tdd-phase=red -- node --test [--test-reporter=spec] <files>`.
+The many-omitted-clusters bullet was measured on 2026-11-10 from three throwaway builds, and its last row on 2026-11-12 from a build of `846620d` made by `.claude/skills/verify/verify.sh launch`, (worktrees at `4f540a8`, `2e2613a` and `c240b9b`, each built with `npx tsc -p . --outDir dist`), on a project of 30 files `src/m1.ts` ... `src/m30.ts` (`export const vN: number = "text N";`) with the `tsconfig.json` of `tests/fixtures/tsc-small/`, command `D --max-clusters=5 -- npx tsc --noEmit`. The unreadable-file and crashed-file rows ran in a copy of `tests/fixtures/node-cart/` with `noread.test.js` (`import test from "node:test"; test("x", () => {});`, mode `000`) added. The crash-block table ran on 2026-11-10 from two throwaway builds (the base `9cae136` and this branch, each built with `npx tsc -p . --outDir dist`), in copies of the same fixture with `helper.js`, `deep.test.js`, `throw42.test.js`, `exitload.test.js`, `logc.test.js`, `cfg.test.js` and `cfg.test.json` (mode `000`, run as a user who is not root) added, as `node dist/index.js --no-jev --format=json --tdd-phase=red -- node --test [--test-reporter=spec] <files>`.
 
 For the red-phase table's vitest missing-module case, a one-test project imported `../src/nope`, which does not exist. The all-passing vitest row is the cart fixture with the two bugs fixed.
 
@@ -429,7 +471,10 @@ For the red-phase table's vitest missing-module case, a one-test project importe
 pnpm install
 pnpm verify     # typecheck + unit tests
 pnpm build      # emits dist/ with the dot-test-digest bin
+pnpm run schema # regenerates schema/digest-envelope.schema.json from src/types/schema.ts (commit it with any envelope change)
 ```
+
+`pnpm run schema` imports `src/types/schema.ts` directly, so it needs Node 22.18 or later (type stripping on by default); the tool itself still runs on Node 20. `pnpm verify` runs the test that regenerates the schema, so it needs the same Node.
 
 To prove a change on the real binary (not just the unit tests), use the verification skill: `.claude/skills/verify/verify.sh launch | doctor | drive | cleanup`. It builds the current commit into a scratch directory, runs it against copies of the fixtures with an isolated cache, and keeps the evidence. The journeys it should cover are in [`.dotstack/features/`](.dotstack/features/README.md).
 

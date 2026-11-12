@@ -1,13 +1,14 @@
 import os from "node:os";
 import type { AdapterCounts } from "../adapters/common.js";
-import type {
-  Delta,
-  DigestEnvelope,
-  DigestStatus,
-  ExecutionGear,
-  FailureCluster,
-  OutputFormat,
-  TddPhase,
+import {
+  ENVELOPE_SCHEMA_VERSION,
+  type Delta,
+  type DigestEnvelope,
+  type DigestStatus,
+  type ExecutionGear,
+  type FailureCluster,
+  type OutputFormat,
+  type TddPhase,
 } from "../types/schema.js";
 
 export const PASS_BYTE_CEILING = 160;
@@ -49,6 +50,10 @@ export interface BuildEnvelopeInput {
   clusters: readonly FailureCluster[];
   delta?: Delta;
   rawLogPath: string;
+  /** Clusters ranked below the kept ones (beyond `--max-clusters`). */
+  omittedCount?: number;
+  /** The run the log belongs to; a hand-built envelope has none. */
+  runId?: string;
 }
 
 export function buildEnvelope(input: BuildEnvelopeInput): DigestEnvelope {
@@ -65,10 +70,13 @@ export function buildEnvelope(input: BuildEnvelopeInput): DigestEnvelope {
       skipped: input.counts.skipped,
       ...(input.counts.warnings ? { warnings: input.counts.warnings } : {}),
       total_clusters: input.clusters.length,
+      ...(input.omittedCount ? { omitted_clusters: input.omittedCount } : {}),
     },
     ...(input.delta ? { delta: input.delta } : {}),
     ...(input.clusters.length > 0 ? { clusters: [...input.clusters] } : {}),
     raw_log_path: input.rawLogPath,
+    schema_version: ENVELOPE_SCHEMA_VERSION,
+    ...(input.runId !== undefined ? { run_id: input.runId } : {}),
   };
 }
 
@@ -111,6 +119,8 @@ export function renderPassLine(envelope: DigestEnvelope, timed = true): string {
 interface Detail {
   window: boolean;
   stack: boolean;
+  /** The `rerun:` row, printed on the first block only. */
+  rerun: boolean;
 }
 
 function clusterHead(cluster: FailureCluster): string {
@@ -132,6 +142,7 @@ function renderCluster(cluster: FailureCluster, detail: Detail): string {
     for (const line of cluster.signal_window.split("\n")) rows.push(`  ${line}`);
   }
   if (cluster.sample_tests.length > 0) rows.push(`  tests: ${cluster.sample_tests.join(", ")}`);
+  if (detail.rerun && cluster.rerun !== undefined) rows.push(`  rerun: ${cluster.rerun}`);
   rows.push(`  raw: ${cluster.raw_log_lines}`);
   return rows.join("\n");
 }
@@ -161,10 +172,12 @@ function renderOneLine(cluster: FailureCluster): string {
   return cluster.message === "" ? head : `${head} ${truncateBytes(cluster.message, MESSAGE_BYTE_CEILING)}`;
 }
 
-const LADDER: readonly ((cluster: FailureCluster) => string)[] = [
-  (cluster) => renderCluster(cluster, { window: true, stack: true }),
-  (cluster) => renderCluster(cluster, { window: false, stack: true }),
-  (cluster) => renderCluster(cluster, { window: false, stack: false }),
+type RenderBlock = (cluster: FailureCluster, first: boolean) => string;
+
+const LADDER: readonly RenderBlock[] = [
+  (cluster, first) => renderCluster(cluster, { window: true, stack: true, rerun: first }),
+  (cluster, first) => renderCluster(cluster, { window: false, stack: true, rerun: first }),
+  (cluster) => renderCluster(cluster, { window: false, stack: false, rerun: false }),
   renderOneLine,
 ];
 
@@ -197,30 +210,41 @@ function renderFailBody(
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
+/** `\nnext: dot-test-digest show <run> <cluster>`, or nothing for an envelope without a run id (a hand-built one). */
+function nextRow(envelope: DigestEnvelope, target: FailureCluster | undefined): string {
+  if (envelope.run_id === undefined || target === undefined) return "";
+  return `\nnext: dot-test-digest show ${envelope.run_id} ${target.cluster_id}`;
+}
+
 /**
- * The limit decides the full blocks first, with the `+N more clusters (see log)` line reserved, then fills what is
+ * The limit decides the full blocks first, with the `next:` and `+N more clusters (see log)` lines reserved, then fills what is
  * left with whole listed lines, so the footer is never the part cut and a long listing never takes blocks away.
  */
 function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
-  renderBlock: (cluster: FailureCluster) => string,
+  renderBlock: RenderBlock,
   timed: boolean,
 ): { header: string; body: string } {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
-  const blocks = clusters.map((cluster) => `\n${renderBlock(cluster)}`);
+  const blocks = clusters.map((cluster, index) => `\n${renderBlock(cluster, index === 0)}`);
   const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
+  // The first cluster without a full block, else the first one; every id has the same length, so the row's size
+  // does not depend on which cluster it names.
+  const nextOf = (count: number): string => nextRow(envelope, all[count] ?? all[0]);
+
   const fixedBytes = (kept: number): number =>
-    byteLength(headerLine(envelope, kept, timed) + footerOf(all.length - kept));
+    byteLength(headerLine(envelope, kept, timed) + nextOf(kept) + footerOf(all.length - kept));
   let kept = clusters.length;
   while (kept > 1 && fixedBytes(kept) + byteLength(blocks.slice(0, kept).join("")) > FAIL_BODY_BYTES) kept -= 1;
 
   const header = headerLine(envelope, kept, timed);
+  const lead = `${header}${nextOf(kept)}`;
   const footer = footerOf(all.length - kept);
-  const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(header + footer));
-  let body = `${header}${keptBlocks}${footer}`;
+  const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(lead + footer));
+  let body = `${lead}${keptBlocks}${footer}`;
   for (const cluster of all.slice(kept)) {
     const line = `\n${renderOmittedLine(cluster)}`;
     if (byteLength(body) + byteLength(line) > FAIL_BODY_BYTES) break;
@@ -250,12 +274,33 @@ function colorStatus(digest: string, status: DigestStatus): string {
   return `[${STATUS_COLOR[status]}${status}${SGR_RESET}${digest.slice(opening.length)}`;
 }
 
+/** One JSON object a line: the envelope without its clusters, each kept cluster, then each omitted one in short. */
+function renderNdjson(envelope: DigestEnvelope, omitted: readonly FailureCluster[]): string {
+  const { clusters = [], ...summary } = envelope;
+  const lines = [
+    { type: "summary", ...summary },
+    ...clusters.map((cluster) => ({ type: "cluster", ...cluster })),
+    ...omitted.map((cluster) => ({
+      type: "omitted",
+      cluster_id: cluster.cluster_id,
+      error_kind: cluster.error_kind,
+      affected_count: cluster.affected_count,
+      top_frame: cluster.top_frame,
+      label: omittedLabel(cluster),
+      raw_log_lines: cluster.raw_log_lines,
+      ...(cluster.rerun !== undefined ? { rerun: cluster.rerun } : {}),
+    })),
+  ];
+  return lines.map((line) => `${JSON.stringify(line)}\n`).join("");
+}
+
 export function formatEnvelope(
   envelope: DigestEnvelope,
   format: OutputFormat,
   context: RenderContext = {},
 ): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
+  if (format === "ndjson") return renderNdjson(envelope, context.omitted ?? []);
   const { rawText, omitted = [], color = false, timed = true } = context;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED" || envelope.status === "INVALID_GREEN";
   const digest = `${oneLiner ? renderPassLine(envelope, timed) : renderFailBody(envelope, omitted, rawText, timed)}\n`;
