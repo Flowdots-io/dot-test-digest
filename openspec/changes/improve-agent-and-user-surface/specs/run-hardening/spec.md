@@ -93,9 +93,9 @@ When the child exits `0`, no Gear 0 grammar matched its output, and the phase is
 - **THEN** the exit code is `0` and the header matches `^\[PASS\] exit 0 in <t>ms \| log: \S+\.log$`
 
 #### Scenario: A grammar that found zero tests keeps its counts
-- **GIVEN** the cart with an empty file `empty.test.js`
-- **WHEN** `-- node --test empty.test.js` runs
-- **THEN** the header matches `^\[PASS\] 0 passed, 0 failed in <t>ms \| log: \S+\.log$`
+- **GIVEN** the cart with a file `skip.test.js` whose only test is skipped (Node 22 counts an empty test file as one passing test, so an empty file cannot express this)
+- **WHEN** `-- node --test skip.test.js` runs
+- **THEN** the header matches `^\[PASS\] 0 passed, 0 failed, 1 skipped in <t>ms \| log: \S+\.log$`
 
 #### Scenario: The JSON of an unrecognized run is unchanged
 - **GIVEN** the cart
