@@ -5,7 +5,7 @@ Every setting that a flag sets per run can also come from a `DOT_TEST_DIGEST_*` 
 ## Sub-features
 
 - `config-layers` flag, then environment, then project file, then user file, then default, per setting (`maxClusters`, `contextLines`, `format`, `noJev`, `retryFlakes`, `color`, `progress`, `retention.auto`, `retention.keepRuns`, `retention.maxAgeDays`, `retention.stateMaxAgeDays`, `mcp.allow`).
-- `config-discovery` the project file is the nearest `.dot-test-digest.json` walking up to the first directory holding `.git` (inclusive), never above the home directory; parent files are not merged.
+- `config-discovery` the project file is the nearest `.dot-test-digest.json` walking up to the first directory holding `.git` (inclusive), never above the home directory (by real path); outside home without a `.git` above, no project file is used; parent files are not merged.
 - `config-subcommand` `config` prints `<key> = <value> (<source>)` per setting, the source `default`, `user <path>`, `project <path>` or `env <NAME>`; `mcp.allow` only when set.
 - `config-strict` an unknown key, a bad value or malformed JSON exits 64 naming the file (or variable) and the key.
 - `config-mcp-trust` a project file's `mcp` key is ignored with one stderr warning; `mcp.allow` comes from the user file only.
@@ -22,7 +22,7 @@ Every setting that a flag sets per run can also come from a `DOT_TEST_DIGEST_*` 
 Preconditions:
 
 - `RUN=$($V launch)` done and `$V doctor $RUN` shows the commit under test and a `user config:` path inside the run (the driver sets `XDG_CONFIG_HOME` to `.acceptance/verify/$RUN/xdg`, so your own `~/.config` never applies).
-- `W=$(cat .acceptance/verify/$RUN/workdir)`: the fixture copies, outside any git repository. Write project files into `$W/node-cart` only, and delete them after the journey that needs them.
+- `W=$(cat .acceptance/verify/$RUN/workdir)`: the fixture copies, under `/tmp` (outside home) and outside any git repository, so `mkdir $W/node-cart/.git` first: without it no project file is ever used there. Write project files into `$W/node-cart` only, and delete them after the journey that needs them.
 - Prod: not safe (the wrapped runs write logs in the run's `home/`; `config` itself writes nothing).
 
 - **Defaults.** `$V drive $RUN defaults node-cart config`. Exit `0`; stdout is exactly 11 lines, from `maxClusters = 5 (default)` to `retention.stateMaxAgeDays = 90 (default)`; stderr empty. (Unset any `DOT_TEST_DIGEST_*` variable in your shell first: the driver passes the environment through.)
@@ -42,6 +42,6 @@ Preconditions:
 
 - The driver passes your shell's environment through: a `DOT_TEST_DIGEST_*` or `NO_COLOR` variable you exported changes the result. Use `env -u` or a clean shell.
 - `verify.sh drive` inserts `--no-jev` before your flags, so `noJev` always reads as the flag in a wrapped run; `config` gets no `--no-jev` (it is a subcommand) and shows the file or default value.
-- The fixture copies live under `/tmp` with no `.git` above them, so the project-file walk goes to `/`; a stray `/tmp/.dot-test-digest.json` would be found.
+- Outside home, a project file needs a `.git` at or above the working directory. **Shared directory.** `rm -r $W/node-cart/.git` with `{ "maxClusters": 1 }` still in `$W/node-cart`: `config` prints `maxClusters = 5 (default)`.
 - `ndjson` is not a `format` value until the JSON contract slice lands; until then `"format": "ndjson"` is a usage error.
 - A user file you write under `xdg/` stays for the rest of the run; delete it before the Defaults journey.

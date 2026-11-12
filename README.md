@@ -81,7 +81,7 @@ Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, 
 
 Most flags can also be set once, so every run gets them without typing. Each setting takes the first value found in this order: the flag, an environment variable, the project file, the user file, the built-in default.
 
-- **Project file:** `.dot-test-digest.json`, the nearest one found walking up from the working directory to the first directory that contains `.git` (that directory included), never above your home directory. Only that one file is read; files in parent directories are not merged in.
+- **Project file:** `.dot-test-digest.json`, the nearest one found walking up from the working directory to the first directory that contains `.git` (that directory included), never above your home directory (compared by real path, so a symlinked home still stops it). Outside your home directory a file is used only when a `.git` above the working directory bounds the walk, so a file left in a shared directory such as `/tmp` never configures your run. Only that one file is read; files in parent directories are not merged in.
 - **User file:** `$XDG_CONFIG_HOME/dot-test-digest/config.json` (default `~/.config/dot-test-digest/config.json`).
 
 ```json
