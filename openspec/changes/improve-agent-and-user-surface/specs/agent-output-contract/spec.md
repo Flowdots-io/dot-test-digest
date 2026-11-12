@@ -16,7 +16,7 @@ In `compact-md`, at size levels 1 to 4, when the envelope carries a `run_id` and
 - **THEN** stdout has exactly one full block and line 2 names that block's cluster id
 
 #### Scenario: The printed command works
-- **GIVEN** the run above
+- **GIVEN** the cart run of "Omitted clusters are the target"
 - **WHEN** the command on line 2 runs as `show <run_id> <cluster_id>`
 - **THEN** it prints the `raw_log_lines` range of that cluster from the log and exits `0`
 
