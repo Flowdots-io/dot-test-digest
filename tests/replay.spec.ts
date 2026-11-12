@@ -60,12 +60,12 @@ describe("replay (run-replay)", () => {
   it("Replay can show every cluster as JSON", async () => {
     const original = await runNodeCart(NO_JEV, ["cart.test.js"]);
     const again = await replay(["last", "--format=json", "--max-clusters=15"], original);
+    expect(again.code).toBe(1);
     const envelope = JSON.parse(again.stdout) as DigestEnvelope;
     expect(envelope.summary.total_clusters).toBe(4);
     expect((envelope.clusters ?? []).map((cluster) => cluster.cluster_id).sort()).toEqual(
       ["c_9721831d", "c_6edce10a", "c_fdff652c", "c_53a8182a"].sort(),
     );
-    expect(again.code).toBe(1);
   });
 
   it("Replay changes the source window", async () => {
