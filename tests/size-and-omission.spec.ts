@@ -6,6 +6,7 @@ import { buildEnvelope, estimateTokens, FAIL_BYTE_CEILING, formatEnvelope } from
 import type { DigestEnvelope, FailureCluster } from "../src/types/schema.js";
 import { clustersOf } from "./helpers/digest.js";
 import { vitestCascadeOutput } from "./fixtures/generate.js";
+import { markRepositoryRoot } from "./helpers/hermetic-env.js";
 import { runMain, runNodeCart, tempDir } from "./helpers/node-cart.js";
 
 const TSC_12 = path.resolve(import.meta.dirname, "fixtures", "logs", "tsc-12.log");
@@ -436,6 +437,7 @@ const TSC_SMALL = path.resolve(import.meta.dirname, "fixtures", "tsc-small");
 
 function useTscSmall(): string {
   fs.cpSync(TSC_SMALL, project, { recursive: true });
+  markRepositoryRoot(project);
   return fs.readFileSync(path.join(project, "tsc.log"), "utf8");
 }
 

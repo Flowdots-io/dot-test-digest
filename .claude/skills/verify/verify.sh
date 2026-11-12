@@ -35,6 +35,7 @@ case "$cmd" in
     echo "commit:      $(tr '\n' ' ' <"$D/commit")(HEAD now: $(git -C "$REPO" rev-parse HEAD))"
     echo "node:        $(node --version)"
     echo "cache home:  $D/home (not the user's ~/.cache)"
+    echo "user config: $D/xdg/dot-test-digest/config.json (not the user's ~/.config)"
     echo "fixtures:    $(cat "$D/workdir")"
     echo "binary:      $D/build/index.js"
     echo "version:     $(node "$D/build/index.js" --version)"
@@ -54,7 +55,7 @@ case "$cmd" in
       *) offline=(--no-jev) ;;
     esac
     set +e
-    (cd "$cwd" && DOT_TEST_DIGEST_HOME="$D/home" PATH="$REPO/node_modules/.bin:$PATH" \
+    (cd "$cwd" && DOT_TEST_DIGEST_HOME="$D/home" XDG_CONFIG_HOME="$D/xdg" PATH="$REPO/node_modules/.bin:$PATH" \
        node "$D/build/index.js" "${offline[@]}" "$@" >"$out/stdout.txt" 2>"$out/stderr.txt")
     echo $? >"$out/exit.txt"
     set -e
@@ -64,7 +65,7 @@ case "$cmd" in
     ;;
   cleanup)
     D="$(run_dir "${1:-}")"
-    rm -rf "$D/build" "$D/home" "$(cat "$D/workdir")" "$D/workdir"
+    rm -rf "$D/build" "$D/home" "$D/xdg" "$(cat "$D/workdir")" "$D/workdir"
     echo "removed build, cache home and fixture copies; evidence kept in $D/evidence"
     ;;
   *) die "usage: verify.sh launch | doctor RUN | drive RUN label fixture [flags] -- cmd | cleanup RUN" ;;
