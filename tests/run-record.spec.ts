@@ -72,7 +72,13 @@ describe("the run record (run-record)", () => {
       exit_code: 0,
       child_exit_code: 1,
     });
-    expect(record["options"]).toEqual({ max_clusters: 2, context_lines: 0, no_jev: true, retry_flakes: false });
+    expect(record["options"]).toEqual({
+      max_clusters: 2,
+      context_lines: 0,
+      no_jev: true,
+      retry_flakes: false,
+      allow_no_tests: false,
+    });
     // Two clusters were shown, two omitted: the record keeps all four.
     expect(record.clusters.map((cluster) => cluster.cluster_id).sort()).toEqual(CART_IDS);
   });
