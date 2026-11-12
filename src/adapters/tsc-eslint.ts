@@ -20,6 +20,7 @@ export const tscEslintAdapter: Adapter = {
 
   parse(lines: readonly CapturedLine[]): AdapterResult {
     const failures: RawFailure[] = [];
+    const warningFailures: RawFailure[] = [];
     let errors = 0;
     let warnings = 0;
     let file = "";
@@ -30,13 +31,10 @@ export const tscEslintAdapter: Adapter = {
       const tsc = TSC.exec(text);
       if (tsc) {
         const [, path, row, column, severity, code, message] = tsc;
-        if (severity !== "error") {
-          warnings += 1;
-          continue;
-        }
-        errors += 1;
+        if (severity === "error") errors += 1;
+        else warnings += 1;
         const isSyntax = code === "TS2307" || /^TS1\d{3}$/.test(code ?? "");
-        failures.push({
+        (severity === "error" ? failures : warningFailures).push({
           testName: null,
           errorKind: isSyntax ? "SYNTAX_IMPORT_ERROR" : "TYPE_COMPILE_ERROR",
           message: `${code ?? "TS0000"}: ${message ?? ""}`,
@@ -55,12 +53,9 @@ export const tscEslintAdapter: Adapter = {
       const eslint = ESLINT_DIAG.exec(text);
       if (eslint && file !== "") {
         const [, row, column, severity, message] = eslint;
-        if (severity !== "error") {
-          warnings += 1;
-          continue;
-        }
-        errors += 1;
-        failures.push({
+        if (severity === "error") errors += 1;
+        else warnings += 1;
+        (severity === "error" ? failures : warningFailures).push({
           testName: null,
           errorKind: classifyMessage(message ?? ""),
           message: (message ?? "").trim(),
@@ -72,6 +67,6 @@ export const tscEslintAdapter: Adapter = {
     }
 
     const counts = { passed: 0, failed: errors, skipped: 0, ...(warnings > 0 ? { warnings } : {}) };
-    return { adapter: "tsc-eslint", failures, counts };
+    return { adapter: "tsc-eslint", failures, counts, warnings: warningFailures };
   },
 };

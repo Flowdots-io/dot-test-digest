@@ -84,11 +84,18 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     const capture = await runChild(command, { rawLog, cwd: repoRoot });
     const lines = capture.lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
     const gear0 = runGear0(lines);
+    // A linter that fails on warnings alone (`--max-warnings=0`) has only its warnings to show.
+    const reported =
+      gear0 === null
+        ? []
+        : gear0.failures.length === 0 && capture.exitCode !== 0
+          ? (gear0.warnings ?? [])
+          : gear0.failures;
 
     let ranked: DedupeResult =
       gear0 === null
         ? { kept: [], omitted: [] }
-        : dedupeFailures(gear0.failures, {
+        : dedupeFailures(reported, {
             repoRoot,
             contextLines: options.contextLines,
             keep: options.maxClusters,
@@ -117,7 +124,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     return {
       lines,
       gear,
-      failures: uniqueFailures(gear0?.failures ?? []),
+      failures: uniqueFailures(reported),
       ranked,
       counts: gear0?.counts ?? { passed: 0, failed: 0, skipped: 0 },
       exitCode: capture.exitCode,

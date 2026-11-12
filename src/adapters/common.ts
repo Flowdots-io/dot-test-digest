@@ -15,6 +15,8 @@ export interface AdapterResult {
   adapter: string;
   failures: RawFailure[];
   counts: AdapterCounts;
+  /** Warning diagnostics: counted, not failures, unless a failing run has nothing else to show. */
+  warnings?: RawFailure[];
 }
 
 export interface Adapter {
