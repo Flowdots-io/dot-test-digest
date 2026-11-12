@@ -205,8 +205,14 @@ function renderFailBody(
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
+/** `\nnext: dot-test-digest show <run> <cluster>`, or nothing for an envelope without a run id (a hand-built one). */
+function nextRow(envelope: DigestEnvelope, target: FailureCluster | undefined): string {
+  if (envelope.run_id === undefined || target === undefined) return "";
+  return `\nnext: dot-test-digest show ${envelope.run_id} ${target.cluster_id}`;
+}
+
 /**
- * The limit decides the full blocks first, with the `+N more clusters (see log)` line reserved, then fills what is
+ * The limit decides the full blocks first, with the `next:` and `+N more clusters (see log)` lines reserved, then fills what is
  * left with whole listed lines, so the footer is never the part cut and a long listing never takes blocks away.
  */
 function renderLevel(
@@ -220,15 +226,20 @@ function renderLevel(
   const blocks = clusters.map((cluster) => `\n${renderBlock(cluster)}`);
   const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
+  // The first cluster without a full block, else the first one; every id has the same length, so the row's size
+  // does not depend on which cluster it names.
+  const nextOf = (count: number): string => nextRow(envelope, all[count] ?? all[0]);
+
   const fixedBytes = (kept: number): number =>
-    byteLength(headerLine(envelope, kept, timed) + footerOf(all.length - kept));
+    byteLength(headerLine(envelope, kept, timed) + nextOf(kept) + footerOf(all.length - kept));
   let kept = clusters.length;
   while (kept > 1 && fixedBytes(kept) + byteLength(blocks.slice(0, kept).join("")) > FAIL_BODY_BYTES) kept -= 1;
 
   const header = headerLine(envelope, kept, timed);
+  const lead = `${header}${nextOf(kept)}`;
   const footer = footerOf(all.length - kept);
-  const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(header + footer));
-  let body = `${header}${keptBlocks}${footer}`;
+  const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(lead + footer));
+  let body = `${lead}${keptBlocks}${footer}`;
   for (const cluster of all.slice(kept)) {
     const line = `\n${renderOmittedLine(cluster)}`;
     if (byteLength(body) + byteLength(line) > FAIL_BODY_BYTES) break;
