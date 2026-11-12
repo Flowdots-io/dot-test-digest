@@ -165,7 +165,7 @@ describeE2e("pass-state compression (CT-1)", () => {
     expectE2e(stdout).toContain("[PASS] 240 passed, 0 failed");
     expectE2e(estimateTokens(stdout)).toBeLessThanOrEqual(35);
 
-    const logs = fs.readdirSync(path.join(home, "logs"));
+    const logs = fs.readdirSync(path.join(home, "logs")).filter((name) => name.endsWith(".log"));
     expectE2e(logs).toHaveLength(1);
     const raw = fs.readFileSync(path.join(home, "logs", logs[0] as string), "utf8");
     expectE2e(raw.split("\n").length).toBeGreaterThanOrEqual(2500);

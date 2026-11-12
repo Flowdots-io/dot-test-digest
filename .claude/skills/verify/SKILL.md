@@ -35,7 +35,7 @@ $V drive $RUN <label> <fixture|-> [digest flags] -- <command ...>
 ```
 
 - `<fixture>` is `node-cart`, `tsc-small`, `vitest-cart`, or `-` for the fixture root (use `-` for commands that need no project, such as `sh -c 'exit 42'`).
-- The helper runs the built binary with `--no-jev` always added (Gear 1 is the only network use), `DOT_TEST_DIGEST_HOME` set to the run's `home/`, and `node_modules/.bin` on `PATH` (so `tsc` and `vitest` are the repo's). It prints stdout and stderr and stores `command.txt`, `stdout.txt`, `stderr.txt` and `exit.txt` in `evidence/<label>/`. The exit code is the digest's, which is the contract under test.
+- The helper runs the built binary with `--no-jev` added before your flags (Gear 1 is the only network use), except when the first word is a subcommand (`show`, `replay`, ...), which must stay first, `DOT_TEST_DIGEST_HOME` set to the run's `home/`, and `node_modules/.bin` on `PATH` (so `tsc` and `vitest` are the repo's). It prints stdout and stderr and stores `command.txt`, `stdout.txt`, `stderr.txt` and `exit.txt` in `evidence/<label>/`. The exit code is the digest's, which is the contract under test.
 - Give every TDD journey its own `--scope-id=<name>`: state is otherwise keyed by working directory, so earlier drives in the same fixture leak into the `delta`.
 - To change a fixture (for example write a new test file), edit the copy at `$(cat .acceptance/verify/$RUN/workdir)`, never the repo's `tests/fixtures/`.
 
