@@ -60,11 +60,19 @@ describe("the next line (agent-output-contract)", () => {
   it("Omitted clusters are the target", async () => {
     const run = await runNodeCart(NO_JEV, ["cart.test.js"]);
     expect(run.code).toBe(1);
-    const { clusterId } = nextTarget(run.stdout);
+    const { runId, clusterId } = nextTarget(run.stdout);
     const lines = run.stdout.split("\n");
     const footer = lines.findIndex((line) => /^\+\d+ more clusters \(see log\)$/.test(line));
     expect(footer).toBeGreaterThan(1);
-    expect(lines[footer + 1]?.trim().split(" ")[0]).toBe(clusterId);
+    // The record lists every cluster in rank order; the first one without a full block is the target. Whether its
+    // line fits after the footer depends on the length of the paths in the digest, so it is checked when it does.
+    const record = JSON.parse(fs.readFileSync(path.join(run.home, "logs", `${runId}.json`), "utf8")) as {
+      clusters: { cluster_id: string }[];
+    };
+    const fullBlocks = lines.filter((line) => line.startsWith("c_")).length;
+    expect(clusterId).toBe(record.clusters[fullBlocks]?.cluster_id);
+    const listed = lines[footer + 1];
+    if (listed?.startsWith("  c_") === true) expect(listed.trim().split(" ")[0]).toBe(clusterId);
     expect(Buffer.byteLength(run.stdout, "utf8")).toBeLessThanOrEqual(2400);
   });
 
