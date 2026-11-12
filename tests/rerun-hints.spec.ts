@@ -229,8 +229,34 @@ describe("rerun hints: only the grammar's own runners (rerun-hints review)", () 
     expect(failure?.rerun).toBe("npx vitest run t/x.test.js -t adds");
   });
 
-  it("a jest test name that starts with - is passed as one --testNamePattern= word", () => {
+  it("a jest test name that starts with - gets a pattern that cannot be read as a flag", () => {
     const [failure] = jsTestAdapter.parse(jsFailure("--help"), ["jest"]).failures;
-    expect(failure?.rerun).toBe("jest t/x.test.js --testNamePattern=--help");
+    expect(failure?.rerun).toBe("jest t/x.test.js -t '\\--help'");
+  });
+
+  it("a vitest test name that starts with - gets a pattern that cannot be read as a flag", () => {
+    const [failure] = jsTestAdapter.parse(jsFailure("-1 is rejected"), ["npx", "vitest"]).failures;
+    expect(failure?.rerun).toBe("npx vitest run t/x.test.js -t '\\-1 is rejected'");
+  });
+
+  it("the escaped pattern reruns exactly that vitest test", async () => {
+    const dir = vitestCart();
+    fs.writeFileSync(
+      path.join(dir, "tests", "neg.test.ts"),
+      source(
+        'import { expect, it } from "vitest";',
+        'it("-1 is rejected", () => expect(-1).toBe(1));',
+        'it("1 is accepted", () => expect(1).toBe(1));',
+      ),
+    );
+    const run = await runMain([...NO_JEV, "--format=json", "--", "npx", "vitest", "run", "tests/neg.test.ts"], {
+      cwd: dir,
+      home: tempDir("dtd-home-"),
+    });
+    const [cluster] = clustersOf(envelopeOf(run.stdout));
+    expect(cluster?.rerun).toBe("npx vitest run tests/neg.test.ts -t '\\-1 is rejected'");
+    const output = shell(cluster?.rerun ?? "false", dir);
+    expect(output).toContain("1 failed | 1 skipped (2)");
+    expect(output).toContain("-1 is rejected");
   });
 });
