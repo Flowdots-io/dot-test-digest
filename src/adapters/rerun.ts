@@ -36,6 +36,12 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/** A `-t` value that cannot be read as a flag: a leading `-` becomes `\-`, which the pattern still matches as `-`. */
+function testPattern(leaf: string): string {
+  const pattern = escapeRegExp(leaf);
+  return pattern.startsWith("-") ? `\\${pattern}` : pattern;
+}
+
 const SHELL_SAFE = /^[A-Za-z0-9_@%+=:,./-]+$/;
 
 /** POSIX shell quoting: single quotes, an embedded `'` written `'\''`. */
@@ -50,10 +56,9 @@ function selector(runner: Runner, file: string | undefined, name: string | undef
     case "node":
       return file && leaf ? ["--test-name-pattern", `^${escapeRegExp(leaf)}$`, file] : null;
     case "vitest":
-      return file && leaf ? ["run", file, "-t", escapeRegExp(leaf)] : null;
+      return file && leaf ? ["run", file, "-t", testPattern(leaf)] : null;
     case "jest":
-      // One word, so a name that starts with `-` is never read as a flag.
-      return file && leaf ? [file, `--testNamePattern=${escapeRegExp(leaf)}`] : null;
+      return file && leaf ? [file, "-t", testPattern(leaf)] : null;
     case "pytest":
       return file && name ? [`${file}::${name}`] : null;
     case "cargo":
