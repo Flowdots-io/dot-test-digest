@@ -1,5 +1,6 @@
 import {
   CliOptionsSchema,
+  ColorModeSchema,
   OutputFormatSchema,
   TddPhaseSchema,
   type CliOptions,
@@ -27,6 +28,7 @@ Flags (everything after -- is passed to <command> verbatim):
   --format <compact-md|json>              stdout format (default: compact-md)
   --max-clusters <1..15>                  clusters emitted on failure (default: 5)
   --context-lines <0..5>                  SignalWindow half-height (default: 2)
+  --color <auto|always|never>             color the status word (default: auto, a terminal without NO_COLOR)
   --scope-id <string>                     TDD state scope (default: sha256(cwd)[0..12])
   --retry-flakes                          retry once when Gear 1 is >=0.80 sure it is a flake
   --allow-no-tests                        accept a green or refactor run that ran no test
@@ -122,6 +124,14 @@ export function parseArgs(
         const parsed = OutputFormatSchema.safeParse(value);
         if (!parsed.success) throw new UsageError(`${flag} must be compact-md or json`);
         raw["format"] = parsed.data;
+        index = next;
+        break;
+      }
+      case "--color": {
+        const [value, next] = readFlagValue(argv, index, flag);
+        const parsed = ColorModeSchema.safeParse(value);
+        if (!parsed.success) throw new UsageError(`${flag} must be auto, always or never`);
+        raw["color"] = parsed.data;
         index = next;
         break;
       }

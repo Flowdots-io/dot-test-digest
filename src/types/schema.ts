@@ -6,6 +6,9 @@ export type TddPhase = z.infer<typeof TddPhaseSchema>;
 export const OutputFormatSchema = z.enum(["compact-md", "json"]);
 export type OutputFormat = z.infer<typeof OutputFormatSchema>;
 
+export const ColorModeSchema = z.enum(["auto", "always", "never"]);
+export type ColorMode = z.infer<typeof ColorModeSchema>;
+
 /**
  * R2: VALID_RED is required by SPEC §4.3 and CT-3 but missing from §4.1's enum.
  */
@@ -46,6 +49,8 @@ export const CliOptionsSchema = z.object({
   noJev: z.boolean().default(false),
   retryFlakes: z.boolean().default(false),
   allowNoTests: z.boolean().default(false),
+  /** Unset means the configured default (`auto`). */
+  color: ColorModeSchema.optional(),
 });
 export type CliOptions = z.infer<typeof CliOptionsSchema>;
 

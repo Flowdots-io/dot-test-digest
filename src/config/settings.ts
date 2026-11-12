@@ -1,7 +1,4 @@
-import { OutputFormatSchema, type OutputFormat } from "../types/schema.js";
-
-export const COLOR_MODES = ["auto", "always", "never"] as const;
-export type ColorMode = (typeof COLOR_MODES)[number];
+import { ColorModeSchema, OutputFormatSchema, type ColorMode, type OutputFormat } from "../types/schema.js";
 
 /** Every setting, by the dotted name `config` prints and the files nest. */
 export interface SettingValues {
@@ -114,7 +111,7 @@ export const SETTINGS: readonly SettingSpec[] = [
   setting({ key: "format", kind: oneOf(OutputFormatSchema.options), default: "compact-md", env: "DOT_TEST_DIGEST_FORMAT" }),
   setting({ key: "noJev", kind: boolean, default: false, env: "DOT_TEST_DIGEST_NO_JEV" }),
   setting({ key: "retryFlakes", kind: boolean, default: false, env: "DOT_TEST_DIGEST_RETRY_FLAKES" }),
-  setting({ key: "color", kind: oneOf(COLOR_MODES), default: "auto", env: "DOT_TEST_DIGEST_COLOR" }),
+  setting({ key: "color", kind: oneOf(ColorModeSchema.options), default: "auto", env: "DOT_TEST_DIGEST_COLOR" }),
   setting({ key: "progress", kind: boolean, default: false, env: "DOT_TEST_DIGEST_PROGRESS" }),
   setting({ key: "retention.auto", kind: boolean, default: true, env: "DOT_TEST_DIGEST_PRUNE" }),
   setting({ key: "retention.keepRuns", kind: integer(0), default: 50 }),
