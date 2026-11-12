@@ -91,8 +91,9 @@ describe("the run record (run-record)", () => {
     const normal = await runNodeCart(NO_JEV, ["cart.test.js"]);
     expect(failing.code).toBe(1);
     expect(failing.stderr).toBe("dot-test-digest: could not write the run record: disk full\n");
-    const strip = (text: string): string => text.replace(/\d+ms/g, "<t>ms").replace(/log: \S+/g, "log: <log>");
-    expect(strip(failing.stdout)).toBe(strip(normal.stdout));
+    const strip = (run: { stdout: string; dir: string }): string =>
+      run.stdout.replaceAll(run.dir, "<cart>").replace(/\d+ms/g, "<t>ms").replace(/log: \S+/g, "log: <log>");
+    expect(strip(failing)).toBe(strip(normal));
     expect(failing.stdout).toMatch(/^\[FAIL\] 4 failed/);
   });
 });
