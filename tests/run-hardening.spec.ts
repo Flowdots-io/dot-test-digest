@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PASS_BYTE_CEILING, buildEnvelope, formatEnvelope } from "../src/formatters/envelope.js";
 import type { DigestEnvelope } from "../src/types/schema.js";
@@ -101,5 +103,50 @@ describe("count-free pass line (run-hardening)", () => {
     const skipOnly = source('import test from "node:test";', 'test("s", { skip: true }, () => {});');
     const run = await runNodeCart(NO_JEV, ["skip.test.js"], { files: { "skip.test.js": skipOnly } });
     expect(header(run.stdout)).toMatch(/^\[PASS\] 0 passed, 0 failed, 1 skipped in \d+ms \| log: \S+\.log$/);
+  });
+});
+
+const EXIT_0 = [process.execPath, "-e", "process.exit(0)"];
+const NO_TESTS_MESSAGE =
+  "Command exited 0 but no passing test was recognized; a green run must run at least one test (pass --allow-no-tests to accept it).\n";
+
+describe("INVALID_GREEN (run-hardening)", () => {
+  it("A command that runs nothing is not a green", async () => {
+    const run = await runInCart([...NO_JEV, "--tdd-phase=green", "--scope-id=g1"], EXIT_0);
+    expect(header(run.stdout)).toMatch(/^\[INVALID_GREEN \| GREEN\] 0 passed, 0 failed in \d+ms \| log: \S+\.log$/);
+    expect(run.stderr).toBe(NO_TESTS_MESSAGE);
+    expect(run.code).toBe(64);
+    expect(fs.existsSync(path.join(run.home, "state-g1.json"))).toBe(false);
+  });
+
+  it("Refactor needs a passing test too", async () => {
+    const run = await runInCart([...NO_JEV, "--tdd-phase=refactor", "--scope-id=g2"], EXIT_0);
+    expect(header(run.stdout)).toMatch(/^\[INVALID_GREEN \| REFACTOR\] /);
+    expect(run.code).toBe(64);
+  });
+
+  it("A run that only skips tests is not a green", async () => {
+    const skipOnly = 'import test from "node:test"; test("s", { skip: true }, () => {});\n';
+    const run = await runNodeCart([...NO_JEV, "--format=json", "--tdd-phase=green", "--scope-id=g3"], ["skip.test.js"], {
+      files: { "skip.test.js": skipOnly },
+    });
+    expect((JSON.parse(run.stdout) as DigestEnvelope).status).toBe("INVALID_GREEN");
+    expect(run.code).toBe(64);
+  });
+
+  it("--allow-no-tests accepts an empty green", async () => {
+    const run = await runInCart([...NO_JEV, "--tdd-phase=green", "--allow-no-tests", "--scope-id=g5"], EXIT_0);
+    expect(header(run.stdout)).toMatch(/^\[PASS \| GREEN\] exit 0 in \d+ms \| log: \S+\.log$/);
+    expect(run.code).toBe(0);
+  });
+
+  it("The JSON envelope carries the new status", async () => {
+    const run = await runInCart([...NO_JEV, "--format=json", "--tdd-phase=green", "--scope-id=g6"], EXIT_0);
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+    expect({ status: envelope.status, tdd_phase: envelope.tdd_phase, exit_code: envelope.exit_code }).toEqual({
+      status: "INVALID_GREEN",
+      tdd_phase: "green",
+      exit_code: 64,
+    });
   });
 });
