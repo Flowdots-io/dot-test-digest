@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import type { MainDeps } from "../src/index.js";
 import type { RunRecord } from "../src/runner/run-record.js";
 import type { DigestEnvelope } from "../src/types/schema.js";
-import { markRepositoryRoot } from "./helpers/hermetic-env.js";
+import { hermeticEnv, markRepositoryRoot } from "./helpers/hermetic-env.js";
 import { runMain, tempDir } from "./helpers/node-cart.js";
 
 const ROOT = process.cwd();
@@ -134,5 +134,133 @@ describe("digest (digest-input)", () => {
     const run = await digest(["-"], where, { stdinIsTTY: true });
     expect(run.code).toBe(64);
     expect(run.stderr).toBe('no input: pipe a log into "digest -"\n');
+  });
+});
+
+/** A pytest failure whose only frame is `frame`, so the window is read from the file the frame names. */
+function pytestFailure(test: string, frame: string): string {
+  return [
+    `___________________________________ ${test} ___________________________________`,
+    "",
+    `    def ${test}():`,
+    `>       assert ${test}() == 100`,
+    `E       AssertionError: assert 99 == 100 in ${test}`,
+    "",
+    `${frame}: in ${test}`,
+    `    assert ${test}() == 100`,
+  ].join("\n");
+}
+
+function pytestLog(failures: readonly [string, string][]): string {
+  return `${[
+    "============================= test session starts ==============================",
+    `collected ${failures.length} items`,
+    "",
+    "=================================== FAILURES ===================================",
+    ...failures.map(([test, frame]) => pytestFailure(test, frame)),
+    "=========================== short test summary info ============================",
+    ...failures.map(([test]) => `FAILED tests/test_x.py::${test} - AssertionError: assert 99 == 100 in ${test}`),
+    `========================= ${failures.length} failed in 0.12s =========================`,
+  ].join("\n")}\n`;
+}
+
+describe("digest reads source windows only inside the working directory", () => {
+  it("frames outside the directory, by absolute path, ../ or a symlink, get no window; their clusters stay", async () => {
+    const top = tempDir("dtd-digest-confine-");
+    const secret = Array.from({ length: 6 }, (_, index) => `SECRET_LINE_${index + 1}`).join("\n");
+    fs.mkdirSync(path.join(top, "outside"));
+    fs.writeFileSync(path.join(top, "outside", "secret.py"), `${secret}\n`);
+    const cwd = path.join(top, "work");
+    fs.mkdirSync(cwd);
+    markRepositoryRoot(cwd);
+    fs.writeFileSync(path.join(cwd, "inside.py"), "inside_1\ninside_2\ninside_3\n");
+    fs.symlinkSync(path.join(top, "outside", "secret.py"), path.join(cwd, "link.py"));
+    fs.writeFileSync(
+      path.join(top, "evil.log"),
+      pytestLog([
+        ["test_absolute", `${path.join(top, "outside", "secret.py")}:2`],
+        ["test_parent", "../outside/secret.py:3"],
+        ["test_symlink", "link.py:4"],
+        ["test_inside", "inside.py:2"],
+      ]),
+    );
+    const where = { cwd, home: tempDir("dtd-digest-home-") };
+
+    const run = await digest(["../evil.log", "--format=json", "--max-clusters=15"], where);
+    expect(run.code, run.stderr).toBe(1);
+    expect(run.stdout).not.toContain("SECRET_LINE");
+    const clusters = (JSON.parse(run.stdout) as DigestEnvelope).clusters ?? [];
+    expect(clusters.map((cluster) => cluster.sample_tests[0]).sort()).toEqual(
+      ["test_absolute", "test_inside", "test_parent", "test_symlink"],
+    );
+    const inside = clusters.find((cluster) => cluster.sample_tests[0] === "test_inside");
+    expect(inside?.signal_window).toBe("1 | inside_1\n2 > inside_2\n3 | inside_3");
+
+    const replayed = await runMain(["replay", "last", "--format=json", "--max-clusters=15"], { ...where, deps: offline });
+    expect(replayed.code, replayed.stderr).toBe(1);
+    expect(replayed.stdout).not.toContain("SECRET_LINE");
+  });
+});
+
+describe("digest review fixes", () => {
+  it("replay of a digest record prints the digest again, without in <t>ms", async () => {
+    const where = workspace();
+    const first = await digest([TAP_LOG], where);
+    const again = await runMain(["replay", "last"], { ...where, deps: offline });
+    expect(again.code).toBe(first.code);
+    expect(again.stdout).toBe(first.stdout);
+  });
+
+  it("a record that cannot be written or a prune that fails keeps the exit code (INV-3)", async () => {
+    const where = workspace();
+    const noRecord = await digest([TSC_LOG, "--exit-code", "2"], where, {
+      writeRecord: () => {
+        throw new Error("disk full");
+      },
+    });
+    expect(noRecord.code).toBe(2);
+    expect(noRecord.stderr).toBe("dot-test-digest: could not write the run record: disk full\n");
+    const noPrune = await digest([TSC_LOG], where, {
+      prune: () => {
+        throw new Error("locked");
+      },
+    });
+    expect(noPrune.code).toBe(1);
+    expect(noPrune.stderr).toBe("dot-test-digest: could not prune the cache: locked\n");
+  });
+
+  it("--no-jev takes true or false like a run's boolean flags, and overrides the configuration", async () => {
+    const noise = Array.from({ length: 200 }, (_, index) => `step ${index}: something happened`).join("\n");
+    const where = workspace({ "noise.log": `${noise}\n` });
+    const asked: string[] = [];
+    const counting: MainDeps = {
+      env: { ...hermeticEnv(), DOT_TEST_DIGEST_NO_JEV: "1" },
+      client: {
+        isConfigured: () => {
+          asked.push("isConfigured");
+          return false;
+        },
+        ask: () => {
+          throw new Error("not configured");
+        },
+      },
+    };
+    const off = await runMain(["digest", "noise.log", "--exit-code", "1", "--no-jev=true"], { ...where, deps: counting });
+    expect(off.code, off.stderr).toBe(1);
+    expect(asked).toEqual([]);
+    const on = await runMain(["digest", "noise.log", "--exit-code", "1", "--no-jev=false"], { ...where, deps: counting });
+    expect(on.code, on.stderr).toBe(1);
+    expect(asked).toEqual(["isConfigured"]);
+    const bad = await digest(["noise.log", "--no-jev=maybe"], where);
+    expect(bad.code).toBe(64);
+    expect(bad.stderr).toBe("--no-jev accepts only true or false, got maybe\n");
+  });
+
+  it("-- ends the flags, so a file whose name starts with - can be digested", async () => {
+    const where = workspace({ "-dash.log": "all good\n" });
+    const run = await digest(["--", "-dash.log"], where);
+    expect(run.code, run.stderr).toBe(0);
+    expect(run.stdout).toMatch(/^\[PASS\] exit 0 \| log: \S+\.log\n$/);
+    expect(onlyRecord(where.home).input).toBe("-dash.log");
   });
 });
