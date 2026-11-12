@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { tscEslintAdapter } from "../src/adapters/tsc-eslint.js";
 import { PASS_BYTE_CEILING, buildEnvelope, formatEnvelope } from "../src/formatters/envelope.js";
+import type { CapturedLine } from "../src/runner/capture.js";
 import type { DigestEnvelope } from "../src/types/schema.js";
 import { runInCart, runNodeCart, source } from "./helpers/node-cart.js";
 
@@ -166,5 +168,74 @@ describe("green, red and none without INVALID_GREEN (run-hardening)", () => {
     const none = await runInCart([...NO_JEV, "--tdd-phase=none"], EXIT_0);
     expect(header(none.stdout)).toMatch(/^\[PASS\] /);
     expect(none.code).toBe(0);
+  });
+});
+
+const DISTINCT_WARNINGS = source(
+  "/abs/src/a.ts",
+  "  3:5  warning  'x' is assigned a value but never used  no-unused-vars",
+  "  4:5  warning  Unexpected console statement  no-console",
+  "  5:9  warning  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any",
+);
+
+function captured(text: string): CapturedLine[] {
+  return text.split("\n").map((line, index) => ({ stream: "stdout" as const, text: line, line: index + 1 }));
+}
+
+describe("lint warnings that fail the run (run-hardening review)", () => {
+  it("warnings are the failure clusters when the linter exits non-zero with no error", async () => {
+    const run = await runInCart([...NO_JEV, "--format=json"], ["sh", "-c", "cat lint.txt; exit 1"], {
+      files: { "lint.txt": DISTINCT_WARNINGS },
+    });
+    const envelope = JSON.parse(run.stdout) as DigestEnvelope;
+    expect({ status: envelope.status, gear: envelope.execution_gear, summary: envelope.summary }).toEqual({
+      status: "FAIL",
+      gear: "GEAR_0_GRAMMAR",
+      summary: { passed: 0, failed: 0, skipped: 0, warnings: 3, total_clusters: 3 },
+    });
+    expect((envelope.clusters ?? []).map((c) => c.top_frame).sort()).toEqual([
+      "/abs/src/a.ts:3:5",
+      "/abs/src/a.ts:4:5",
+      "/abs/src/a.ts:5:9",
+    ]);
+    expect(run.code).toBe(1);
+  });
+
+  it("the compact header of that run counts the warnings", async () => {
+    const run = await runInCart(NO_JEV, ["sh", "-c", "cat lint.txt; exit 1"], { files: { "lint.txt": DISTINCT_WARNINGS } });
+    expect(header(run.stdout)).toMatch(/^\[FAIL\] 0 failed, 0 passed, 3 warnings in \d+ms \| 3 clusters \| log: \S+\.log$/);
+  });
+
+  it("tscEslintAdapter.parse counts warnings apart from errors in a mixed log", () => {
+    const log = source(
+      "/abs/src/a.ts",
+      "  3:5  warning  'x' is assigned a value but never used  no-unused-vars",
+      "  4:1  error  'y' is not defined  no-undef",
+      "src/b.ts(2,7): error TS2322: Type 'string' is not assignable to type 'number'.",
+      "src/b.ts(9,1): warning TS6133: 'z' is declared but its value is never read.",
+    );
+    const result = tscEslintAdapter.parse(captured(log));
+    expect(result.counts).toEqual({ passed: 0, failed: 2, skipped: 0, warnings: 2 });
+    expect(result.failures.map((f) => f.message)).toEqual([
+      "'y' is not defined",
+      "TS2322: Type 'string' is not assignable to type 'number'.",
+    ]);
+  });
+
+  it("a failure header shows the warnings segment after the counts", () => {
+    const envelope = buildEnvelope({
+      status: "FAIL",
+      phase: "none",
+      exitCode: 1,
+      signal: null,
+      gear: "GEAR_0_GRAMMAR",
+      durationMs: 7,
+      counts: { passed: 0, failed: 2, skipped: 0, warnings: 2 },
+      clusters: [],
+      rawLogPath: "/tmp/logs/run_x.log",
+    });
+    expect(formatEnvelope(envelope, "compact-md").split("\n")[0]).toBe(
+      "[FAIL] 2 failed, 0 passed, 2 warnings in 7ms | 0 clusters | log: /tmp/logs/run_x.log",
+    );
   });
 });
