@@ -14,6 +14,7 @@ describe("parseArgs", () => {
       "s01",
       "--no-jev",
       "--retry-flakes",
+      "--allow-no-tests",
       "--",
       "vitest",
       "run",
@@ -29,6 +30,7 @@ describe("parseArgs", () => {
         scopeId: "s01",
         noJev: true,
         retryFlakes: true,
+        allowNoTests: true,
       },
       command: ["vitest", "run", "--reporter=verbose"],
     });

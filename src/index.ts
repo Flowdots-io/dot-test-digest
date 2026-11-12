@@ -151,13 +151,16 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       previousState,
       failedTests,
       passed: run.counts.passed,
+      failed: run.counts.failed,
+      allowNoTests: options.allowNoTests,
       // A runner we cannot parse may still leave behavioral evidence in the log.
       evidence: run.ranked.kept
         .map((cluster) => `${cluster.message}\n${cluster.signal_window}`)
         .join("\n"),
     });
 
-    if (options.tddPhase !== "none") {
+    // An INVALID_GREEN run proved nothing, so it leaves the state as it was.
+    if (options.tddPhase !== "none" && decision.status !== "INVALID_GREEN") {
       const nextState: RunState = {
         version: 1,
         scope_id: scopeId,

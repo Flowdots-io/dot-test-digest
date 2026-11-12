@@ -220,6 +220,6 @@ export function formatEnvelope(
 ): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
   const { rawText, omitted = [] } = context;
-  const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED";
+  const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED" || envelope.status === "INVALID_GREEN";
   return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, omitted, rawText)}\n`;
 }
