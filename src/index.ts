@@ -49,10 +49,8 @@ export interface MainDeps {
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
-  // DELIBERATE BREAK (pin red): dispatches on a subcommand word anywhere in argv.
-  const at = argv.findIndex(isSubcommandName);
-  const word = argv[at];
-  if (word !== undefined && isSubcommandName(word)) return runSubcommand(word, argv.slice(at + 1));
+  const [first, ...rest] = argv;
+  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest);
 
   let parsed;
   try {
