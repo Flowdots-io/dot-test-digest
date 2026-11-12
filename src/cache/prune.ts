@@ -96,6 +96,15 @@ function collectRuns(logDir: string): RunFiles[] {
   });
 }
 
+function realCacheDir(dir: string): string | undefined {
+  try {
+    return fs.realpathSync(dir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+}
+
 /** Deletes a file another process may already have removed. */
 function unlink(file: string): void {
   try {
@@ -110,7 +119,10 @@ function unlink(file: string): void {
  * files untouched for `stateMaxAgeDays`. Never the current run or scope, never a file modified in the last hour,
  * only files named like runs (in `<home>/logs`) or state files (in `<home>`). Creates nothing.
  */
-export function pruneCache(home: string, options: PruneOptions, now: number = Date.now()): PruneResult {
+export function pruneCache(cacheDir: string, options: PruneOptions, now: number = Date.now()): PruneResult {
+  // A symlinked cache directory is followed once, here; nothing inside it is.
+  const home = realCacheDir(cacheDir);
+  if (home === undefined) return { removedRuns: 0, removedStates: 0, keptRuns: 0 };
   const recent = (mtimeMs: number): boolean => now - mtimeMs < HOUR_MS;
   const runs = collectRuns(path.join(home, "logs")).sort((a, b) => b.createdMs - a.createdMs || b.id.localeCompare(a.id));
 
