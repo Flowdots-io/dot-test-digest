@@ -1,6 +1,8 @@
 import type { JevAsker } from "../gears/gear1-jev.js";
+import type { FinishDeps } from "../runner/finish-run.js";
 import { defaultLogDir } from "../runner/raw-log.js";
 import { runConfig } from "./config.js";
+import { runDigest } from "./digest.js";
 import { runGc } from "./gc.js";
 import { CliError, EX_SOFTWARE, UsageError } from "./errors.js";
 import { runReplay } from "./replay.js";
@@ -15,6 +17,11 @@ export interface SubcommandContext {
   env: NodeJS.ProcessEnv;
   /** Whether stdout is a terminal, for `--color=auto`. */
   stdoutIsTTY: boolean;
+  /** Whether stdin is a terminal: `digest -` refuses to wait on one. */
+  stdinIsTTY: boolean;
+  stdin: NodeJS.ReadableStream;
+  /** How a subcommand that writes a run records it and prunes the cache afterwards. */
+  finish: Omit<FinishDeps, "warn">;
   /** The Jev client a test injects; a subcommand that must stay offline never calls it. */
   client?: JevAsker;
   write: (text: string) => void;
@@ -29,7 +36,7 @@ export type Subcommand = (args: readonly string[], context: SubcommandContext) =
 const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
   show: runShow,
   replay: runReplay,
-  digest: undefined,
+  digest: runDigest,
   gc: runGc,
   stats: runStats,
   doctor: undefined,
@@ -40,9 +47,12 @@ const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
 };
 
 /** What the caller of `main()` injects; each defaults to the process's own. */
-export interface SubcommandDeps {
+export interface SubcommandDeps extends Omit<FinishDeps, "warn"> {
   env?: NodeJS.ProcessEnv;
   stdoutIsTTY?: boolean;
+  stdinIsTTY?: boolean;
+  /** What `digest -` reads; defaults to `process.stdin`. */
+  stdin?: NodeJS.ReadableStream;
   client?: JevAsker;
 }
 
@@ -56,6 +66,12 @@ export async function runSubcommand(
     cwd: process.cwd(),
     env: deps.env ?? process.env,
     stdoutIsTTY: deps.stdoutIsTTY ?? process.stdout.isTTY === true,
+    stdinIsTTY: deps.stdinIsTTY ?? process.stdin.isTTY === true,
+    stdin: deps.stdin ?? process.stdin,
+    finish: {
+      ...(deps.writeRecord ? { writeRecord: deps.writeRecord } : {}),
+      ...(deps.prune ? { prune: deps.prune } : {}),
+    },
     ...(deps.client ? { client: deps.client } : {}),
     write: (text) => {
       process.stdout.write(text);
