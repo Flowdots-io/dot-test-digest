@@ -87,7 +87,7 @@ function countsFragment(envelope: DigestEnvelope, lead: "passed" | "failed"): st
 
 /** No grammar recognized the output, so there are no counts to report, only the exit code. */
 function isUncounted(envelope: DigestEnvelope): boolean {
-  return envelope.status === "PASS" && envelope.summary.passed + envelope.summary.failed === 0;
+  return envelope.status === "PASS" && envelope.execution_gear === "GEAR_0_HEURISTIC_FALLBACK";
 }
 
 export function renderPassLine(envelope: DigestEnvelope): string {
