@@ -129,7 +129,7 @@ export function pruneCache(cacheDir: string, options: PruneOptions, now: number 
   const doomedRuns: RunFiles[] = [];
   let rank = 0;
   for (const run of runs) {
-    const protectedRun = run.id === options.currentRunId || recent(run.newestMtimeMs);
+    const protectedRun = recent(run.newestMtimeMs);
     if (!run.hasLog) {
       if (!protectedRun) doomedRuns.push(run);
       continue;
@@ -143,7 +143,7 @@ export function pruneCache(cacheDir: string, options: PruneOptions, now: number 
   const doomedStates: string[] = [];
   for (const [name, stats] of regularFiles(home)) {
     const match = STATE_FILE.exec(name);
-    if (match === null || match[1] === options.currentScopeId || recent(stats.mtimeMs)) continue;
+    if (match === null || recent(stats.mtimeMs)) continue;
     if (now - stats.mtimeMs > options.stateMaxAgeDays * DAY_MS) doomedStates.push(path.join(home, name));
   }
 
