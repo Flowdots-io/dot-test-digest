@@ -81,10 +81,10 @@ describe("subcommand dispatch (run-record)", () => {
   });
 
   it("A reserved subcommand is a usage error naming it", async () => {
-    const run = await runMain(["gc"], { cwd: process.cwd(), home: tempDir("dtd-gc-") });
+    const run = await runMain(["stats"], { cwd: process.cwd(), home: tempDir("dtd-stats-") });
     expect(run.code).toBe(64);
     expect(run.stdout).toBe("");
-    expect(run.stderr).toBe("gc is not available in this version\n");
+    expect(run.stderr).toBe("stats is not available in this version\n");
   });
 
   it("The help lists the subcommands", async () => {

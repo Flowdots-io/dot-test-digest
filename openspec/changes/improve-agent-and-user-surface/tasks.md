@@ -66,7 +66,7 @@ Ten slices, each self-contained: its own capability specs, tests and docs task. 
 ## 4. S3 Retention
 
 - [ ] 4.1 Automatic pruning
-  - scenarios: "Old runs beyond the newest 50 are removed", "Recent runs are kept even beyond 50", "Fewer than 50 runs are never pruned", "A log without a record is pruned by its mtime", "Files modified in the last hour are never deleted", "Old state files go, the current one stays", "The automatic prune can be switched off", "A prune failure keeps the exit code", "The retention settings reach the prune", "The prune switch has its legacy spelling"
+  - scenarios: "Old runs beyond the newest 50 are removed", "Recent runs are kept even beyond 50", "Fewer than 50 runs are never pruned", "A log without a record is pruned by its mtime", "Files modified in the last hour are never deleted", "Old state files go, the current one stays", "The automatic prune can be switched off", "A prune failure keeps the exit code", "The retention settings reach the prune", "The prune switch has its legacy spelling", "A project file cannot tighten retention"
   - blocked-by: 3.1
   - `src/cache/prune.ts` `pruneCache(dir, options, now)` called after the digest is printed; `deps.prune`; `DOT_TEST_DIGEST_PRUNE`. Includes the two retention scenarios of the config requirement.
 
