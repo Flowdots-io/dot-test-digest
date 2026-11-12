@@ -46,7 +46,7 @@ Each setting SHALL take the first value found in this order: command-line flag, 
 #### Scenario: A project file cannot tighten retention
 - **GIVEN** a project file `{ "retention": { "keepRuns": 0, "maxAgeDays": 0 } }` and the 60-old-runs home
 - **WHEN** a run completes
-- **THEN** the home holds 51 runs (the defaults applied) and stderr contains `ignoring retention.keepRuns in ` and `ignoring retention.maxAgeDays in `
+- **THEN** the home holds 50 runs (the defaults applied) and stderr contains `ignoring retention.keepRuns in ` and `ignoring retention.maxAgeDays in `
 
 #### Scenario: The prune switch has its legacy spelling
 - **GIVEN** a project file `{ "retention": { "auto": false } }` and the 60-old-runs home
