@@ -165,13 +165,13 @@ The [JSON Schema](schema/digest-envelope.schema.json) (draft 2020-12) of this do
 | --- | --- | --- |
 | `node --test` | `node --test --test-name-pattern '^<test>$' <file>` | run: it reports `# tests 1` |
 | `vitest` | `<prefix> run <file> -t '<test>'` (`npx vitest run ...` for `-- npx vitest run`) | run: `1 failed \| 28 skipped (29)` in the example project |
-| `jest` | `<prefix> <file> --testNamePattern=<test>` (one word, so a name that starts with `-` is not read as a flag) | fixture logs only |
+| `jest` | `<prefix> <file> -t '<test>'` | fixture logs only |
 | `pytest` (also `python -m pytest`) | `<prefix> <file>::<test>` (other options such as `-q` are dropped) | fixture logs only |
 | `cargo` | `cargo test <test> -- --exact` | fixture logs only |
 | `go` | `go test -run '^<test>$' ./...` | fixture logs only |
 | `eslint` | `eslint <file>` | fixture logs only |
 
-The test name is the last part of the name (after the last ` > `), with regular-expression characters escaped for the runners that take a pattern. Every word is quoted for a POSIX shell (`sh`, `bash`, `zsh`; Windows shells are not covered). Only the runners of the grammar that read the output count (`node`, `vitest` and `jest` for JavaScript tests, `pytest`, `cargo` and `go`, `eslint`), and a word that contains whitespace is never a runner, so `sh -c "npm run build && vitest"` and a JavaScript failure under `pnpm --dir packages/go test` get no `rerun`. There is no `rerun` for a command without a runner word (`pnpm test`, `npm test`, `make test`: the tool cannot see what the script runs), for `tsc`, or when the output did not name the test or file the runner needs. The jest, pytest, cargo, go and eslint forms were checked against the grammars' fixture logs, not by running those tools.
+The test name is the last part of the name (after the last ` > `), with regular-expression characters escaped for the runners that take a pattern. For vitest and jest a pattern that would start with `-` starts with `\-` instead (`-t '\-1 is rejected'`), so the runner cannot read it as a flag; the pattern still matches the same name (executed with vitest, not with jest). Every word is quoted for a POSIX shell (`sh`, `bash`, `zsh`; Windows shells are not covered). Only the runners of the grammar that read the output count (`node`, `vitest` and `jest` for JavaScript tests, `pytest`, `cargo` and `go`, `eslint`), and a word that contains whitespace is never a runner, so `sh -c "npm run build && vitest"` and a JavaScript failure under `pnpm --dir packages/go test` get no `rerun`. There is no `rerun` for a command without a runner word (`pnpm test`, `npm test`, `make test`: the tool cannot see what the script runs), for `tsc`, or when the output did not name the test or file the runner needs. The jest, pytest, cargo, go and eslint forms were checked against the grammars' fixture logs, not by running those tools.
 
 ### Looking back at a run
 
