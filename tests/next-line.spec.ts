@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { formatEnvelope } from "../src/formatters/envelope.js";
 import type { DigestEnvelope } from "../src/types/schema.js";
 import { markRepositoryRoot } from "./helpers/hermetic-env.js";
-import { runMain, runNodeCart, tempDir } from "./helpers/node-cart.js";
+import { runMain, runNodeCart, source, tempDir } from "./helpers/node-cart.js";
 
 const NO_JEV = ["--no-jev"];
 const NEXT = /^next: dot-test-digest show (run_[0-9a-z]+) (c_[0-9a-f]{8})$/;
@@ -76,14 +76,21 @@ describe("the next line (agent-output-contract)", () => {
     expect(Buffer.byteLength(run.stdout, "utf8")).toBeLessThanOrEqual(2400);
   });
 
-  // BLOCKED: spec. With --max-clusters=15 the cart's 4 clusters still do not all fit the 2,400-byte budget, so a
-  // cluster is omitted (listed after `+1 more clusters`) and, by the requirement and "Omitted clusters are the
-  // target", line 2 names it (c_53a8182a), not the first block. The premise "nothing omitted" does not hold.
-  it.skip("With nothing omitted the target is the first cluster", async () => {
-    const run = await runNodeCart([...NO_JEV, "--max-clusters=15"], ["cart.test.js"]);
-    const firstBlock = run.stdout.split("\n").find((line) => line.startsWith("c_"));
-    expect(nextTarget(run.stdout).clusterId).toBe("c_9721831d");
-    expect(firstBlock?.split(" ")[0]).toBe("c_9721831d");
+  it("With nothing omitted the target is the first cluster", async () => {
+    const run = await runNodeCart(NO_JEV, ["one.test.js"], {
+      files: {
+        "one.test.js": source(
+          'import { test } from "node:test";',
+          'import assert from "node:assert/strict";',
+          'test("one fails", () => assert.equal(1, 2));',
+        ),
+      },
+    });
+    expect(run.code).toBe(1);
+    const blocks = run.stdout.split("\n").filter((line) => line.startsWith("c_"));
+    expect(blocks).toHaveLength(1);
+    expect(run.stdout).not.toMatch(/^\+\d+ more clusters/m);
+    expect(nextTarget(run.stdout).clusterId).toBe(blocks[0]?.split(" ")[0]);
   });
 
   it("a digest that shows every cluster names its first one", () => {
