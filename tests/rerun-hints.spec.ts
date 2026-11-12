@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { jsTestAdapter } from "../src/adapters/js-test.js";
 import { pythonAdapter } from "../src/adapters/python.js";
 import { rustGoAdapter } from "../src/adapters/rust-go.js";
 import { tscEslintAdapter } from "../src/adapters/tsc-eslint.js";
@@ -192,5 +193,44 @@ describe("rerun hints (rerun-hints)", () => {
     if (blockStarts[1] !== undefined) expect(row).toBeLessThan(blockStarts[1]);
     expect(lines[row]).toBe(`  rerun: ${CART_RERUN}`);
     expect(lines[row + 1]).toMatch(/^ {2}raw: L\d+-L\d+$/);
+  });
+});
+
+/** A vitest-style failure of the test `name` in `t/x.test.js`, as the js-test grammar reads it. */
+function jsFailure(name: string): CapturedLine[] {
+  return captured(
+    [
+      ` FAIL  t/x.test.js > ${name}`,
+      "AssertionError: expected 1 to be 2",
+      " ❯ t/x.test.js:3:5",
+      "",
+      " Test Files  1 failed (1)",
+      "      Tests  1 failed (1)",
+    ].join("\n"),
+  );
+}
+
+describe("rerun hints: only the grammar's own runners (rerun-hints review)", () => {
+  it("a runner name inside another argument is not the runner", () => {
+    const [failure] = jsTestAdapter.parse(jsFailure("adds"), ["pnpm", "--dir", "packages/go", "test"]).failures;
+    expect(failure?.testName).toBe("adds");
+    expect(failure?.rerun).toBeUndefined();
+  });
+
+  it("a shell script that mentions a runner has no rerun", () => {
+    const command = ["sh", "-c", "npm run build && ./node_modules/.bin/vitest"];
+    const [failure] = jsTestAdapter.parse(jsFailure("adds"), command).failures;
+    expect(failure?.testName).toBe("adds");
+    expect(failure?.rerun).toBeUndefined();
+  });
+
+  it("the grammar's runner still gets a rerun (control)", () => {
+    const [failure] = jsTestAdapter.parse(jsFailure("adds"), ["npx", "vitest"]).failures;
+    expect(failure?.rerun).toBe("npx vitest run t/x.test.js -t adds");
+  });
+
+  it("a jest test name that starts with - is passed as one --testNamePattern= word", () => {
+    const [failure] = jsTestAdapter.parse(jsFailure("--help"), ["jest"]).failures;
+    expect(failure?.rerun).toBe("jest t/x.test.js --testNamePattern=--help");
   });
 });
