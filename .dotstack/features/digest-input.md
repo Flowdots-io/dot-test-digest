@@ -7,8 +7,10 @@
 - `digest-file` `digest <file>` prints the digest of the file; the size rules are a run's (the 5-line `tsc-small/tsc.log` gives the header plus the 5 raw lines).
 - `digest-exit` without `--exit-code` the exit is `1` when a grammar found a failure, else `0` (a log of `all good` prints `[PASS] exit 0 | log: ...`); `--exit-code N` (`0` to `255`, also `--exit-code=N`) is the exit and the code the pipeline sees.
 - `digest-stdin` `digest -` reads stdin; same stdout and exit as the file, except for the log path; with a terminal on stdin it exits `64` with `no input: pipe a log into "digest -"`.
-- `digest-record` the record has `source` `"digest"`, `command` `[]`, `input`, `duration_ms` `0`, `phase` `"none"`; `show last`, `show last L<a>-L<b>`, `replay last` and `stats` read it like a run's.
+- `digest-record` the record has `source` `"digest"`, `command` `[]`, `input`, `duration_ms` `0`, `phase` `"none"`; `show last`, `show last L<a>-L<b>`, `replay last` (byte-identical to the digest, also without `in <t>ms`) and `stats` read it like a run's.
 - `digest-foreign` source windows are read from the working directory and left out when the file does not exist there (a log from another machine still gives its clusters).
+- `digest-confined` a frame whose file is outside the working directory (absolute path, `../`, or a symlink pointing out, by real path) gets no window, in `digest` and in `replay` of a digest record; the cluster stays. Live runs are not confined.
+- `digest-flags` `--no-jev` also as `--no-jev=true|false` (overrides `noJev` from the configuration; another value exits 64 `--no-jev accepts only true or false, got <v>`); `--` ends the flags, so `digest -- -name.log` reads a file named `-name.log`.
 - `digest-errors` empty input exits `64` `input is empty`; an unreadable file `66` `cannot read <path>: <code>` (`ENOENT`, `EISDIR`); `--exit-code` not an integer in 0..255 `64` `--exit-code must be an integer between 0 and 255, got <value>`; `--tdd-phase` `64` `--tdd-phase is not supported by digest`; an unknown flag `64` `unknown flag: <flag>`; no input argument `64` `digest needs a file or -: ...`.
 - `digest-jev` Gear 1 runs as for a run when the exit code is non-zero, no grammar found a failure and the log has more than 150 lines (only reachable with an explicit non-zero `--exit-code`); `--no-jev` or `noJev` keeps it local.
 
@@ -39,6 +41,6 @@ Preconditions:
 - `input` in the record is the path as typed, relative to the directory the digest ran in; `last` is scoped to that directory too.
 - Cluster ids hash the paths in the log, so the same failures logged under another root get other ids than a live run here.
 - A log without a trailing newline is stored with one; the line numbers are unchanged.
-- `replay last` on a digest record prints `in 0ms` in the header (replay renders the stored `duration_ms`), so it is not byte-identical to the digest.
+- Input is decoded as UTF-8, as a live run's output is: invalid bytes become U+FFFD in the copied log, so `raw_bytes` can differ from the input file's size.
 - `digest -` from an interactive shell without a pipe refuses at once instead of waiting for input.
 - The automatic prune runs after a digest as after a run: digesting many logs in a fresh home can delete older runs beyond the newest 50 that are older than 14 days.
