@@ -150,3 +150,21 @@ describe("INVALID_GREEN (run-hardening)", () => {
     });
   });
 });
+
+describe("green, red and none without INVALID_GREEN (run-hardening)", () => {
+  it("A real green is unchanged", async () => {
+    const run = await runNodeCart([...NO_JEV, "--tdd-phase=green", "--scope-id=g4"], ["passing.test.js"]);
+    expect(header(run.stdout)).toMatch(/^\[PASS \| GREEN\] 1 passed, 0 failed in \d+ms \| log: \S+\.log$/);
+    expect(run.code).toBe(0);
+  });
+
+  it("Red and none are unchanged", async () => {
+    const red = await runNodeCart([...NO_JEV, "--format=json", "--tdd-phase=red"], ["passing.test.js"]);
+    expect((JSON.parse(red.stdout) as DigestEnvelope).status).toBe("INVALID_RED");
+    expect(red.code).toBe(64);
+
+    const none = await runInCart([...NO_JEV, "--tdd-phase=none"], EXIT_0);
+    expect(header(none.stdout)).toMatch(/^\[PASS\] /);
+    expect(none.code).toBe(0);
+  });
+});

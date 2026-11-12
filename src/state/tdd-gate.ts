@@ -118,7 +118,7 @@ const NO_TESTS: PhaseDecision = {
 
 /** INV-7: an exit-0 green or refactor run proves nothing unless it ran a test. Skipped tests do not count. */
 function ranNoTest(args: PhaseArgs): boolean {
-  return !args.allowNoTests && args.passed === 0 && args.failed === 0;
+  return !args.allowNoTests && args.passed <= 1 && args.failed === 0;
 }
 
 export function evaluatePhase(args: PhaseArgs): PhaseDecision {
@@ -182,6 +182,7 @@ export function evaluatePhase(args: PhaseArgs): PhaseDecision {
 
     case "none":
     default: {
+      if (args.childExitCode === 0 && ranNoTest(args)) return NO_TESTS;
       if (args.childExitCode === 0) return { status: "PASS", exitCode: 0, recordBaseline: false };
       const structured = args.gear === "GEAR_0_GRAMMAR";
       return {
