@@ -12,6 +12,8 @@ import {
 } from "../types/schema.js";
 
 export const RUN_RECORD_SCHEMA = 1;
+/** Also what keeps a record's id from naming a path outside `logs/`. */
+export const RUN_ID = /^run_[0-9a-z]+$/;
 
 const count = z.number().int().min(0);
 
@@ -26,7 +28,7 @@ export type RecordCluster = z.infer<typeof RecordClusterSchema>;
 /** `logs/<run>.json`: what a run was, beside `logs/<run>.log`, which holds its raw lines only. */
 export const RunRecordSchema = z.object({
   schema: z.literal(RUN_RECORD_SCHEMA),
-  run_id: z.string().min(1),
+  run_id: z.string().regex(RUN_ID),
   version: z.string(),
   created_at: z.string().datetime(),
   source: z.enum(["run", "digest"]),
@@ -98,13 +100,14 @@ export function readRunRecord(file: string): RunRecord {
   return RunRecordSchema.parse(JSON.parse(fs.readFileSync(file, "utf8")));
 }
 
-/** Every valid record in `logDir`; unreadable or foreign `.json` files are skipped. */
+/** Every valid record in `logDir`; unreadable or foreign `.json` files, and records not named after their run id, are skipped. */
 export function loadRunRecords(logDir: string): RunRecord[] {
   const records: RunRecord[] = [];
   for (const name of listLogDir(logDir)) {
     if (!name.endsWith(".json")) continue;
     try {
-      records.push(readRunRecord(path.join(logDir, name)));
+      const record = readRunRecord(path.join(logDir, name));
+      if (`${record.run_id}.json` === name) records.push(record);
     } catch {
       // A record being replaced, or a file this version does not understand.
     }

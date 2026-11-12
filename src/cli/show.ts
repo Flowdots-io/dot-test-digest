@@ -66,7 +66,8 @@ function readLogLines(path: string): string[] {
 export function runShow(args: readonly string[], context: SubcommandContext): number {
   const options = parseShowArgs(args);
   const run = resolveRunRef(options.ref, context);
-  if (!run.hasLog || run.record === null) throw new NoInputError(`log of ${run.runId} was removed`);
+  if (!run.hasLog) throw new NoInputError(`log of ${run.runId} was removed`);
+  if (run.record === null) throw new NoInputError(`record of ${run.runId} is missing or unreadable`);
 
   if (options.record) {
     context.write(fs.readFileSync(run.recordPath, "utf8"));
