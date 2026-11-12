@@ -2,7 +2,7 @@
 export const SUBCOMMANDS = [
   { name: "show", synopsis: "show <run> [range|cluster_id]", summary: "print a run's raw log lines, a range or a cluster's lines (--numbers, --record)" },
   { name: "replay", synopsis: "replay <run>", summary: "print the digest of a recorded run again, without running it (--format, --max-clusters, --context-lines)" },
-  { name: "digest", synopsis: "digest <file|->", summary: "digest an existing log file, or stdin" },
+  { name: "digest", synopsis: "digest <file|->", summary: "digest an existing log file, or stdin, into a recorded run (--exit-code, --format, --max-clusters, --context-lines, --no-jev)" },
   { name: "gc", synopsis: "gc", summary: "delete old runs and state files from the cache (--keep, --max-age-days, --state-max-age-days, --dry-run)" },
   { name: "stats", synopsis: "stats", summary: "total the bytes and tokens the digests saved (--last N, --json)" },
   { name: "doctor", synopsis: "doctor", summary: "check the setup and name the command for the detected runner" },

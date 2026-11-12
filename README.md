@@ -173,7 +173,32 @@ dot-test-digest stats --json     # {"runs":3,"raw_bytes":16000,"digest_bytes":18
 
 `raw bytes` is the size of the logs and `digest bytes` what the runs printed on stdout (both from the records); the percentage is rounded to one decimal, and the tokens use the tool's own estimate (4 bytes a token, rounded up), `0` when a digest was larger than its output. Statuses are sorted by name. With no records it prints `runs: 0`. It reads only, and exits `0`; a `--last` that is not a positive integer exits `64`. Runs without a record (older logs) are not counted.
 
-`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)) and `digest`, `doctor`, `init`, `mcp` and `schema`. Those last five are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+### Digesting a log you already have
+
+`digest` reads a log that was written without the tool, a CI job's output or a log someone pasted, and prints the same digest a wrapped run would:
+
+```bash
+dot-test-digest digest test.log                   # exit 1 when a grammar found a failure, else 0
+dot-test-digest digest build.log --exit-code 2    # exit with the code the original command returned
+some-job | dot-test-digest digest -               # read stdin
+dot-test-digest digest test.log --format=json     # also --max-clusters, --context-lines, --no-jev
+```
+
+The lines are copied unchanged into a new log under the cache, so every `raw: L<a>-L<b>` pointer is a line number of the input, and the run is recorded like any other (`source: "digest"`, `command: []`, `input: "<path>"` or `"-"`): `show last`, `replay last` (whose header shows `in 0ms`, the stored duration) and `stats` work on it, and the cache is pruned afterwards as after a run. The pipeline is a run's (adapters, clusters, size rules); the header leaves out `in <t>ms`, because no process was timed, and the JSON envelope has `duration_ms: 0`. Source windows are read from the working directory and are left out when a file the log names does not exist here, so a log from another machine still gives its clusters, without windows. There is no TDD gate (`--tdd-phase` exits `64`). An empty input exits `64` with `input is empty`, a file that cannot be read exits `66` with `cannot read <path>: <reason>` (`ENOENT`, `EISDIR`, ...), `digest -` with a terminal on stdin exits `64` with `no input: pipe a log into "digest -"`, and `--exit-code` outside 0 to 255 exits `64`.
+
+Gear 1 can run here: when the exit code is non-zero, no grammar recognised a failure and the log has more than 150 lines, a digest asks Jev exactly as a run would (with `TYPESAFE_API_KEY` set). Without `--exit-code` that never happens, because the inferred code is `1` only when a grammar found a failure. Pass `--no-jev` (or set `noJev`) to stay local.
+
+In CI, run the tests as usual, keep the full log as an artifact, and print only the digest, with the tests' own exit code:
+
+```bash
+set -o pipefail
+pnpm test 2>&1 | tee test.log > /dev/null && status=0 || status=$?   # also under bash -e
+npx dot-test-digest digest test.log --exit-code "$status" --no-jev
+```
+
+The cache of a CI job is usually thrown away with the job; set `DOT_TEST_DIGEST_HOME` to a path you upload if you want the copied log and its record too.
+
+`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)) and `doctor`, `init`, `mcp` and `schema`. Those last four are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
 
 ### The cache and what is deleted
 
