@@ -1,5 +1,6 @@
 import { defaultLogDir } from "../runner/raw-log.js";
 import { runConfig } from "./config.js";
+import { runGc } from "./gc.js";
 import { CliError, EX_SOFTWARE, UsageError } from "./errors.js";
 import { runShow } from "./show.js";
 import type { SubcommandName } from "./subcommands.js";
@@ -22,7 +23,7 @@ const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
   show: runShow,
   replay: undefined,
   digest: undefined,
-  gc: undefined,
+  gc: runGc,
   stats: undefined,
   doctor: undefined,
   init: undefined,
