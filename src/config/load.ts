@@ -40,13 +40,26 @@ export function userConfigPath(env: NodeJS.ProcessEnv): string {
   return path.join(base, "dot-test-digest", "config.json");
 }
 
-/** The nearest project file, walking up to the first directory holding `.git` and never above the home directory. */
+function realOrResolved(target: string): string {
+  try {
+    return fs.realpathSync(target);
+  } catch {
+    return path.resolve(target);
+  }
+}
+
+/**
+ * The nearest project file, walking up to the first directory holding `.git` and never above the home directory
+ * (by real path). Outside home, a walk that no `.git` bounds finds nothing: a shared directory such as `/tmp` must
+ * not configure someone else's run.
+ */
 export function findProjectFile(cwd: string, env: NodeJS.ProcessEnv): string | undefined {
-  const home = path.resolve(homeOf(env));
-  for (let dir = path.resolve(cwd); ; ) {
+  const home = realOrResolved(homeOf(env));
+  let nearest: string | undefined;
+  for (let dir = realOrResolved(cwd); ; ) {
     const candidate = path.join(dir, PROJECT_FILE);
-    if (fs.existsSync(candidate)) return candidate;
-    if (fs.existsSync(path.join(dir, ".git")) || dir === home) return undefined;
+    nearest ??= fs.existsSync(candidate) ? candidate : undefined;
+    if (fs.existsSync(path.join(dir, ".git")) || dir === home) return nearest;
     const parent = path.dirname(dir);
     if (parent === dir) return undefined;
     dir = parent;
