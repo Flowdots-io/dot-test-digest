@@ -68,6 +68,7 @@ describe("the colored status word (terminal-color)", () => {
 
   it("JSON is never colored", async () => {
     const run = await runNodeCart([...NO_JEV, "--color=always", "--format=json"], ["passing.test.js"]);
+    expect(run.code).toBe(0);
     expect(run.stdout).not.toContain(ESC);
     expect(() => JSON.parse(run.stdout)).not.toThrow();
   });
