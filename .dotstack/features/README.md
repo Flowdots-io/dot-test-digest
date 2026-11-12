@@ -6,7 +6,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 - Node >= 20 on `PATH`. The numbers in these files were measured on Node 22.23.4, `--no-jev`; the `node --test` grammar is verified on that version only.
 - `V=.claude/skills/verify/verify.sh; RUN=$($V launch)`, then `$V doctor $RUN` must show the commit under test. Run `$V cleanup $RUN` at the end.
-- Every drive adds `--no-jev` and uses the run's own `DOT_TEST_DIGEST_HOME`. Gear 1 (the Jev API) is never exercised here: it needs `TYPESAFE_API_KEY` and the network (see "Not covered").
+- Every drive adds `--no-jev` (except a subcommand drive such as `show last`, where the subcommand must be the first word) and uses the run's own `DOT_TEST_DIGEST_HOME`. Gear 1 (the Jev API) is never exercised here: it needs `TYPESAFE_API_KEY` and the network (see "Not covered").
 - Fixtures: `node-cart` (`node --test`, 6 tests in `cart.test.js`: 2 pass, 4 fail), `tsc-small` (5 type errors in 2 files), `vitest-cart` (29 vitest tests, 5 fail). They are copied per run; edit the copy only.
 - Mark each feature file `Prod: safe` (writes nothing) or `Prod: not safe`. There is no production deployment of this CLI: the marker only says whether a journey writes a log or state file.
 
@@ -33,7 +33,7 @@ Each feature file has an H1, one paragraph, then exactly four H2s: `Sub-features
 
 ## Features
 
-- [CLI surface](./cli-surface.md): `--help`, `--version`, flag parsing and usage errors (exit 64).
+- [CLI surface](./cli-surface.md): `--help`, `--version`, flag parsing and usage errors (exit 64), subcommand dispatch, the run record and `show` (exit 66).
 - [Exit-code transparency](./exit-codes.md): the child's exit code, a signal, a missing command.
 - [Pass digest](./pass-digest.md): a passing run is one line, at most 160 bytes, and the raw log keeps everything.
 - [Failure digest](./failure-digest.md): clusters, the 2,400-byte ceiling, omitted clusters, `raw:` pointers, the tsc raw-text fallback.

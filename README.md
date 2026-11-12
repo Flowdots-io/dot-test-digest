@@ -52,7 +52,7 @@ If `dot-test-digest` is not found afterwards, run `pnpm setup` and restart your 
 
 ## How to use it
 
-Put the flags before `--` and the command you would normally run after it. Everything after `--` is passed to the command untouched, and a missing `--` is a usage error (exit `64`).
+Put the flags before `--` and the command you would normally run after it. Everything after `--` is passed to the command untouched, and a missing `--` is a usage error (exit `64`). The one other form is a subcommand as the first word (`dot-test-digest show last`, see [Looking back at a run](#looking-back-at-a-run)); `-- show` still runs a program called `show`.
 
 ```bash
 dot-test-digest -- pnpm test                         # no flags: digest only
@@ -90,7 +90,25 @@ The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed
 | `INVALID_GREEN` | `--tdd-phase=green` or `refactor`, the command exited `0`, but no passed or failed test was recognised (skipped tests do not count). Exit `64`, a one-line message on `stderr`, and the TDD state is left as it was. `--allow-no-tests` turns it back into `PASS`. |
 | `REGRESSION_DETECTED` | `--tdd-phase=refactor` and something that passed before now fails. |
 
-**Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase (`INVALID_RED`), a green or refactor run that ran no test (`INVALID_GREEN`), or a usage error in the flags. A failure to write the log or the state file is reported on `stderr` and never changes the exit code, and neither does a reader that closes stdout early (`dot-test-digest -- … | head -1`): the digest is dropped, the log is still written and no `EPIPE` trace is printed.
+**Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase (`INVALID_RED`), a green or refactor run that ran no test (`INVALID_GREEN`), or a usage error in the flags. Subcommands never return a child's code: `0` on success, `64` for a usage error, `66` (`EX_NOINPUT`) when the run, its record or its log does not exist. A failure to write the log or the state file is reported on `stderr` and never changes the exit code, and neither does a reader that closes stdout early (`dot-test-digest -- … | head -1`): the digest is dropped, the log is still written and no `EPIPE` trace is printed.
+
+### Looking back at a run
+
+Every run leaves two files in `~/.cache/dot-test-digest/logs/` (or `$DOT_TEST_DIGEST_HOME/logs/`): `<run>.log`, the raw output line for line (every `raw: L<a>-L<b>` pointer in a digest refers to it), and `<run>.json`, the **run record**. The record is written atomically after the digest is printed and holds what the log cannot: `run_id`, `version`, `created_at`, `cwd`, `command`, `exit_code` (what the tool returned) and `child_exit_code`, `signal`, `duration_ms`, `phase`, `scope_id`, `status`, `execution_gear`, `format`, `options`, `summary`, the size of the log (`raw_lines`, `raw_bytes`), the bytes of the digest (`digest_bytes`) and every cluster, shown or omitted, with its `raw_log_lines` range. A failure to write it prints `dot-test-digest: could not write the run record: <reason>` on `stderr` and never changes the exit code.
+
+`show` prints a run's raw lines exactly as stored, so you can open the part of the log a digest pointed at without knowing its path:
+
+```bash
+dot-test-digest show last                  # the whole log of the newest run in this directory
+dot-test-digest show last L15-L39          # a range (also 15-39, or L15 for one line)
+dot-test-digest show last c_9721831d       # the lines of one cluster, from the record
+dot-test-digest show run_mwdh6m L15-L16 --numbers   # "15<TAB>..." per line
+dot-test-digest show last --record         # the record file itself
+```
+
+A `<run>` is `last` (the newest record whose `cwd` is the current directory, so runs in other repositories never answer), a full run id, or a unique prefix of at least 6 characters. A range running past the end is clamped. Errors are one line on `stderr`: `no run recorded for this directory` and `no such run: <ref>` exit `66`; `log of <run> was removed` (the log or the record is gone) exits `66`; an ambiguous or too-short prefix, a range that starts past the end (`the log has <N> lines`), a reversed range (`invalid range: L9-L3`) or an unknown cluster id (`no cluster <id> in <run>`) exit `64`.
+
+`--help` also lists `replay`, `digest`, `gc`, `stats`, `doctor`, `init`, `mcp`, `config` and `schema`. They are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
 
 ## The TDD gate
 
