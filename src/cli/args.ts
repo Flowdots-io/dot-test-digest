@@ -139,7 +139,7 @@ export function parseArgs(
       }
       case "--max-clusters": {
         const [value, next] = readFlagValue(argv, index, flag);
-        raw["maxClusters"] = readInt(flag, value, 1, 15);
+        raw["ignoredMaxClusters"] = readInt(flag, value, 1, 15);
         index = next;
         break;
       }
