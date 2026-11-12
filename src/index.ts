@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { runGear0 } from "./adapters/index.js";
+import { runGear0, type AdapterCounts } from "./adapters/index.js";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
 import { buildEnvelope, formatEnvelope } from "./formatters/envelope.js";
 import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gears/gear1-jev.js";
@@ -28,7 +28,7 @@ interface Attempt {
   gear: ExecutionGear;
   failures: RawFailure[];
   ranked: DedupeResult;
-  counts: { passed: number; failed: number; skipped: number };
+  counts: AdapterCounts;
   exitCode: number;
   signal: string | null;
   durationMs: number;

@@ -70,6 +70,8 @@ export const SummarySchema = z.object({
   passed: z.number().int().min(0),
   failed: z.number().int().min(0),
   skipped: z.number().int().min(0),
+  /** Present only when nonzero. */
+  warnings: z.number().int().min(1).optional(),
   total_clusters: z.number().int().min(0),
 });
 

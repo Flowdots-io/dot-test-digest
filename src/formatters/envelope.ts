@@ -1,4 +1,5 @@
 import os from "node:os";
+import type { AdapterCounts } from "../adapters/common.js";
 import type {
   Delta,
   DigestEnvelope,
@@ -39,7 +40,7 @@ export interface BuildEnvelopeInput {
   signal: string | null;
   gear: ExecutionGear;
   durationMs: number;
-  counts: { passed: number; failed: number; skipped: number };
+  counts: AdapterCounts;
   clusters: readonly FailureCluster[];
   delta?: Delta;
   rawLogPath: string;
@@ -57,6 +58,7 @@ export function buildEnvelope(input: BuildEnvelopeInput): DigestEnvelope {
       passed: input.counts.passed,
       failed: input.counts.failed,
       skipped: input.counts.skipped,
+      ...(input.counts.warnings ? { warnings: input.counts.warnings } : {}),
       total_clusters: input.clusters.length,
     },
     ...(input.delta ? { delta: input.delta } : {}),
@@ -76,10 +78,23 @@ function deltaFragment(envelope: DigestEnvelope): string {
   return ` (delta: +${envelope.delta.newly_passing} newly passing, ${envelope.delta.newly_broken_regressions} regressions)`;
 }
 
+/** The pass line leads with passed, the failure header with failed; skipped and warnings follow only when nonzero. */
+function countsFragment(envelope: DigestEnvelope, lead: "passed" | "failed"): string {
+  const { passed, failed, skipped, warnings = 0 } = envelope.summary;
+  const pair = lead === "passed" ? `${passed} passed, ${failed} failed` : `${failed} failed, ${passed} passed`;
+  return `${pair}${skipped > 0 ? `, ${skipped} skipped` : ""}${warnings > 0 ? `, ${warnings} warnings` : ""}`;
+}
+
+/** No grammar recognized the output, so there are no counts to report, only the exit code. */
+function isUncounted(envelope: DigestEnvelope): boolean {
+  return envelope.status === "PASS" && envelope.execution_gear === "GEAR_0_HEURISTIC_FALLBACK";
+}
+
 export function renderPassLine(envelope: DigestEnvelope): string {
-  const line =
-    `[${statusLabel(envelope)}] ${envelope.summary.passed} passed, ${envelope.summary.failed} failed` +
-    `${deltaFragment(envelope)} in ${envelope.duration_ms}ms | log: ${shortenPath(envelope.raw_log_path)}`;
+  const outcome = isUncounted(envelope)
+    ? "exit 0"
+    : `${countsFragment(envelope, "passed")}${deltaFragment(envelope)}`;
+  const line = `[${statusLabel(envelope)}] ${outcome} in ${envelope.duration_ms}ms | log: ${shortenPath(envelope.raw_log_path)}`;
   return truncateBytes(line, PASS_BYTE_CEILING - 1);
 }
 
@@ -141,8 +156,7 @@ const LADDER: readonly ((cluster: FailureCluster) => string)[] = [
 
 function headerLine(envelope: DigestEnvelope, clusterCount: number): string {
   return (
-    `[${statusLabel(envelope)}] ${envelope.summary.failed} failed, ${envelope.summary.passed} passed` +
-    ` in ${envelope.duration_ms}ms | ${clusterCount} cluster${clusterCount === 1 ? "" : "s"}` +
+    `[${statusLabel(envelope)}] ${countsFragment(envelope, "failed")} in ${envelope.duration_ms}ms | ${clusterCount} cluster${clusterCount === 1 ? "" : "s"}` +
     ` | log: ${shortenPath(envelope.raw_log_path)}`
   );
 }

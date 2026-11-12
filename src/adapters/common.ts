@@ -5,7 +5,10 @@ import type { ErrorKind } from "../types/schema.js";
 export interface AdapterCounts {
   passed: number;
   failed: number;
+  /** Skipped and todo tests. */
   skipped: number;
+  /** Compiler and linter warnings; set only by grammars that report them, and only when nonzero. */
+  warnings?: number;
 }
 
 export interface AdapterResult {
