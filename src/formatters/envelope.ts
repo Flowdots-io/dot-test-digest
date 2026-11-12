@@ -16,8 +16,13 @@ export const MAX_FAIL_TOKENS = 600;
 const BYTES_PER_TOKEN = 4;
 const MESSAGE_BYTE_CEILING = 240;
 
+/** EstimatedTokens of `bytes` bytes of text. */
+export function tokensForBytes(bytes: number): number {
+  return Math.ceil(bytes / BYTES_PER_TOKEN);
+}
+
 export function estimateTokens(text: string): number {
-  return Math.ceil(Buffer.byteLength(text, "utf8") / BYTES_PER_TOKEN);
+  return tokensForBytes(Buffer.byteLength(text, "utf8"));
 }
 
 export function shortenPath(target: string): string {

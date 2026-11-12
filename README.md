@@ -151,7 +151,29 @@ dot-test-digest show last --record         # the record file itself
 
 A `<run>` is `last` (the newest record whose `cwd` is the current directory, so runs in other repositories never answer), a full run id, or a unique prefix of at least 6 characters. A range running past the end is clamped. Errors are one line on `stderr`: `no run recorded for this directory` and `no such run: <ref>` exit `66`; `log of <run> was removed` and `record of <run> is missing or unreadable` (a log from before records existed) exit `66`; an ambiguous or too-short prefix, a range that starts past the end (`the log has <N> lines`), a reversed range (`invalid range: L9-L3`) or an unknown cluster id (`no cluster <id> in <run>`) exit `64`.
 
-`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)) and `replay`, `digest`, `stats`, `doctor`, `init`, `mcp` and `schema`. Those last seven are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+`replay` prints the digest of a recorded run again, from its record and its log, without running anything:
+
+```bash
+dot-test-digest replay last                                   # the same digest (see below for when it is byte for byte)
+dot-test-digest replay last --format=json --max-clusters=15   # every cluster, as JSON
+dot-test-digest replay last --context-lines=0                 # only the failing source line
+```
+
+It reads the stored lines through the same pipeline as a run, with the stored `phase`, `command`, `child_exit_code`, `duration_ms` and options, unless `--format`, `--max-clusters` or `--context-lines` overrides one of them, and exits with the record's `exit_code` (a replayed `INVALID_RED` exits `64` and prints its message on `stderr` again). The size rules are those of a run, so `--format=json` is how to see more than the compact budget allows. The digest is byte for byte the original only for a run whose digest came from Gear 0 (a grammar or the heuristic fallback) and that was not retried: a Gear 1 (Jev) digest is replayed through the heuristic instead, and a `--retry-flakes` run is replayed from its whole log, both attempts, where the live digest used the second only. Replay never starts a process, never calls the network (Gear 1 is off), never reads or writes a TDD state file and never writes a log or a record, so no `(delta: ...)` is printed. A log from before records existed exits `66` with `<run> has no record (written by an older version); replay needs one`; a record whose log was pruned exits `66` with `log of <run> was removed`. A source window is read from the run's directory as it is now, so an edited file shows its new lines.
+
+`stats` totals what the recorded runs of every directory saved:
+
+```bash
+dot-test-digest stats            # runs: 3 / raw bytes: 16000 / digest bytes: 1850 /
+                                 # saved: 14150 bytes (88.4%), about 3538 tokens / status: FAIL 1, PASS 2
+dot-test-digest stats --last 20  # only the 20 newest runs (by created_at)
+dot-test-digest stats --json     # {"runs":3,"raw_bytes":16000,"digest_bytes":1850,"saved_bytes":14150,
+                                 #  "saved_percent":88.4,"estimated_tokens_saved":3538,"statuses":{"FAIL":1,"PASS":2}}
+```
+
+`raw bytes` is the size of the logs and `digest bytes` what the runs printed on stdout (both from the records); the percentage is rounded to one decimal, and the tokens use the tool's own estimate (4 bytes a token, rounded up), `0` when a digest was larger than its output. Statuses are sorted by name. With no records it prints `runs: 0`. It reads only, and exits `0`; a `--last` that is not a positive integer exits `64`. Runs without a record (older logs) are not counted.
+
+`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)) and `digest`, `doctor`, `init`, `mcp` and `schema`. Those last five are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
 
 ### The cache and what is deleted
 
