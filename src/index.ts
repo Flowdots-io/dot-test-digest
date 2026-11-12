@@ -4,6 +4,9 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { runGear0, type AdapterCounts } from "./adapters/index.js";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
+import { runSubcommand } from "./cli/dispatch.js";
+import { EX_SOFTWARE } from "./cli/errors.js";
+import { isSubcommandName } from "./cli/subcommands.js";
 import { buildEnvelope, formatEnvelope } from "./formatters/envelope.js";
 import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gears/gear1-jev.js";
 import { normalizeLine } from "./pruner/ansi-stripper.js";
@@ -23,7 +26,6 @@ import type { ExecutionGear } from "./types/schema.js";
 import { VERSION } from "./version.js";
 
 const COMMAND_NOT_FOUND = 127;
-const EX_SOFTWARE = 70;
 
 interface Attempt {
   lines: CapturedLine[];
@@ -47,6 +49,9 @@ export interface MainDeps {
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
+  const [first, ...rest] = argv;
+  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest);
+
   let parsed;
   try {
     parsed = parseArgs(argv);

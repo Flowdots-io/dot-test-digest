@@ -4,17 +4,10 @@ import {
   TddPhaseSchema,
   type CliOptions,
 } from "../types/schema.js";
+import { UsageError } from "./errors.js";
+import { SUBCOMMANDS } from "./subcommands.js";
 
-export const EX_USAGE = 64;
-
-export class UsageError extends Error {
-  readonly exitCode = EX_USAGE;
-
-  constructor(message: string) {
-    super(message);
-    this.name = "UsageError";
-  }
-}
+export { EX_USAGE, UsageError } from "./errors.js";
 
 export interface RunParseResult {
   kind: "run";
@@ -27,6 +20,7 @@ export type ParseResult = RunParseResult | { kind: "help" } | { kind: "version" 
 export const USAGE = `dot-test-digest — bounded test/build output compressor
 
 Usage: dot-test-digest [flags] -- <command ...>
+       dot-test-digest <subcommand> [args]
 
 Flags (everything after -- is passed to <command> verbatim):
   --tdd-phase <red|green|refactor|none>   phase gate (default: none)
@@ -40,6 +34,8 @@ Flags (everything after -- is passed to <command> verbatim):
   -h, --help                              show this help
   -v, --version                           show the version
 
+Subcommands (<run> is last, a run id, or a unique prefix of 6 or more characters):
+${SUBCOMMANDS.map((command) => `  ${command.synopsis}\n      ${command.summary}\n`).join("")}
 Environment:
   TYPESAFE_API_KEY, TYPESAFE_API_URL, DOT_TEST_DIGEST_HOME
 `;
