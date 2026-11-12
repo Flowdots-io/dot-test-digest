@@ -56,7 +56,7 @@ export interface MainDeps {
 /** `auto` colors a terminal unless `NO_COLOR` is set or `TERM` is `dumb`. */
 function wantsColor(mode: ColorMode, isTTY: boolean, env: NodeJS.ProcessEnv): boolean {
   if (mode !== "auto") return mode === "always";
-  return !env["NO_COLOR"] && env["TERM"] !== "dumb";
+  return isTTY && !env["NO_COLOR"] && env["TERM"] !== "dumb";
 }
 
 /** Loads the configuration for a run, prints its warnings, and returns it with the defaults it gives the flags. */
