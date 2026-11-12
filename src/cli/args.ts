@@ -60,7 +60,7 @@ function readFlagValue(argv: readonly string[], index: number, flag: string): [s
   return [value, index + 1];
 }
 
-function readBoolean(flag: string, token: string): boolean {
+export function readBoolean(flag: string, token: string): boolean {
   const equals = token.indexOf("=");
   if (equals === -1) return true;
   const value = token.slice(equals + 1);

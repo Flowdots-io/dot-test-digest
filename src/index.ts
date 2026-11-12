@@ -1,37 +1,24 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
-import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
-import { AUTO_PRUNE_MAX_FILES, pruneCache, type PruneOptions, type PruneResult } from "./cache/prune.js";
 import { wantsColor } from "./cli/color.js";
-import { runSubcommand } from "./cli/dispatch.js";
+import { runSubcommand, type SubcommandDeps } from "./cli/dispatch.js";
 import { EX_SOFTWARE } from "./cli/errors.js";
 import { isSubcommandName } from "./cli/subcommands.js";
 import { loadConfig, type LoadedConfig } from "./config/load.js";
-import type { JevAsker } from "./gears/gear1-jev.js";
 import { digestRun, type CapturedOutput } from "./pipeline.js";
 import { runChild } from "./runner/capture.js";
-import { RawLogWriter, cacheRoot } from "./runner/raw-log.js";
-import { recordClusters, recordPathFor, writeRunRecord, type RunRecord } from "./runner/run-record.js";
+import { finishRun } from "./runner/finish-run.js";
+import { RawLogWriter } from "./runner/raw-log.js";
 import { loadState, resolveScopeId, saveState, type RunState } from "./state/tdd-gate.js";
 import type { CliOptions } from "./types/schema.js";
 import { VERSION } from "./version.js";
 
 const COMMAND_NOT_FOUND = 127;
 
-export interface MainDeps {
-  /** Injection point for tests; production builds a JevClient inside triageUnstructured. */
-  client?: JevAsker;
-  /** Writes `logs/<run>.json`; tests replace it to simulate a full disk. */
-  writeRecord?: (file: string, record: RunRecord) => void;
-  /** The environment the configuration and color decisions read; defaults to `process.env`. */
-  env?: NodeJS.ProcessEnv;
-  /** Whether stdout is a terminal, for `--color=auto`; defaults to `process.stdout.isTTY`. */
-  stdoutIsTTY?: boolean;
-  /** Prunes the cache after the digest is printed; tests replace it to simulate a failure. */
-  prune?: (home: string, options: PruneOptions, now: number) => PruneResult;
-}
+/** Injection points for tests; each defaults to the process's own (production builds a JevClient inside triageUnstructured). */
+export type MainDeps = SubcommandDeps;
 
 /** Loads the configuration for a run, prints its warnings, and returns it with the defaults it gives the flags. */
 function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefaults: Partial<CliOptions> } {
@@ -132,64 +119,20 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     if (outcome.message !== undefined) process.stderr.write(`${outcome.message}\n`);
     rawLog.close();
 
-    const record: RunRecord = {
-      schema: 1,
-      run_id: rawLog.runId,
-      version: VERSION,
-      created_at: createdAt,
-      source: "run",
-      cwd: repoRoot,
-      command,
-      exit_code: outcome.exitCode,
-      child_exit_code: outcome.childExitCode,
-      signal: outcome.signal,
-      duration_ms: outcome.durationMs,
-      phase: options.tddPhase,
-      scope_id: scopeId,
-      status: outcome.status,
-      execution_gear: outcome.gear,
-      format: options.format,
-      options: {
-        max_clusters: options.maxClusters,
-        context_lines: options.contextLines,
-        no_jev: options.noJev,
-        retry_flakes: options.retryFlakes,
-        allow_no_tests: options.allowNoTests,
+    finishRun(
+      {
+        outcome,
+        rawLog,
+        createdAt,
+        source: "run",
+        cwd: repoRoot,
+        command,
+        scopeId,
+        settings: options,
+        retention: config?.values,
       },
-      summary: { ...envelope.summary, warnings: envelope.summary.warnings ?? 0 },
-      raw_lines: rawLog.linesWritten,
-      raw_bytes: rawLog.bytesWritten,
-      digest_bytes: Buffer.byteLength(digest, "utf8"),
-      clusters: recordClusters(outcome.clusters),
-    };
-    // INV-3: the record is bookkeeping; losing it must not change the exit code.
-    try {
-      (deps.writeRecord ?? writeRunRecord)(recordPathFor(path.dirname(rawLog.path), rawLog.runId), record);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      process.stderr.write(`dot-test-digest: could not write the run record: ${message}\n`);
-    }
-    const retention = config?.values;
-    if (retention?.["retention.auto"] === true) {
-      // INV-3: pruning is housekeeping; a failure must not change the exit code.
-      try {
-        (deps.prune ?? pruneCache)(
-          cacheRoot(),
-          {
-            keepRuns: retention["retention.keepRuns"],
-            maxAgeDays: retention["retention.maxAgeDays"],
-            stateMaxAgeDays: retention["retention.stateMaxAgeDays"],
-            currentRunId: rawLog.runId,
-            currentScopeId: scopeId,
-            maxFiles: AUTO_PRUNE_MAX_FILES,
-          },
-          Date.now(),
-        );
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        process.stderr.write(`dot-test-digest: could not prune the cache: ${message}\n`);
-      }
-    }
+      { ...deps, warn: (line) => process.stderr.write(`${line}\n`) },
+    );
     return outcome.exitCode;
   } catch (error) {
     rawLog.close();
