@@ -4,7 +4,7 @@ import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gea
 import { normalizeLine } from "./pruner/ansi-stripper.js";
 import { dedupeFailures, type DedupeResult, type RawFailure } from "./pruner/cluster-dedup.js";
 import { canonicalTestId, uniqueFailures } from "./pruner/failure-identity.js";
-import type { CapturedLine } from "./runner/capture.js";
+import { mapLines, type LineSource } from "./runner/line-source.js";
 import { evaluatePhase, type RunState } from "./state/tdd-gate.js";
 import type {
   CliOptions,
@@ -22,7 +22,7 @@ export type DigestSettings = Pick<
 
 /** The output of one command, as captured live or read back from a log. */
 export interface CapturedOutput {
-  lines: readonly CapturedLine[];
+  lines: LineSource;
   exitCode: number;
   signal: string | null;
   durationMs: number;
@@ -77,15 +77,22 @@ interface Analysis {
   ranked: DedupeResult;
   counts: AdapterCounts;
   retryWanted: boolean;
-  rawText: string;
+  rawText: string | undefined;
 }
 
-function normalized(lines: readonly CapturedLine[]): CapturedLine[] {
-  return lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
+function normalized(lines: LineSource): LineSource {
+  return mapLines(lines, normalizeLine);
+}
+
+function rawTextOf(lines: LineSource): string | undefined {
+  return lines
+    .slice()
+    .map((line) => `${line.text}\n`)
+    .join("");
 }
 
 /** Whether a grammar finds at least one failure in the lines: what a `digest` without `--exit-code` exits on. */
-export function parsesFailure(lines: readonly CapturedLine[]): boolean {
+export function parsesFailure(lines: LineSource): boolean {
   return (runGear0(normalized(lines))?.failures.length ?? 0) > 0;
 }
 
@@ -138,7 +145,7 @@ async function analyze(output: CapturedOutput, input: DigestInput): Promise<Anal
     ranked,
     counts: gear0?.counts ?? { passed: 0, failed: 0, skipped: 0 },
     retryWanted,
-    rawText: lines.map((line) => `${line.text}\n`).join(""),
+    rawText: rawTextOf(lines),
   };
 }
 
