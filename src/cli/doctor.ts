@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { findProjectFile, loadConfig, userConfigPath } from "../config/load.js";
+import { findProjectFile, loadConfig, userConfigPath, type LoadedConfig } from "../config/load.js";
 import { VERSION } from "../version.js";
 import type { Subcommand } from "./dispatch.js";
 import { CliError, UsageError } from "./errors.js";
@@ -62,15 +62,18 @@ interface PackageJson {
   testScript: string;
 }
 
-function readPackageJson(text: string | undefined): PackageJson | undefined {
+/** The parsed file, `undefined` when there is none, or why it cannot be read. */
+function readPackageJson(text: string | undefined): PackageJson | undefined | { problem: string } {
   if (text === undefined) return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
   } catch {
-    return undefined;
+    return { problem: "package.json is not valid JSON" };
   }
-  if (typeof parsed !== "object" || parsed === null) return undefined;
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+    return { problem: "package.json is not a JSON object" };
+  }
   const record = parsed as Record<string, unknown>;
   const dependencies = new Set<string>();
   for (const field of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
@@ -92,10 +95,17 @@ function runner(name: string, source: string, command: string, note?: string): D
   };
 }
 
+export interface RunnerDetection {
+  runners: DetectedRunner[];
+  /** A file that should have told something but could not be read, such as a malformed `package.json`. */
+  problems: string[];
+}
+
 /** The runners a directory's files name, in a fixed order; pure over the listing. */
-export function detectRunners(listing: ProjectListing): DetectedRunner[] {
+export function detectRunners(listing: ProjectListing): RunnerDetection {
   const names = new Set(listing.names);
-  const pkg = readPackageJson(listing.contents["package.json"]);
+  const read = readPackageJson(listing.contents["package.json"]);
+  const pkg = read === undefined || "problem" in read ? undefined : read;
   const dependsOn = (name: string): boolean => pkg?.dependencies.has(name) === true;
   const mentionsPytest = (file: string): boolean => listing.contents[file]?.includes("pytest") === true;
   const pytestSource = names.has("pytest.ini")
@@ -113,7 +123,10 @@ export function detectRunners(listing: ProjectListing): DetectedRunner[] {
     names.has("tsconfig.json") && runner("tsc", "tsconfig.json", "npx tsc --noEmit"),
     dependsOn("eslint") && runner("eslint", "package.json", "npx eslint .", FIXTURES_ONLY),
   ];
-  return found.filter((entry): entry is DetectedRunner => entry !== false);
+  return {
+    runners: found.filter((entry): entry is DetectedRunner => entry !== false),
+    problems: read !== undefined && "problem" in read ? [read.problem] : [],
+  };
 }
 
 export function nodeCheck(version: string): Check {
@@ -123,23 +136,40 @@ export function nodeCheck(version: string): Check {
     : { name: "node", status: "fail", detail: `${version} (needs >= ${MIN_NODE_MAJOR})` };
 }
 
-export function gear1Check(env: NodeJS.ProcessEnv): Check {
-  for (const name of ["TYPESAFE_API_KEY", "JEV_API_KEY"]) {
-    if (env[name]) return { name: "gear1", status: "ok", detail: `${name} is set` };
-  }
-  return { name: "gear1", status: "warn", detail: "TYPESAFE_API_KEY not set (Jev disabled; heuristic fallback)" };
+/** The rule of `JevClient`: `TYPESAFE_API_KEY ?? JEV_API_KEY`, so an empty first one wins and means not configured. */
+export function gear1Check(env: NodeJS.ProcessEnv, noJevSource?: string): Check {
+  const disabled = (detail: string): Check => ({ name: "gear1", status: "warn", detail });
+  if (noJevSource !== undefined) return disabled(`Jev disabled by noJev (${noJevSource}); heuristic fallback`);
+  const name = env["TYPESAFE_API_KEY"] !== undefined ? "TYPESAFE_API_KEY" : env["JEV_API_KEY"] !== undefined ? "JEV_API_KEY" : undefined;
+  if (name === undefined) return disabled("TYPESAFE_API_KEY not set (Jev disabled; heuristic fallback)");
+  if (env[name] === "") return disabled(`${name} is empty (Jev disabled; heuristic fallback)`);
+  return { name: "gear1", status: "ok", detail: `${name} is set` };
 }
 
 function errorCode(error: unknown): string {
   return (error as NodeJS.ErrnoException).code ?? String(error);
 }
 
-/** Bytes of every file under `dir`. */
+class UnreadableEntry extends Error {
+  constructor(readonly entry: string, readonly code: string) {
+    super(`cannot read ${entry}: ${code}`);
+  }
+}
+
+/** Bytes of every file under `dir`; an entry that vanishes meanwhile (a concurrent prune) counts as nothing. */
 function sizeOf(dir: string): number {
+  const attempt = <T>(entry: string, read: () => T, gone: T): T => {
+    try {
+      return read();
+    } catch (error) {
+      if (errorCode(error) === "ENOENT") return gone;
+      throw new UnreadableEntry(entry, errorCode(error));
+    }
+  };
   let bytes = 0;
-  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+  for (const entry of attempt(dir, () => fs.readdirSync(dir, { withFileTypes: true }), [])) {
     const full = path.join(dir, entry.name);
-    bytes += entry.isDirectory() ? sizeOf(full) : entry.isFile() ? fs.statSync(full).size : 0;
+    bytes += entry.isDirectory() ? sizeOf(full) : entry.isFile() ? attempt(full, () => fs.statSync(full).size, 0) : 0;
   }
   return bytes;
 }
@@ -178,22 +208,43 @@ function cacheProblem(home: string): string | undefined {
 export function cacheCheck(home: string, logDir: string): Check {
   const problem = cacheProblem(home);
   if (problem !== undefined) return { name: "cache", status: "fail", detail: `${home} (${problem})` };
-  const kib = fs.existsSync(home) ? Math.ceil(sizeOf(home) / 1024) : 0;
+  let bytes: number;
+  try {
+    bytes = sizeOf(home);
+  } catch (error) {
+    if (error instanceof UnreadableEntry) return { name: "cache", status: "fail", detail: `${home} (${error.message})` };
+    throw error;
+  }
+  const kib = Math.ceil(bytes / 1024);
   return { name: "cache", status: "ok", detail: `${home} (writable, ${runCount(logDir)} runs, ${kib} KiB)` };
 }
 
-export function configCheck(cwd: string, env: NodeJS.ProcessEnv): Check {
+const WARNING_PREFIX = "dot-test-digest: ";
+
+/** The `config` check and its warnings, plus where `noJev` was turned on, if it was. */
+export function configChecks(cwd: string, env: NodeJS.ProcessEnv): { checks: Check[]; noJevSource?: string } {
+  let config: LoadedConfig;
   try {
-    loadConfig({ cwd, env });
+    config = loadConfig({ cwd, env });
   } catch (error) {
-    if (error instanceof CliError) return { name: "config", status: "fail", detail: error.message };
+    if (error instanceof CliError) return { checks: [{ name: "config", status: "fail", detail: error.message }] };
     throw error;
   }
   const files = [
     ...[findProjectFile(cwd, env)].filter((file) => file !== undefined).map((file) => `project ${file}`),
     ...[userConfigPath(env)].filter((file) => fs.existsSync(file)).map((file) => `user ${file}`),
   ];
-  return { name: "config", status: "ok", detail: files.length === 0 ? "none found" : files.join(", ") };
+  const warnings = config.warnings.map(
+    (warning): Check => ({
+      name: "config",
+      status: "warn",
+      detail: warning.startsWith(WARNING_PREFIX) ? warning.slice(WARNING_PREFIX.length) : warning,
+    }),
+  );
+  return {
+    checks: [{ name: "config", status: "ok", detail: files.length === 0 ? "none found" : files.join(", ") }, ...warnings],
+    ...(config.values.noJev ? { noJevSource: config.sources.noJev } : {}),
+  };
 }
 
 function runnerCheck(detected: DetectedRunner): Check {
@@ -223,14 +274,16 @@ function parseDoctorArgs(args: readonly string[]): { json: boolean } {
 /** `doctor [--json]`: one line per check; exit 1 when one failed. Reads only, never the network. */
 export const runDoctor: Subcommand = (args, context) => {
   const options = parseDoctorArgs(args);
+  const config = configChecks(context.cwd, context.env);
+  const { runners, problems } = detectRunners(listProject(context.cwd));
   const checks: Check[] = [
     nodeCheck(process.version),
     { name: "version", status: "ok", detail: VERSION },
     cacheCheck(path.dirname(context.logDir), context.logDir),
-    configCheck(context.cwd, context.env),
-    gear1Check(context.env),
+    ...config.checks,
+    gear1Check(context.env, config.noJevSource),
+    ...problems.map((detail): Check => ({ name: "runner", status: "warn", detail })),
   ];
-  const runners = detectRunners(listProject(context.cwd));
   const failed = checks.some((check) => check.status === "fail");
   if (options.json) {
     context.write(`${JSON.stringify({ ok: !failed, checks, runners })}\n`);
