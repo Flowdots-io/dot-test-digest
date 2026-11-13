@@ -72,14 +72,14 @@ describe("bounded memory: line sources", () => {
 
   it("The raw text is built only for tiny outputs", async () => {
     // 100 rows of 30 bytes: 3,000 bytes no grammar recognizes.
-    const script = 'for (let i = 0; i < 100; i++) console.log("row " + String(i).padStart(4, "0") + " of a plain log."); process.exit(1)';
+    const script = 'for (let i = 0; i < 100; i++) console.log("row " + String(i).padStart(4, "0") + " of a plain log text."); process.exit(1)';
     const spy = spyingFactory();
     const run = await runInCart(["--no-jev"], [process.execPath, "-e", script], { deps: { lineSources: spy.factory } });
     expect(run.code).toBe(1);
     const [source] = spy.created;
     expect(source?.bytes).toBe(3000);
     expect(source?.stats.fullReads).toBe(0);
-    expect(run.stdout).toMatch(/^\[FAIL\] exit 1 in \d+ms/);
+    expect(run.stdout).toMatch(/^\[BUILD_ERROR\] /);
 
     // The digest is the one the ladder gave when the raw text was always built.
     const logs = path.join(run.home, "logs");
