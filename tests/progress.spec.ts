@@ -2,7 +2,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { main } from "../src/index.js";
 import { hermeticEnv, markRepositoryRoot } from "./helpers/hermetic-env.js";
-import { runNodeCart, tempDir } from "./helpers/node-cart.js";
+import { runInCart, runNodeCart, tempDir } from "./helpers/node-cart.js";
 
 afterEach(() => {
   vi.useRealTimers();
@@ -57,6 +57,16 @@ describe("--progress", () => {
     const clearedAt = writes.findIndex((write) => write.text === "\r\u001b[K");
     const digestAt = writes.findIndex((write) => write.stream === "stdout" && write.text.startsWith("[PASS]"));
     expect(digestAt).toBeGreaterThan(clearedAt);
+  });
+
+  it("An interval above the timer maximum falls back to the default", async () => {
+    // Node runs a setInterval delay above 2^31-1 ms every 1 ms, which would flood stderr.
+    const env = { ...hermeticEnv(), DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS: "2147483648" };
+    const run = await runInCart(["--no-jev", "--progress"], [process.execPath, "-e", "setTimeout(() => {}, 300)"], {
+      deps: { env },
+    });
+    expect(run.code).toBe(0);
+    expect(run.stderr).toBe("");
   });
 
   it("A fast child prints no heartbeat", async () => {

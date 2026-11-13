@@ -17,7 +17,13 @@ export interface Spawned {
 
 export interface BuiltCli {
   /** Runs the built CLI in `cwd` with a fresh home under it; `nodeFlags` go to the node that runs the CLI. */
-  run(nodeFlags: readonly string[], args: readonly string[], cwd: string, env?: NodeJS.ProcessEnv): Promise<Spawned>;
+  run(
+    nodeFlags: readonly string[],
+    args: readonly string[],
+    cwd: string,
+    env?: NodeJS.ProcessEnv,
+    options?: { closeStderr?: boolean },
+  ): Promise<Spawned>;
   /** A new working directory that is its own repository. */
   freshDir(prefix: string): string;
 }
@@ -45,7 +51,7 @@ export function useBuiltCli(name: string): BuiltCli {
   });
 
   return {
-    run(nodeFlags, args, cwd, env = {}) {
+    run(nodeFlags, args, cwd, env = {}, options = {}) {
       const startedAt = Date.now();
       return new Promise((done, fail) => {
         const child = spawn(process.execPath, [...nodeFlags, path.join(build, "index.js"), ...args], {
@@ -61,7 +67,9 @@ export function useBuiltCli(name: string): BuiltCli {
         let stdout = "";
         let stderr = "";
         child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
-        child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
+        // A reader that went away, as `2>&-` or a closed pipe would leave it.
+        if (options.closeStderr === true) child.stderr.destroy();
+        else child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
         child.on("error", fail);
         child.on("close", (code) => done({ code, stdout, stderr, ms: Date.now() - startedAt }));
       });
