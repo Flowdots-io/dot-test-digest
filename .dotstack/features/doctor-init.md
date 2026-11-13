@@ -1,6 +1,6 @@
 # Doctor and init
 
-`doctor [--json]` checks the setup in the working directory and prints one line per check, `ok`, `warn` or `fail`, then the check name and its detail: `node`, `version`, `cache`, `config`, `gear1`, and one `runner` line per runner it detects, with the command to wrap. It exits `0` unless a check failed (`1`), never writes a file and never calls the network. `init [--force]` writes a starter `.dot-test-digest.json` in the working directory and refuses to overwrite one without `--force`.
+`doctor [--json]` checks the setup in the working directory and prints one line per check, `ok`, `warn` or `fail`, then the check name and its detail: `node`, `version`, `cache`, `config`, `gear1`, and one `runner` line per runner it detects, with the command to wrap. It exits `0` unless a check failed (`1`), never writes a file and never calls the network. `init [--force]` writes a starter `.dot-test-digest.json` in the working directory and refuses to overwrite one without `--force`; `init --print-mcp-config` prints the MCP client entry and writes nothing (see [mcp.md](./mcp.md)).
 
 ## Sub-features
 
@@ -13,7 +13,7 @@
 - `doctor-warnings` a malformed `package.json` is `warn  runner: package.json is not valid JSON` (or `is not a JSON object`), other runners are still listed; a config warning (a project `mcp` key, a project retention limit) is a `warn  config: ignoring ...` line, not a stderr line.
 - `doctor-readonly` nothing is written: a cache home that does not exist yet is reported `ok` (it can be created) and still does not exist afterwards.
 - `init-write` `init` writes `{\n  "maxClusters": 5,\n  "contextLines": 2,\n  "format": "compact-md",\n  "noJev": false\n}\n`, prints `wrote <dir>/.dot-test-digest.json`, exits `0`, and writes no other file.
-- `init-keep` an existing file exits `64` with `<path> already exists (use --force to overwrite)` on stderr and is left untouched; `init --force` overwrites it. Any other argument exits `64` `unexpected argument "<arg>": dot-test-digest init [--force]`.
+- `init-keep` an existing file exits `64` with `<path> already exists (use --force to overwrite)` on stderr and is left untouched; `init --force` overwrites it. Any other argument exits `64` `unexpected argument "<arg>": dot-test-digest init [--force | --print-mcp-config]`.
 - `init-link` a symlink at the path: `init` exits `64` `<path> is a symlink (use --force to replace the link)`; `init --force` removes the link and writes a new file, the link's target unchanged. A directory there exits `64` `<path> is a directory` (also with `--force`). A read-only working directory exits `73` `cannot create <path>: EACCES`.
 
 ## How to get to it (user POV)

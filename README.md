@@ -52,7 +52,7 @@ If `dot-test-digest` is not found afterwards, run `pnpm setup` and restart your 
 
 ### Getting started in a project
 
-In the project you want to use it in, `doctor` checks the setup and names the command to wrap; `init` writes a starter config file.
+In the project you want to use it in, `doctor` checks the setup and names the command to wrap; `init` writes a starter config file; `init --print-mcp-config` prints the entry an MCP client needs (see [As an MCP server](#as-an-mcp-server)).
 
 ```text
 $ dot-test-digest doctor
@@ -215,6 +215,52 @@ The [JSON Schema](schema/digest-envelope.schema.json) (draft 2020-12) of this do
 
 The test name is the last part of the name (after the last ` > `), with regular-expression characters escaped for the runners that take a pattern. For vitest and jest a pattern that would start with `-` starts with `\-` instead (`-t '\-1 is rejected'`), so the runner cannot read it as a flag; the pattern still matches the same name (executed with vitest, not with jest). Every word is quoted for a POSIX shell (`sh`, `bash`, `zsh`; Windows shells are not covered). Only the runners of the grammar that read the output count (`node`, `vitest` and `jest` for JavaScript tests, `pytest`, `cargo` and `go`, `eslint`), and a word that contains whitespace is never a runner, so `sh -c "npm run build && vitest"` and a JavaScript failure under `pnpm --dir packages/go test` get no `rerun`. There is no `rerun` for a command without a runner word (`pnpm test`, `npm test`, `make test`: the tool cannot see what the script runs), for `tsc`, or when the output did not name the test or file the runner needs. The jest, pytest, cargo, go and eslint forms were checked against the grammars' fixture logs, not by running those tools.
 
+### As an MCP server
+
+`dot-test-digest mcp` serves the tool to an agent over the [Model Context Protocol](https://modelcontextprotocol.io) on stdin and stdout, until stdin ends. It answers the calls still running, then exits `0`. Everything it writes on stdout is protocol traffic; warnings and the heartbeat of a run go to stderr. The SDK is loaded by this subcommand only, so a wrapped run starts as fast as before. `init --print-mcp-config` prints the entry for the client's configuration, writes nothing and exits `0`:
+
+```json
+{
+  "mcpServers": {
+    "dot-test-digest": {
+      "command": "dot-test-digest",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}
+```
+
+The server runs in the client's working directory (the project) and lists four tools:
+
+| Tool | Input | Returns |
+| --- | --- | --- |
+| `run_tests` | `command` (an argv array, never a shell string), `cwd`, `format` (`compact-md` or `json`), `max_clusters`, `context_lines`, `tdd_phase`, `timeout_seconds` (default 300, at most 3600) | the text `dot-test-digest [flags] -- <command>` would print, and `{ run_id, status, exit_code }` as structured content. A failing test run is a result, not an error. |
+| `show_log` | `run` (`last`, a run id or a prefix), `selector` (a range or a cluster id) | what `show` prints |
+| `replay` | `run`, `format`, `max_clusters`, `context_lines` | what `replay` prints |
+| `list_runs` | `limit` (default 10, at most 50) | the newest runs of the directory, one `<run_id> <status> <created_at> <command>` line each |
+
+The three last tools run nothing. A bad run reference, a bad range or a missing log is an error result with the message the CLI prints (`no such run: run_zzzzzz`).
+
+**What `run_tests` may run.** Nothing by default: a command runs only when its first elements equal, element by element, one of the allowed prefixes. You allow prefixes on the command line, one `--allow` each (words separated by single spaces), or in your user config file:
+
+```json
+{ "mcp": { "allow": [["pnpm", "test"], ["npx", "vitest", "run"]] } }
+```
+
+```json
+{ "mcpServers": { "dot-test-digest": { "command": "dot-test-digest", "args": ["mcp", "--allow", "node --test"] } } }
+```
+
+The allowlist is the union of the two. `node --test` allows `["node", "--test", "a.test.js"]`, not `["node", "--testx"]`, `["node"]` or `["sh", "-c", "node --test"]`. A refused command returns `command not allowed: <argv>; allowed prefixes: <list or none>` and starts no process. The command is started without a shell, so `["node", "--test", "a.test.js; touch x"]` passes one odd file name to node and runs nothing else. Allow a prefix that cannot run arbitrary code: `["node"]` or `["sh"]` would let the agent run anything.
+
+**Why the allowlist is not read from a project file.** A project file comes with the repository, so a repository you cloned could allow itself `["sh"]` and have your agent run what it likes. The `mcp` key of a `.dot-test-digest.json` is ignored, with `dot-test-digest: ignoring "mcp" in <file>: the command allowlist is read from the user config only` on stderr; only your own user config file and the arguments of your own client configuration count.
+
+**Where and how long.** `cwd` is taken relative to the server's directory and, with every symlink followed, must be that directory or below it; otherwise the result is `cwd outside the project: <cwd>` and nothing runs. The command runs in its own process group: when `timeout_seconds` elapses the group gets SIGTERM, then SIGKILL 5 seconds later, and the result is an error whose text starts `timed out after <N>s`, followed by the digest of what was printed. The run is recorded as any run is (`show_log`, `replay`, `list_runs`).
+
+The Claude Code hook that would rewrite a Bash test command into a wrapped one is not part of this version.
+
 ### Looking back at a run
 
 Every run that gets as far as a digest leaves two files in `~/.cache/dot-test-digest/logs/` (or `$DOT_TEST_DIGEST_HOME/logs/`): `<run>.log`, the raw output line for line (every `raw: L<a>-L<b>` pointer in a digest refers to it), and `<run>.json`, the **run record**. The record is written atomically after the digest is printed and holds what the log cannot: `run_id`, `version`, `created_at`, `cwd`, `command`, `exit_code` (what the tool returned) and `child_exit_code`, `signal`, `duration_ms`, `phase`, `scope_id`, `status`, `execution_gear`, `format`, `options`, `summary`, the size of the log (`raw_lines`, `raw_bytes`), the bytes of the digest (`digest_bytes`) and every cluster, shown or omitted, with its `raw_log_lines` range. A failure to write it prints `dot-test-digest: could not write the run record: <reason>` on `stderr` and never changes the exit code. A run that ends before a digest, because the command could not be started (exit `127`) or the tool hit an internal error (exit `70`), leaves its log and no record.
@@ -279,7 +325,7 @@ npx dot-test-digest digest test.log --exit-code "$status" --no-jev
 
 The cache of a CI job is usually thrown away with the job; set `DOT_TEST_DIGEST_HOME` to a path you upload if you want the copied log and its record too.
 
-`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)), `schema` (see [For programs and agents](#for-programs-and-agents)), `doctor` and `init` (see [Getting started in a project](#getting-started-in-a-project)) and `mcp`. `mcp` is a reserved name: in this version it exits `64` with `mcp is not available in this version`.
+`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)), `schema` (see [For programs and agents](#for-programs-and-agents)), `doctor` and `init` (see [Getting started in a project](#getting-started-in-a-project)) and `mcp` (see [As an MCP server](#as-an-mcp-server)).
 
 ### Long runs and large outputs
 
