@@ -26,6 +26,8 @@ export interface BuiltCli {
   ): Promise<Spawned>;
   /** A new working directory that is its own repository. */
   freshDir(prefix: string): string;
+  /** The built `index.js`, for a test that spawns it itself. */
+  entry(): string;
 }
 
 /** Builds `src/` into a temp directory under `node_modules/.cache` before the file's tests, and removes it after. */
@@ -78,6 +80,9 @@ export function useBuiltCli(name: string): BuiltCli {
       const dir = fs.mkdtempSync(path.join(work, prefix));
       markRepositoryRoot(dir);
       return dir;
+    },
+    entry() {
+      return path.join(build, "index.js");
     },
   };
 }
