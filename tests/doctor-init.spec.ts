@@ -171,3 +171,132 @@ describe("init (doctor-and-init)", () => {
     expect((JSON.parse(fs.readFileSync(file, "utf8")) as { maxClusters: number }).maxClusters).toBe(5);
   });
 });
+
+const asRoot = process.getuid?.() === 0;
+
+/** Runs `body` with `target` at `mode`, restoring a writable mode afterwards so the temp dir can be removed. */
+async function withMode<T>(target: string, mode: number, body: () => Promise<T>): Promise<T> {
+  fs.chmodSync(target, mode);
+  try {
+    return await body();
+  } finally {
+    fs.chmodSync(target, 0o755);
+  }
+}
+
+describe("doctor reports what it cannot read (review fixes)", () => {
+  it.skipIf(asRoot)("an unreadable directory in the cache fails the cache check, not the run", async () => {
+    const home = fs.realpathSync(tempDir("dtd-doctor-home-"));
+    const locked = path.join(home, "logs", "x");
+    fs.mkdirSync(locked, { recursive: true });
+    const run = await withMode(locked, 0o000, () =>
+      runMain(["doctor"], { cwd: project(), home, deps: { env: envWithoutKey() } }),
+    );
+    expect(run.stdout.split("\n")).toContain(`fail  cache: ${home} (cannot read ${locked}: EACCES)`);
+    expect(run.stderr).toBe("");
+    expect(run.code).toBe(1);
+  });
+
+  it("an empty TYPESAFE_API_KEY wins over JEV_API_KEY and means not configured", async () => {
+    const env = envWithoutKey({ TYPESAFE_API_KEY: "", JEV_API_KEY: "sk-other" });
+    const run = await runMain(["doctor"], { cwd: project(), home: tempDir("dtd-doctor-home-"), deps: { env } });
+    expect(run.stdout.split("\n")).toContain("warn  gear1: TYPESAFE_API_KEY is empty (Jev disabled; heuristic fallback)");
+    expect(run.stdout).not.toContain("sk-other");
+  });
+
+  it("JEV_API_KEY alone counts as set", async () => {
+    const env = envWithoutKey({ JEV_API_KEY: "sk-other" });
+    const run = await runMain(["doctor"], { cwd: project(), home: tempDir("dtd-doctor-home-"), deps: { env } });
+    expect(run.stdout.split("\n")).toContain("ok    gear1: JEV_API_KEY is set");
+  });
+
+  it("noJev in the config makes gear1 a warning even with a key", async () => {
+    const dir = project({ [PROJECT_FILE]: '{ "noJev": true }' });
+    const env = envWithoutKey({ TYPESAFE_API_KEY: "sk-secret-123" });
+    const run = await runMain(["doctor"], { cwd: dir, home: tempDir("dtd-doctor-home-"), deps: { env } });
+    expect(run.stdout.split("\n")).toContain(
+      `warn  gear1: Jev disabled by noJev (project ${path.join(dir, PROJECT_FILE)}); heuristic fallback`,
+    );
+    expect(run.stdout).not.toContain("sk-secret-123");
+    expect(run.code).toBe(0);
+  });
+
+  it("an unreadable package.json is a runner warning, not silence", async () => {
+    for (const [contents, line] of [
+      ["{", "warn  runner: package.json is not valid JSON"],
+      ["[]", "warn  runner: package.json is not a JSON object"],
+    ] as const) {
+      const dir = project({ "package.json": contents, "tsconfig.json": "{}" });
+      const run = await runMain(["doctor"], { cwd: dir, home: tempDir("dtd-doctor-home-"), deps: { env: envWithoutKey() } });
+      const lines = run.stdout.split("\n");
+      expect(lines).toContain(line);
+      expect(lines).toContain("ok    runner: tsc (tsconfig.json) -> dot-test-digest -- npx tsc --noEmit");
+      expect(run.code).toBe(0);
+    }
+  });
+
+  it("a config warning is a warn line of the config check", async () => {
+    const dir = project({ [PROJECT_FILE]: '{ "mcp": { "allow": [] } }' });
+    const file = path.join(dir, PROJECT_FILE);
+    const run = await runMain(["doctor"], { cwd: dir, home: tempDir("dtd-doctor-home-"), deps: { env: envWithoutKey() } });
+    const lines = run.stdout.split("\n");
+    expect(lines).toContain(`ok    config: project ${file}`);
+    expect(lines).toContain(
+      `warn  config: ignoring "mcp" in ${file}: the command allowlist is read from the user config only`,
+    );
+    expect(run.stderr).toBe("");
+    expect(run.code).toBe(0);
+  });
+});
+
+describe("init never writes through a link or into a directory (review fixes)", () => {
+  function linkedProject(): { dir: string; file: string; outside: string } {
+    const dir = project();
+    const outside = path.join(fs.realpathSync(tempDir("dtd-init-outside-")), "bashrc");
+    fs.writeFileSync(outside, "export SECRET=1\n");
+    const file = path.join(dir, PROJECT_FILE);
+    fs.symlinkSync(outside, file);
+    return { dir, file, outside };
+  }
+
+  it("init on a symlink refuses and says it is a symlink", async () => {
+    const { dir, file, outside } = linkedProject();
+    const run = await runMain(["init"], { cwd: dir, home: tempDir("dtd-init-home-"), deps: { env: envWithoutKey() } });
+    expect(run.code).toBe(64);
+    expect(run.stderr).toBe(`${file} is a symlink (use --force to replace the link)\n`);
+    expect(fs.readFileSync(outside, "utf8")).toBe("export SECRET=1\n");
+    expect(fs.lstatSync(file).isSymbolicLink()).toBe(true);
+  });
+
+  it("init --force replaces the link itself and leaves its target unchanged", async () => {
+    const { dir, file, outside } = linkedProject();
+    const run = await runMain(["init", "--force"], { cwd: dir, home: tempDir("dtd-init-home-"), deps: { env: envWithoutKey() } });
+    expect(run.code).toBe(0);
+    expect(fs.readFileSync(outside, "utf8")).toBe("export SECRET=1\n");
+    expect(fs.lstatSync(file).isFile()).toBe(true);
+    expect((JSON.parse(fs.readFileSync(file, "utf8")) as { maxClusters: number }).maxClusters).toBe(5);
+  });
+
+  it("a directory at the config path is a usage error, with or without --force", async () => {
+    const dir = project();
+    const file = path.join(dir, PROJECT_FILE);
+    fs.mkdirSync(file);
+    for (const argv of [["init"], ["init", "--force"]]) {
+      const run = await runMain(argv, { cwd: dir, home: tempDir("dtd-init-home-"), deps: { env: envWithoutKey() } });
+      expect(run.code).toBe(64);
+      expect(run.stderr).toBe(`${file} is a directory\n`);
+    }
+    expect(fs.statSync(file).isDirectory()).toBe(true);
+  });
+
+  it.skipIf(asRoot)("a read-only directory is a clear cannot-create error (exit 73)", async () => {
+    const dir = project();
+    const file = path.join(dir, PROJECT_FILE);
+    const run = await withMode(dir, 0o555, () =>
+      runMain(["init"], { cwd: dir, home: tempDir("dtd-init-home-"), deps: { env: envWithoutKey() } }),
+    );
+    expect(run.code).toBe(73);
+    expect(run.stderr).toBe(`cannot create ${file}: EACCES\n`);
+    expect(fs.existsSync(file)).toBe(false);
+  });
+});
