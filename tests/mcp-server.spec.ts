@@ -136,6 +136,28 @@ function logsIn(home: string): string[] {
 const RUN_ID = /^run_[0-9a-z]{9,}$/;
 const PASSING = ["node", "--test", "passing.test.js"];
 
+describe("a session piped into mcp", () => {
+  it("A call still running when stdin ends is answered before the server exits", SPAWNED, async () => {
+    const where = setup();
+    const messages = [
+      { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "pipe", version: "0" } } },
+      { jsonrpc: "2.0", method: "notifications/initialized" },
+      { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "run_tests", arguments: { command: PASSING } } },
+    ];
+    const stdout = await new Promise<string>((resolve, reject) => {
+      const child = spawn(process.execPath, [cli.entry(), "mcp", "--allow", "node --test"], { cwd: where.cart, env: envOf(where), stdio: "pipe" });
+      let out = "";
+      child.stdout.setEncoding("utf8").on("data", (chunk: string) => (out += chunk));
+      child.stderr.resume();
+      child.on("error", reject);
+      child.on("close", () => resolve(out));
+      child.stdin.end(messages.map((message) => `${JSON.stringify(message)}\n`).join(""));
+    });
+    const answers = stdout.split("\n").filter((line) => line.length > 0).map((line) => JSON.parse(line) as { id?: number; result?: ToolResult });
+    expect(answers.find((answer) => answer.id === 2)?.result?.structuredContent?.["status"]).toBe("PASS");
+  });
+});
+
 describe("run_tests runs only commands the user allowed", () => {
   it("The default allowlist is empty", SPAWNED, async () => {
     const where = setup();
