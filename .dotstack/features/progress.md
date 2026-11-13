@@ -1,6 +1,6 @@
 # Progress and large outputs
 
-`--progress` (or `"progress": true` in a config file, or `DOT_TEST_DIGEST_PROGRESS=1`) prints `dot-test-digest: running... <N> lines, <S>s` on `stderr` every 10 seconds while the wrapped command runs, where `N` is the number of lines written to the log so far and `S` the elapsed seconds with one decimal. On a terminal each heartbeat overwrites the previous one (`\r`) and the last is cleared (`\r\u001b[K`) before the digest is printed; on a pipe each heartbeat is its own line. Nothing goes to `stdout`, and the exit code and the digest are unchanged. Separately, a run's memory no longer grows with its output: up to 4 MiB of output is held in memory, and above that the grammars read the lines back from the log through a cache of at most 8 MiB. `digest`, `replay` and `show` read their logs the same way.
+`--progress` (or `"progress": true` in a config file, or `DOT_TEST_DIGEST_PROGRESS=1`) prints `dot-test-digest: running... <N> lines, <S>s` on `stderr` every 10 seconds while the wrapped command runs, where `N` is the number of lines written to the log so far and `S` the elapsed seconds with one decimal. On a terminal each heartbeat overwrites the previous one (`\r`) and the last is cleared (`\r\u001b[K`) before the digest is printed; on a pipe each heartbeat is its own line. Nothing goes to `stdout`, and the exit code and the digest are unchanged. Separately, a large output no longer has to fit in memory as a whole: up to 4 MiB of output is held in memory, and above that the grammars read the lines back from the log through a cache of at most 8 MiB. Measured: 400,000 typical test-output lines under a 96 MB heap. `digest`, `replay` and `show` read their logs the same way.
 
 ## Sub-features
 
@@ -36,7 +36,9 @@ Preconditions:
 ## Gotchas
 
 - `N` counts every line in the log so far, stdout and stderr together, so a retried run (`--retry-flakes`) keeps counting from the first attempt.
+- A closed `stderr` (`2>&-`, a reader that went away) drops the heartbeats only: the digest, the exit code and the record are unchanged. An interval variable above 2147483647 ms is ignored (Node would run it every 1 ms).
 - The heartbeat goes to `stderr` only; a caller that merges `stderr` into `stdout` (`2>&1`) sees the heartbeats before the digest.
 - Lines read back from the log have lost which stream they came from; no grammar uses it, so the digest does not change.
 - The 400,000-line run takes about 5.5 s of wall time on the measured machine (Node 22.23.4, 2026-11-13), against 3.2 s for 0.1.x, which held every line in memory; the bound in the spec is 15 s.
+- The limits count bytes, not lines: below 4 MiB each line is its own object, so millions of very short lines still exhaust a 96 MB heap (3,000,000 lines of `x` abort with exit `134`, as on 0.1.x; 1,000,000 pass).
 - `/usr/bin/time` reports a maximum RSS around 240 MB for that run either way: that figure includes the waited-for `node -e` child, which buffers its own output. The tool's own heap is what `--max-old-space-size=96` limits.
