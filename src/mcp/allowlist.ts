@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { isWithin } from "../cli/run-ref.js";
 
 export type ArgvPrefix = readonly string[];
 
@@ -28,8 +29,7 @@ export function resolveCwd(realRoot: string, cwd: string): CwdCheck {
   } catch {
     return { ok: false, message: `cwd not found: ${cwd}` };
   }
-  const inside = dir === realRoot || dir.startsWith(realRoot.endsWith(path.sep) ? realRoot : `${realRoot}${path.sep}`);
-  if (!inside) return { ok: false, message: `cwd outside the project: ${cwd}` };
+  if (!isWithin(dir, realRoot)) return { ok: false, message: `cwd outside the project: ${cwd}` };
   if (!fs.statSync(dir).isDirectory()) return { ok: false, message: `cwd is not a directory: ${cwd}` };
   return { ok: true, dir };
 }

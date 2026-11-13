@@ -78,19 +78,20 @@ function positionals(values: readonly (string | undefined)[]): string[] | ToolOu
 }
 
 export class McpTools {
-  private readonly realRoot: string;
+  /** The project: the server's directory, symlinks resolved. Runs are made, listed and found here or below. */
+  private readonly root: string;
 
   constructor(readonly options: ToolsOptions) {
-    this.realRoot = fs.realpathSync(options.root);
+    this.root = fs.realpathSync(options.root);
   }
 
   /** Runs an allowed command as `dot-test-digest [flags] -- <command>` would, in process; nothing else starts a process. */
   async runTests(args: RunTestsArgs): Promise<ToolOutcome> {
-    const { allow, root, env } = this.options;
+    const { allow, env } = this.options;
     if (!isAllowed(args.command, allow)) return failure(notAllowedMessage(args.command, allow));
-    let cwd = root;
+    let cwd = this.root;
     if (args.cwd !== undefined) {
-      const checked = resolveCwd(this.realRoot, args.cwd);
+      const checked = resolveCwd(this.root, args.cwd);
       if (!checked.ok) return failure(checked.message);
       cwd = checked.dir;
     }
@@ -132,7 +133,7 @@ export class McpTools {
   /** The newest runs recorded in the server's directory, one `<run_id> <status> <created_at> <command>` line each. */
   listRuns(args: { limit?: number | undefined }): ToolOutcome {
     const lines = loadRunRecords(this.options.logDir)
-      .filter((record) => record.cwd === this.options.root)
+      .filter((record) => record.cwd === this.root)
       .sort(newestFirst)
       .slice(0, args.limit ?? DEFAULT_LIST_LIMIT)
       .map((record) => `${record.run_id} ${record.status} ${record.created_at} ${record.command.join(" ")}`.trimEnd());
@@ -144,7 +145,8 @@ export class McpTools {
     let text = "";
     const context: SubcommandContext = {
       logDir: this.options.logDir,
-      cwd: this.options.root,
+      cwd: this.root,
+      within: this.root,
       env: this.options.env,
       stdoutIsTTY: false,
       stdinIsTTY: false,

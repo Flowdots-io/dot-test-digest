@@ -122,9 +122,18 @@ function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
   }
 }
 
+/** The children running in their own process group: they would outlive this process, so `killRunningGroups` stops them. */
+const runningGroups = new Set<ChildProcess>();
+
+/** SIGKILLs the process group of every child started with a timeout that still runs (the MCP server, on its way out). */
+export function killRunningGroups(): void {
+  for (const child of runningGroups) signalGroup(child, "SIGKILL");
+}
+
 /** Arms the timeout; the returned function disarms it, killing what is left of the group once the deadline passed. */
 function startDeadline(child: ChildProcess, timeoutMs: number | undefined, onTimeout: () => void): () => void {
   if (timeoutMs === undefined) return () => {};
+  runningGroups.add(child);
   let killTimer: NodeJS.Timeout | undefined;
   let fired = false;
   const deadline = setTimeout(() => {
@@ -134,6 +143,7 @@ function startDeadline(child: ChildProcess, timeoutMs: number | undefined, onTim
     killTimer = setTimeout(() => signalGroup(child, "SIGKILL"), KILL_GRACE_MS);
   }, timeoutMs);
   return () => {
+    runningGroups.delete(child);
     clearTimeout(deadline);
     clearTimeout(killTimer);
     // A grandchild that let go of the pipes would outlive the call otherwise.

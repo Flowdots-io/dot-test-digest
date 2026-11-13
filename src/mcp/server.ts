@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { killRunningGroups, signalExitCode } from "../runner/capture.js";
 import { OutputFormatSchema, TddPhaseSchema } from "../types/schema.js";
 import { VERSION } from "../version.js";
 import { McpTools, type ToolOutcome, type ToolsOptions } from "./tools.js";
@@ -74,6 +75,13 @@ export async function serveMcp(options: ToolsOptions): Promise<void> {
     (args) => tracked(tools.listRuns(args)),
   );
 
+  // Each command runs in its own process group, which neither a terminal signal nor the server exiting reaches: stop them first.
+  for (const signal of ["SIGTERM", "SIGINT", "SIGHUP"] as const) {
+    process.once(signal, () => {
+      killRunningGroups();
+      process.exit(signalExitCode(signal));
+    });
+  }
   const stdinEnded = new Promise<void>((resolve) => {
     process.stdin.once("end", resolve);
     process.stdin.once("close", resolve);

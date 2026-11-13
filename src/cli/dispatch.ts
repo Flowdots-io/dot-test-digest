@@ -19,6 +19,8 @@ export interface SubcommandContext {
   /** The cache's `logs/` directory. */
   logDir: string;
   cwd: string;
+  /** Only runs recorded in this directory or below it can be named (`RunLocation.within`). */
+  within?: string;
   env: NodeJS.ProcessEnv;
   /** Whether stdout is a terminal, for `--color=auto`. */
   stdoutIsTTY: boolean;
