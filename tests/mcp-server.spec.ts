@@ -322,3 +322,55 @@ describe("init can print the MCP client entry", () => {
     expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
+
+describe("hardening after review", () => {
+  it("show_log and replay see only the runs of the server's project", SPAWNED, async () => {
+    const a = setup();
+    const b = { ...setup(), home: a.home };
+    const serverB = await serve(b, ["--allow", "node --test"]);
+    const runB = String((await call(serverB, "run_tests", { command: PASSING })).structuredContent?.["run_id"]);
+    const serverA = await serve(a, ["--allow", "node --test"]);
+    const runA = String((await call(serverA, "run_tests", { command: PASSING })).structuredContent?.["run_id"]);
+
+    for (const name of ["show_log", "replay"]) {
+      const other = await call(serverA, name, { run: runB });
+      expect(other.isError, name).toBe(true);
+      expect(textOf(other)).toBe(`no such run: ${runB}`);
+    }
+    // A prefix both ids share is not ambiguous here: project B's run is not a candidate, and its id is never listed.
+    let shared = 0;
+    while (runA[shared] === runB[shared]) shared += 1;
+    expect(shared).toBeGreaterThanOrEqual(6);
+    const own = await call(serverA, "show_log", { run: runA.slice(0, shared) });
+    expect(own.isError, textOf(own)).toBe(false);
+    expect(textOf(own)).toBe(fs.readFileSync(path.join(a.home, "logs", `${runA}.log`), "utf8"));
+  });
+
+  it("Stopping the server stops the commands it is running", SPAWNED, async () => {
+    const sleeping = (): boolean =>
+      spawnSync("ps", ["-eo", "args="], { encoding: "utf8" }).stdout.split("\n").some((line) => line.trim() === "sleep 47.123");
+    const where = setup();
+    const server = await startMcpServer(cli.entry(), ["--allow", "sleep"], { cwd: where.cart, env: envOf(where) });
+    void server.client.callTool({ name: "run_tests", arguments: { command: ["sleep", "47.123"] } }).catch(() => {});
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    expect(sleeping()).toBe(true);
+    process.kill(server.pid, "SIGTERM");
+    await server.close();
+    const deadline = Date.now() + 3_000;
+    while (sleeping() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(sleeping()).toBe(false);
+  });
+
+  it("A rerun hint of a run in a subdirectory is relative to that directory", SPAWNED, async () => {
+    const where = setup();
+    fs.mkdirSync(path.join(where.cart, "sub"));
+    fs.writeFileSync(
+      path.join(where.cart, "sub", "a.test.js"),
+      'import test from "node:test";\nimport assert from "node:assert/strict";\ntest("fails", () => assert.equal(1, 2));\n',
+    );
+    const server = await serve(where, ["--allow", "node --test"]);
+    const result = await call(server, "run_tests", { command: ["node", "--test", "a.test.js"], cwd: "sub", format: "json" });
+    const envelope = JSON.parse(textOf(result)) as { clusters: { rerun?: string }[] };
+    expect(envelope.clusters[0]?.rerun).toBe("node --test --test-name-pattern '^fails$' a.test.js");
+  });
+});
