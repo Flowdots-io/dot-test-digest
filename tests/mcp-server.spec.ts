@@ -160,7 +160,7 @@ describe("run_tests runs only commands the user allowed", () => {
     expect(result.isError).toBe(false);
     expect(result.structuredContent?.["exit_code"]).toBe(1);
     const [header, next] = textOf(result).split("\n");
-    expect(header).toMatch(/^\[FAIL\] 2 passed, 4 failed in \d+ms/);
+    expect(header).toMatch(/^\[FAIL\] 4 failed, 2 passed in \d+ms/);
     expect(next).toMatch(/^next: dot-test-digest show run_[0-9a-z]{9,} c_[0-9a-f]{8}$/);
   });
 
