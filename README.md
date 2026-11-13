@@ -50,6 +50,47 @@ dot-test-digest --version
 
 If `dot-test-digest` is not found afterwards, run `pnpm setup` and restart your shell: it puts pnpm's global bin directory on your `PATH`. After you pull new commits, run `pnpm build` again: the linked binary is `dist/index.js`, and it does not rebuild itself.
 
+### Getting started in a project
+
+In the project you want to use it in, `doctor` checks the setup and names the command to wrap; `init` writes a starter config file.
+
+```text
+$ dot-test-digest doctor
+ok    node: v22.23.4 (>= 20)
+ok    version: 0.1.0
+ok    cache: /home/me/.cache/dot-test-digest (writable, 12 runs, 84 KiB)
+ok    config: none found
+warn  gear1: TYPESAFE_API_KEY not set (Jev disabled; heuristic fallback)
+ok    runner: vitest (package.json) -> dot-test-digest -- npx vitest run
+ok    runner: tsc (tsconfig.json) -> dot-test-digest -- npx tsc --noEmit
+$ dot-test-digest init
+wrote /home/me/app/.dot-test-digest.json
+```
+
+`doctor` prints one line per check, `ok`, `warn` or `fail`, and exits `0` unless a check failed (`1`). It reads only: it never writes a file (a cache directory that does not exist yet is checked, not created) and never calls the network. The checks:
+
+- `node`: the Node version; `fail` below 20.
+- `version`: the tool's version.
+- `cache`: the cache directory (`DOT_TEST_DIGEST_HOME`, default `~/.cache/dot-test-digest`), with the number of recorded runs and its size; `fail` when it cannot be created or written, for example under a regular file. An entry inside it that cannot be read is also a `fail`: `fail  cache: <home> (cannot read <path>: EACCES)`; a file removed while `doctor` counts (a concurrent prune) is skipped.
+- `config`: the project and user files found (see [Configuration](#configuration)), or `none found`; `fail` with the same message a run would print when one is invalid (`<path>: unknown key "maxCluster"`). A setting the file may not set (a project `mcp` key, a project retention limit) adds a `warn  config: ignoring ...` line with the text a run prints on `stderr`.
+- `gear1`: `ok    gear1: TYPESAFE_API_KEY is set` (or `JEV_API_KEY is set`; the key itself is never printed). Otherwise a `warn` that Jev is off and the heuristic is used: the key is not set, it is empty (`TYPESAFE_API_KEY` is read first, as a run does, so an empty one turns Jev off even when `JEV_API_KEY` is set), or the config sets `noJev` (`warn  gear1: Jev disabled by noJev (<source>); heuristic fallback`).
+- `runner`: one line per runner found in the working directory, with the command to wrap: `vitest`, `jest`, `mocha` and `eslint` from a dependency in `package.json`; `node --test` from a `scripts.test` that contains `node --test`; `pytest` from `pytest.ini`, or a `pyproject.toml` or `setup.cfg` that mentions pytest; `cargo` from `Cargo.toml`; `go` from `go.mod`; `tsc` from `tsconfig.json`. It is a `warn` for `mocha` (no grammar: you get the heuristic tail, and a TDD `green` run needs `--allow-no-tests`) and for the runners whose grammar is checked against fixtures only (`jest`, `pytest`, `cargo`, `go`, `eslint`; see [What it understands](#what-it-understands)). No runner found is a `warn`, and so is a `package.json` that cannot be read (`warn  runner: package.json is not valid JSON`, or `is not a JSON object`).
+
+`doctor --json` prints one line `{"ok":true,"checks":[{"name":"node","status":"ok","detail":"..."},...],"runners":[{"name":"vitest","status":"ok","source":"package.json","command":"dot-test-digest -- npx vitest run"},...]}`; a `warn` runner also has a `note`.
+
+`init` writes `.dot-test-digest.json` in the working directory with the defaults of the settings a project usually changes, and no other file:
+
+```json
+{
+  "maxClusters": 5,
+  "contextLines": 2,
+  "format": "compact-md",
+  "noJev": false
+}
+```
+
+If the file exists, `init` changes nothing and exits `64` with `<path> already exists (use --force to overwrite)`; `init --force` overwrites it. `init` never writes through a symlink: on a link it exits `64` with `<path> is a symlink (use --force to replace the link)`, and `--force` removes the link itself (its target is left untouched) and writes a new file. A directory at that path exits `64` `<path> is a directory`, with or without `--force`. A file that cannot be created (a read-only directory) exits `73` (`EX_CANTCREAT`) with `cannot create <path>: EACCES`. The file is used only from inside a git repository or your home directory (see [Configuration](#configuration)); `dot-test-digest config` shows whether it applies.
+
 ## How to use it
 
 Put the flags before `--` and the command you would normally run after it. Everything after `--` is passed to the command untouched, and a missing `--` is a usage error (exit `64`). The one other form is a subcommand as the first word (`dot-test-digest show last`, see [Looking back at a run](#looking-back-at-a-run)); `-- show` still runs a program called `show`.
@@ -238,7 +279,7 @@ npx dot-test-digest digest test.log --exit-code "$status" --no-jev
 
 The cache of a CI job is usually thrown away with the job; set `DOT_TEST_DIGEST_HOME` to a path you upload if you want the copied log and its record too.
 
-`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)), `schema` (see [For programs and agents](#for-programs-and-agents)) and `doctor`, `init` and `mcp`. Those last three are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)), `schema` (see [For programs and agents](#for-programs-and-agents)), `doctor` and `init` (see [Getting started in a project](#getting-started-in-a-project)) and `mcp`. `mcp` is a reserved name: in this version it exits `64` with `mcp is not available in this version`.
 
 ### Long runs and large outputs
 
