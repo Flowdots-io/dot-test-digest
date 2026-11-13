@@ -6,8 +6,8 @@ export const SUBCOMMANDS = [
   { name: "gc", synopsis: "gc", summary: "delete old runs and state files from the cache (--keep, --max-age-days, --state-max-age-days, --dry-run)" },
   { name: "stats", synopsis: "stats", summary: "total the bytes and tokens the digests saved (--last N, --json)" },
   { name: "doctor", synopsis: "doctor", summary: "check the setup and name the command for the detected runner" },
-  { name: "init", synopsis: "init", summary: "write a starter config file" },
-  { name: "mcp", synopsis: "mcp", summary: "serve the tools over MCP on stdio" },
+  { name: "init", synopsis: "init", summary: "write a starter config file (--force), or print the MCP client entry (--print-mcp-config)" },
+  { name: "mcp", synopsis: "mcp", summary: "serve run_tests, show_log, replay and list_runs over MCP on stdio (--allow \"<word> <word>\", repeatable)" },
   { name: "config", synopsis: "config", summary: "print the effective settings and where each came from" },
   { name: "schema", synopsis: "schema", summary: "print the JSON Schema of the envelope" },
 ] as const;

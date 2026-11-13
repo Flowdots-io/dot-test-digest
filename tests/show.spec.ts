@@ -80,13 +80,6 @@ describe("subcommand dispatch (run-record)", () => {
     expect(run.stderr).toBe("dot-test-digest: spawn show ENOENT\n");
   });
 
-  it("A reserved subcommand is a usage error naming it", async () => {
-    const run = await runMain(["mcp"], { cwd: process.cwd(), home: tempDir("dtd-mcp-") });
-    expect(run.code).toBe(64);
-    expect(run.stdout).toBe("");
-    expect(run.stderr).toBe("mcp is not available in this version\n");
-  });
-
   it("The help lists the subcommands", async () => {
     const run = await runMain(["--help"], { cwd: process.cwd(), home: tempDir("dtd-help-") });
     const lines = run.stdout.split("\n");

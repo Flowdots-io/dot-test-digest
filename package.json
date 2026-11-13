@@ -18,7 +18,7 @@
     "schema": "node scripts/schema.mjs",
     "verify": "pnpm typecheck && pnpm test"
   },
-  "dependencies": { "zod": "^3.23.8" },
+  "dependencies": { "@modelcontextprotocol/sdk": "^1.32.2", "zod": "^3.25" },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "ajv": "^8.20.0",

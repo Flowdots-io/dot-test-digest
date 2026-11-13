@@ -107,7 +107,7 @@ export function parsesFailure(lines: LineSource): boolean {
 async function analyze(output: CapturedOutput, input: DigestInput): Promise<Analysis> {
   const { settings, repoRoot } = input;
   const lines = normalized(output.lines);
-  const gear0 = runGear0(lines, input.command);
+  const gear0 = runGear0(lines, input.command, repoRoot);
   // A linter that fails on warnings alone (`--max-warnings=0`) has only its warnings to show.
   const reported =
     gear0 === null
