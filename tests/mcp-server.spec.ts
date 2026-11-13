@@ -1,5 +1,6 @@
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
@@ -109,5 +110,137 @@ describe("mcp serves four tools over stdio, and nothing else on stdout", () => {
     const mcp = await spawnBuilt(["--import", register], ["mcp"], where);
     expect(mcp.code, mcp.stderr).toBe(0);
     expect(loads().some((url) => url.includes("@modelcontextprotocol"))).toBe(true);
+  });
+});
+
+interface ToolResult {
+  isError?: boolean;
+  content: { type: string; text: string }[];
+  structuredContent?: Record<string, unknown>;
+}
+
+async function call(server: McpServerProcess, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+  return (await server.client.callTool({ name, arguments: args })) as ToolResult;
+}
+
+function textOf(result: ToolResult): string {
+  return result.content[0]?.text ?? "";
+}
+
+/** The run logs in the cache: a run creates its log before it starts the child. */
+function logsIn(home: string): string[] {
+  const dir = path.join(home, "logs");
+  return fs.existsSync(dir) ? fs.readdirSync(dir).filter((name) => name.endsWith(".log")) : [];
+}
+
+const RUN_ID = /^run_[0-9a-z]{9,}$/;
+const PASSING = ["node", "--test", "passing.test.js"];
+
+describe("run_tests runs only commands the user allowed", () => {
+  it("The default allowlist is empty", SPAWNED, async () => {
+    const where = setup();
+    const server = await serve(where);
+    const result = await call(server, "run_tests", { command: PASSING });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("command not allowed: node --test passing.test.js; allowed prefixes: none");
+    expect(logsIn(where.home)).toEqual([]);
+  });
+
+  it("An allowed command runs and returns the digest", SPAWNED, async () => {
+    const server = await serve(setup(), ["--allow", "node --test"]);
+    const result = await call(server, "run_tests", { command: PASSING });
+    expect(result.isError).toBe(false);
+    expect(textOf(result)).toMatch(/^\[PASS\] 1 passed, 0 failed in \d+ms/);
+    expect(result.structuredContent).toEqual({ run_id: expect.stringMatching(RUN_ID), status: "PASS", exit_code: 0 });
+  });
+
+  it("A failing test run is a result, not an error", SPAWNED, async () => {
+    const server = await serve(setup(), ["--allow", "node --test"]);
+    const result = await call(server, "run_tests", { command: ["node", "--test", "cart.test.js"], format: "compact-md" });
+    expect(result.isError).toBe(false);
+    expect(result.structuredContent?.["exit_code"]).toBe(1);
+    const [header, next] = textOf(result).split("\n");
+    expect(header).toMatch(/^\[FAIL\] 2 passed, 4 failed in \d+ms/);
+    expect(next).toMatch(/^next: dot-test-digest show run_[0-9a-z]{9,} c_[0-9a-f]{8}$/);
+  });
+
+  it("Prefix matching is element-wise", SPAWNED, async () => {
+    const where = setup();
+    const server = await serve(where, ["--allow", "node --test"]);
+    for (const command of [["node", "--testx"], ["node"], ["sh", "-c", "node --test"]]) {
+      const result = await call(server, "run_tests", { command });
+      expect(result.isError, command.join(" ")).toBe(true);
+      expect(textOf(result)).toBe(`command not allowed: ${command.join(" ")}; allowed prefixes: node --test`);
+    }
+    expect(logsIn(where.home)).toEqual([]);
+  });
+
+  it("No shell is involved", SPAWNED, async () => {
+    const where = setup();
+    const pwned = path.join(where.home, "pwned");
+    const server = await serve(where, ["--allow", "node --test"]);
+    const result = await call(server, "run_tests", { command: ["node", "--test", `a.test.js; touch ${pwned}`] });
+    // It ran, node got the whole string as one file name that does not exist, and nothing else ran.
+    expect(result.isError, textOf(result)).toBe(false);
+    expect(result.structuredContent?.["exit_code"]).toBe(1);
+    const [log] = logsIn(where.home);
+    expect(fs.readFileSync(path.join(where.home, "logs", log ?? ""), "utf8")).toContain(`a.test.js; touch ${pwned}`);
+    expect(fs.existsSync(pwned)).toBe(false);
+  });
+
+  it("A working directory outside the project is refused", SPAWNED, async () => {
+    const where = setup();
+    fs.symlinkSync(fs.realpathSync(os.tmpdir()), path.join(where.cart, "out"));
+    const server = await serve(where, ["--allow", "node --test"]);
+    for (const cwd of ["..", "out"]) {
+      const result = await call(server, "run_tests", { command: PASSING, cwd });
+      expect(result.isError, cwd).toBe(true);
+      expect(textOf(result)).toMatch(/^cwd outside the project:/);
+    }
+    expect(logsIn(where.home)).toEqual([]);
+    // The guard still lets a directory of the project through.
+    const inside = await call(server, "run_tests", { command: PASSING, cwd: "." });
+    expect(inside.isError).toBe(false);
+  });
+
+  it("The user config extends the allowlist", SPAWNED, async () => {
+    const where = setup();
+    fs.mkdirSync(path.join(where.configHome, "dot-test-digest"));
+    fs.writeFileSync(path.join(where.configHome, "dot-test-digest", "config.json"), '{ "mcp": { "allow": [["pnpm","test"]] } }');
+    const server = await serve(where, ["--allow", "node --test"]);
+    const pnpm = await call(server, "run_tests", { command: ["pnpm", "test"] });
+    expect(textOf(pnpm)).not.toContain("command not allowed");
+    const node = await call(server, "run_tests", { command: PASSING });
+    expect(node.isError).toBe(false);
+    expect(node.structuredContent?.["status"]).toBe("PASS");
+  });
+
+  it("A project file cannot extend the allowlist", SPAWNED, async () => {
+    const where = setup({ ".dot-test-digest.json": '{ "mcp": { "allow": [["node"]] } }' });
+    const server = await serve(where);
+    const result = await call(server, "run_tests", { command: PASSING });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toContain("allowed prefixes: none");
+    expect(server.stderr()).toContain('ignoring "mcp" in');
+  });
+
+  it("The timeout stops the child", SPAWNED, async () => {
+    const server = await serve(setup(), ["--allow", "sleep"]);
+    const sleepers = (): string[] =>
+      spawnSync("ps", ["-eo", "ppid=,args="], { encoding: "utf8" })
+        .stdout.split("\n")
+        .map((line) => line.trim().split(/\s+/))
+        .filter(([ppid, ...args]) => Number(ppid) === server.pid && args.join(" ") === "sleep 30")
+        .map((words) => words.join(" "));
+    const startedAt = Date.now();
+    const pending = call(server, "run_tests", { command: ["sleep", "30"], timeout_seconds: 1 });
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    // The check can see the child while it runs.
+    expect(sleepers()).toHaveLength(1);
+    const result = await pending;
+    expect(Date.now() - startedAt).toBeLessThan(10_000);
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toMatch(/^timed out after 1s/);
+    expect(sleepers()).toEqual([]);
   });
 });
