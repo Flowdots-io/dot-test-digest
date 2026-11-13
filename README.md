@@ -217,7 +217,7 @@ The test name is the last part of the name (after the last ` > `), with regular-
 
 ### As an MCP server
 
-`dot-test-digest mcp` serves the tool to an agent over the [Model Context Protocol](https://modelcontextprotocol.io) on stdin and stdout, until stdin ends. It answers the calls still running, then exits `0`. Everything it writes on stdout is protocol traffic; warnings and the heartbeat of a run go to stderr. The SDK is loaded by this subcommand only, so a wrapped run starts as fast as before. `init --print-mcp-config` prints the entry for the client's configuration, writes nothing and exits `0`:
+`dot-test-digest mcp` serves the tool to an agent over the [Model Context Protocol](https://modelcontextprotocol.io) on stdin and stdout, until stdin ends. It answers the calls still running, then exits `0`. Everything it writes on stdout is protocol traffic; warnings and the heartbeat of a run go to stderr. It uses the official MCP SDK (`@modelcontextprotocol/sdk`), a runtime dependency that makes a production install about 24 MB and some 90 packages instead of 4.7 MB (measured with `pnpm install --prod`); the SDK is loaded by this subcommand only, so a wrapped run starts as fast as before. `init --print-mcp-config` prints the entry for the client's configuration, writes nothing and exits `0`:
 
 ```json
 {
@@ -241,7 +241,7 @@ The server runs in the client's working directory (the project) and lists four t
 | `replay` | `run`, `format`, `max_clusters`, `context_lines` | what `replay` prints |
 | `list_runs` | `limit` (default 10, at most 50) | the newest runs of the directory, one `<run_id> <status> <created_at> <command>` line each |
 
-The three last tools run nothing. A bad run reference, a bad range or a missing log is an error result with the message the CLI prints (`no such run: run_zzzzzz`).
+The three last tools run nothing, and see only the runs recorded in the server's directory or below it: a run id or prefix of another project in the same cache is `no such run: <ref>`, and an ambiguous prefix lists only this project's runs. A bad run reference, a bad range or a missing log is an error result with the message the CLI prints (`no such run: run_zzzzzz`).
 
 **What `run_tests` may run.** Nothing by default: a command runs only when its first elements equal, element by element, one of the allowed prefixes. You allow prefixes on the command line, one `--allow` each (words separated by single spaces), or in your user config file:
 
@@ -253,11 +253,13 @@ The three last tools run nothing. A bad run reference, a bad range or a missing 
 { "mcpServers": { "dot-test-digest": { "command": "dot-test-digest", "args": ["mcp", "--allow", "node --test"] } } }
 ```
 
-The allowlist is the union of the two. `node --test` allows `["node", "--test", "a.test.js"]`, not `["node", "--testx"]`, `["node"]` or `["sh", "-c", "node --test"]`. A refused command returns `command not allowed: <argv>; allowed prefixes: <list or none>` and starts no process. The command is started without a shell, so `["node", "--test", "a.test.js; touch x"]` passes one odd file name to node and runs nothing else. Allow a prefix that cannot run arbitrary code: `["node"]` or `["sh"]` would let the agent run anything.
+The allowlist is the union of the two. `node --test` allows `["node", "--test", "a.test.js"]`, not `["node", "--testx"]`, `["node"]` or `["sh", "-c", "node --test"]`. A refused command returns `command not allowed: <argv>; allowed prefixes: <list or none>` and starts no process. The command is started without a shell, so `["node", "--test", "a.test.js; touch x"]` passes one odd file name to node and runs nothing else.
+
+**The allowlist is not a sandbox.** A prefix allows any arguments after it, and most runners can load arbitrary code through their arguments: `node --test --import=data:text/javascript,... x.test.js` runs whatever JavaScript the agent writes, as do `--require`, a `--config` file, a script name or a test file the agent created. Allowing a runner therefore trusts the agent to run code as you, in the project, with your environment. The allowlist limits which programs are the entry point (no `sh -c`, no `curl`, no `rm`); it does not limit what those programs do. A relative prefix such as `./gradlew` or `./node_modules/.bin/vitest` is resolved against the run's `cwd`, so with `cwd: "sub"` a file planted at `sub/gradlew` is what runs; prefer a command found on `PATH`. Give the server only to an agent you would let run code in that project.
 
 **Why the allowlist is not read from a project file.** A project file comes with the repository, so a repository you cloned could allow itself `["sh"]` and have your agent run what it likes. The `mcp` key of a `.dot-test-digest.json` is ignored, with `dot-test-digest: ignoring "mcp" in <file>: the command allowlist is read from the user config only` on stderr; only your own user config file and the arguments of your own client configuration count.
 
-**Where and how long.** `cwd` is taken relative to the server's directory and, with every symlink followed, must be that directory or below it; otherwise the result is `cwd outside the project: <cwd>` and nothing runs. The command runs in its own process group: when `timeout_seconds` elapses the group gets SIGTERM, then SIGKILL 5 seconds later, and the result is an error whose text starts `timed out after <N>s`, followed by the digest of what was printed. The run is recorded as any run is (`show_log`, `replay`, `list_runs`).
+**Where and how long.** `cwd` is taken relative to the server's directory and, with every symlink followed, must be that directory or below it; otherwise the result is `cwd outside the project: <cwd>` and nothing runs. The command runs in its own process group: when `timeout_seconds` elapses the group gets SIGTERM, then SIGKILL 5 seconds later, and the result is an error whose text starts `timed out after <N>s`, followed by the digest of what was printed. When the server gets SIGTERM, SIGINT or SIGHUP it SIGKILLs the process groups of the commands still running before it exits, so none outlives it. The run is recorded as any run is (`show_log`, `replay`, `list_runs`); a `rerun` hint is relative to the run's `cwd`.
 
 The Claude Code hook that would rewrite a Bash test command into a wrapped one is not part of this version.
 
