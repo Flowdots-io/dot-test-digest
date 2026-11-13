@@ -83,6 +83,7 @@ describe("doctor (doctor-and-init)", () => {
       home: tempDir("dtd-doctor-home-"),
       deps: { env: envWithoutKey() },
     });
+    expect(run.stdout).toMatch(/^\{.*\}\n$/);
     const report = JSON.parse(run.stdout) as DoctorJson;
     const byName = new Map(report.runners.map((runner) => [runner.name, runner]));
     expect([...byName.keys()].sort()).toEqual(["cargo", "jest", "mocha", "node --test", "tsc"]);
