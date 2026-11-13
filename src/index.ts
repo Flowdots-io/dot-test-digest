@@ -76,7 +76,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     return EX_SOFTWARE;
   }
 
-  const capture = async (): Promise<CapturedOutput> => runChild(command, { rawLog, cwd: repoRoot });
+  const capture = async (): Promise<CapturedOutput> => runChild(command, { rawLog, cwd: repoRoot, ...(deps.lineSources ? { lineSources: deps.lineSources } : {}) });
 
   try {
     const outcome = await digestRun({

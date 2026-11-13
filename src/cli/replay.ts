@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import { loadConfig } from "../config/load.js";
 import { digestRun, type DigestSettings } from "../pipeline.js";
-import type { CapturedLine } from "../runner/capture.js";
+import { LogLines } from "../runner/line-source.js";
 import { OutputFormatSchema, type OutputFormat } from "../types/schema.js";
 import { FORMAT_CHOICES, readInt } from "./args.js";
 import { wantsColor } from "./color.js";
@@ -49,13 +49,6 @@ function parseReplayArgs(args: readonly string[]): ReplayArgs {
   return { ref, ...parsed };
 }
 
-/** The log's lines numbered as the run numbered them; the stream is not stored and no adapter reads it. */
-function readLoggedOutput(logPath: string): CapturedLine[] {
-  const texts = fs.readFileSync(logPath, "utf8").split("\n");
-  if (texts.at(-1) === "") texts.pop();
-  return texts.map((text, index) => ({ stream: "stdout", text, line: index + 1 }));
-}
-
 /**
  * `replay <run>`: the digest of a recorded run again, from its record and log. Nothing runs, nothing is written,
  * the network is never called, and no TDD state is read, so no delta is printed. Exits with the record's exit code.
@@ -87,7 +80,8 @@ export const runReplay: Subcommand = async (args, context) => {
 
   const outcome = await digestRun({
     output: {
-      lines: readLoggedOutput(run.logPath),
+      // Numbered as the run numbered them; the stream is not stored and no adapter reads it.
+      lines: LogLines.read(run.logPath),
       exitCode: record.child_exit_code,
       signal: record.signal,
       durationMs: record.duration_ms,

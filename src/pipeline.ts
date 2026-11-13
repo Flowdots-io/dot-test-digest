@@ -84,7 +84,15 @@ function normalized(lines: LineSource): LineSource {
   return mapLines(lines, normalizeLine);
 }
 
+/** Size level 5 prints the output itself, which only a tiny output can be; a larger one is never materialized. */
+const RAW_TEXT_LIMIT_BYTES = 2400;
+
 function rawTextOf(lines: LineSource): string | undefined {
+  let bytes = 0;
+  for (const line of lines) {
+    bytes += Buffer.byteLength(line.text, "utf8") + 1;
+    if (bytes > RAW_TEXT_LIMIT_BYTES) return undefined;
+  }
   return lines
     .slice()
     .map((line) => `${line.text}\n`)

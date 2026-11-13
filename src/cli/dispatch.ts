@@ -1,5 +1,6 @@
 import type { JevAsker } from "../gears/gear1-jev.js";
 import type { FinishDeps } from "../runner/finish-run.js";
+import type { LineSourceFactory } from "../runner/line-source.js";
 import { defaultLogDir } from "../runner/raw-log.js";
 import { runConfig } from "./config.js";
 import { runDigest } from "./digest.js";
@@ -25,6 +26,8 @@ export interface SubcommandContext {
   finish: Omit<FinishDeps, "warn">;
   /** The Jev client a test injects; a subcommand that must stay offline never calls it. */
   client?: JevAsker;
+  /** How `digest` holds the lines it reads; a test spies on it. */
+  lineSources?: LineSourceFactory;
   write: (text: string) => void;
   /** One stderr line, without its newline. */
   warn: (line: string) => void;
@@ -55,6 +58,8 @@ export interface SubcommandDeps extends Omit<FinishDeps, "warn"> {
   /** What `digest -` reads; defaults to `process.stdin`. */
   stdin?: NodeJS.ReadableStream;
   client?: JevAsker;
+  /** How a run holds its captured lines: in memory up to 4 MiB, else read back from the log. */
+  lineSources?: LineSourceFactory;
 }
 
 export async function runSubcommand(
@@ -74,6 +79,7 @@ export async function runSubcommand(
       ...(deps.prune ? { prune: deps.prune } : {}),
     },
     ...(deps.client ? { client: deps.client } : {}),
+    ...(deps.lineSources ? { lineSources: deps.lineSources } : {}),
     write: (text) => {
       process.stdout.write(text);
     },
