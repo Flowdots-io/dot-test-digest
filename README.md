@@ -57,7 +57,7 @@ In the project you want to use it in, `doctor` checks the setup and names the co
 ```text
 $ dot-test-digest doctor
 ok    node: v22.23.4 (>= 20)
-ok    version: 0.1.0
+ok    version: 0.2.0
 ok    cache: /home/me/.cache/dot-test-digest (writable, 12 runs, 84 KiB)
 ok    config: none found
 warn  gear1: TYPESAFE_API_KEY not set (Jev disabled; heuristic fallback)
