@@ -18,6 +18,35 @@ export interface CaptureOptions {
   cwd?: string;
   env?: NodeJS.ProcessEnv;
   lineSources?: LineSourceFactory;
+  progress?: ProgressOptions;
+}
+
+/** `--progress`: a heartbeat on stderr while the child runs. */
+export interface ProgressOptions {
+  intervalMs: number;
+  /** On a terminal each heartbeat overwrites the previous one, and the last is cleared at the end. */
+  isTTY: boolean;
+  now: () => number;
+  write: (text: string) => void;
+}
+
+export const PROGRESS_INTERVAL_MS = 10_000;
+const CLEAR_LINE = "\r\u001b[K";
+
+/** Starts the heartbeat; the returned function stops it, clearing a terminal's line if one was printed. */
+function startHeartbeat(progress: ProgressOptions, rawLog: RawLogWriter): () => void {
+  const startedAt = progress.now();
+  let printed = false;
+  const timer = setInterval(() => {
+    const seconds = ((progress.now() - startedAt) / 1000).toFixed(1);
+    const beat = `dot-test-digest: running... ${rawLog.linesWritten} lines, ${seconds}s`;
+    progress.write(progress.isTTY ? `\r${beat}` : `${beat}\n`);
+    printed = true;
+  }, progress.intervalMs);
+  return () => {
+    clearInterval(timer);
+    if (printed && progress.isTTY) progress.write(CLEAR_LINE);
+  };
 }
 
 /** POSIX convention: a signal death is reported as 128 + signal number. */
@@ -93,12 +122,17 @@ export function runChild(
   });
 
   const sink = new LogLineSink(options.rawLog, options.lineSources);
+  const stopHeartbeat = options.progress ? startHeartbeat(options.progress, options.rawLog) : () => {};
   child.stdout.on("data", (chunk: Buffer) => sink.write("stdout", chunk));
   child.stderr.on("data", (chunk: Buffer) => sink.write("stderr", chunk));
 
   return new Promise<CaptureResult>((resolve, reject) => {
-    child.on("error", reject);
+    child.on("error", (error) => {
+      stopHeartbeat();
+      reject(error);
+    });
     child.on("close", (code, signal) => {
+      stopHeartbeat();
       resolve({
         lines: sink.end(),
         exitCode: code ?? signalExitCode(signal),

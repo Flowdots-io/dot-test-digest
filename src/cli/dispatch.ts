@@ -54,7 +54,11 @@ const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
 export interface SubcommandDeps extends Omit<FinishDeps, "warn"> {
   env?: NodeJS.ProcessEnv;
   stdoutIsTTY?: boolean;
+  /** Whether stderr is a terminal: a `--progress` heartbeat then overwrites itself. */
+  stderrIsTTY?: boolean;
   stdinIsTTY?: boolean;
+  /** The clock a `--progress` heartbeat reads its elapsed time from, in milliseconds. */
+  now?: () => number;
   /** What `digest -` reads; defaults to `process.stdin`. */
   stdin?: NodeJS.ReadableStream;
   client?: JevAsker;

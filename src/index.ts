@@ -8,7 +8,7 @@ import { EX_SOFTWARE } from "./cli/errors.js";
 import { isSubcommandName } from "./cli/subcommands.js";
 import { loadConfig, type LoadedConfig } from "./config/load.js";
 import { digestRun, type CapturedOutput } from "./pipeline.js";
-import { runChild } from "./runner/capture.js";
+import { PROGRESS_INTERVAL_MS, runChild, type ProgressOptions } from "./runner/capture.js";
 import { finishRun } from "./runner/finish-run.js";
 import { RawLogWriter } from "./runner/raw-log.js";
 import { loadState, resolveScopeId, saveState, type RunState } from "./state/tdd-gate.js";
@@ -24,8 +24,14 @@ export type MainDeps = SubcommandDeps;
 function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefaults: Partial<CliOptions> } {
   const config = loadConfig({ cwd: process.cwd(), env });
   for (const warning of config.warnings) process.stderr.write(`${warning}\n`);
-  const { maxClusters, contextLines, format, noJev, retryFlakes, color } = config.values;
-  return { config, flagDefaults: { maxClusters, contextLines, format, noJev, retryFlakes, color } };
+  const { maxClusters, contextLines, format, noJev, retryFlakes, color, progress } = config.values;
+  return { config, flagDefaults: { maxClusters, contextLines, format, noJev, retryFlakes, color, progress } };
+}
+
+/** `DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS` shortens the heartbeat interval for tests; anything but a positive integer is ignored. */
+function progressInterval(env: NodeJS.ProcessEnv): number {
+  const raw = env["DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS"] ?? "";
+  return /^[1-9]\d*$/.test(raw) ? Number(raw) : PROGRESS_INTERVAL_MS;
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
@@ -76,7 +82,21 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     return EX_SOFTWARE;
   }
 
-  const capture = async (): Promise<CapturedOutput> => runChild(command, { rawLog, cwd: repoRoot, ...(deps.lineSources ? { lineSources: deps.lineSources } : {}) });
+  const progress: ProgressOptions | undefined = options.progress === true
+    ? {
+        intervalMs: progressInterval(env),
+        isTTY: deps.stderrIsTTY ?? process.stderr.isTTY === true,
+        now: deps.now ?? Date.now,
+        write: (text) => process.stderr.write(text),
+      }
+    : undefined;
+  const capture = async (): Promise<CapturedOutput> =>
+    runChild(command, {
+      rawLog,
+      cwd: repoRoot,
+      ...(deps.lineSources ? { lineSources: deps.lineSources } : {}),
+      ...(progress ? { progress } : {}),
+    });
 
   try {
     const outcome = await digestRun({
