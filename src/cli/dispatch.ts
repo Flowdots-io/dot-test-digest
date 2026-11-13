@@ -4,8 +4,10 @@ import type { LineSourceFactory } from "../runner/line-source.js";
 import { defaultLogDir } from "../runner/raw-log.js";
 import { runConfig } from "./config.js";
 import { runDigest } from "./digest.js";
+import { runDoctor } from "./doctor.js";
 import { runGc } from "./gc.js";
 import { CliError, EX_SOFTWARE, UsageError } from "./errors.js";
+import { runInit } from "./init.js";
 import { runReplay } from "./replay.js";
 import { runShow } from "./show.js";
 import { runSchema } from "./schema.js";
@@ -43,8 +45,8 @@ const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
   digest: runDigest,
   gc: runGc,
   stats: runStats,
-  doctor: undefined,
-  init: undefined,
+  doctor: runDoctor,
+  init: runInit,
   mcp: undefined,
   config: runConfig,
   schema: runSchema,
