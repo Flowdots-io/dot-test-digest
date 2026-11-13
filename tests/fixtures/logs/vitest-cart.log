@@ -1,0 +1,110 @@
+
+ RUN  v2.1.9 /work/vitest-cart
+
+ ❯ tests/cart.test.ts (29 tests | 5 failed) 32ms
+   × cart > discount 10% leaves 90% 14ms
+     → expected 100 to be 900 // Object.is equality
+   × cart > total without discount 2ms
+     → expected +0 to be 1815 // Object.is equality
+   × cart > total with 10% off 2ms
+     → expected 182 to be 1634 // Object.is equality
+   × cart > total with 100% off is free 1ms
+     → expected 1815 to be +0 // Object.is equality
+   × cart > first of an empty cart is undefined 2ms
+     → Cannot read properties of undefined (reading 'name')
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/cart.test.ts > cart > discount 10% leaves 90%
+AssertionError: expected 100 to be 900 // Object.is equality
+
+- Expected
++ Received
+
+- 900
++ 100
+
+ ❯ tests/cart.test.ts:7:66
+      5|   it("subtotal adds up", () => expect(subtotal(items)).toBe(1500));
+      6|   it("tax is 21%", () => expect(tax(1000)).toBe(210));
+      7|   it("discount 10% leaves 90%", () => expect(discount(1000, 10)).toBe(…
+       |                                                                  ^
+      8|   it("discount 50% leaves half", () => expect(discount(2000, 50)).toBe…
+      9|   it("total without discount", () => expect(total(items)).toBe(1815));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/cart.test.ts > cart > total without discount
+AssertionError: expected +0 to be 1815 // Object.is equality
+
+- Expected
++ Received
+
+- 1815
++ 0
+
+ ❯ tests/cart.test.ts:9:59
+      7|   it("discount 10% leaves 90%", () => expect(discount(1000, 10)).toBe(…
+      8|   it("discount 50% leaves half", () => expect(discount(2000, 50)).toBe…
+      9|   it("total without discount", () => expect(total(items)).toBe(1815));
+       |                                                           ^
+     10|   it("total with 10% off", () => expect(total(items, 10)).toBe(1634));
+     11|   it("total with 100% off is free", () => expect(total(items, 100)).to…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/cart.test.ts > cart > total with 10% off
+AssertionError: expected 182 to be 1634 // Object.is equality
+
+- Expected
++ Received
+
+- 1634
++ 182
+
+ ❯ tests/cart.test.ts:10:59
+      8|   it("discount 50% leaves half", () => expect(discount(2000, 50)).toBe…
+      9|   it("total without discount", () => expect(total(items)).toBe(1815));
+     10|   it("total with 10% off", () => expect(total(items, 10)).toBe(1634));
+       |                                                           ^
+     11|   it("total with 100% off is free", () => expect(total(items, 100)).to…
+     12|   it("first item name", () => expect(first(items)).toBe("pen"));
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/cart.test.ts > cart > total with 100% off is free
+AssertionError: expected 1815 to be +0 // Object.is equality
+
+- Expected
++ Received
+
+- 0
++ 1815
+
+ ❯ tests/cart.test.ts:11:69
+      9|   it("total without discount", () => expect(total(items)).toBe(1815));
+     10|   it("total with 10% off", () => expect(total(items, 10)).toBe(1634));
+     11|   it("total with 100% off is free", () => expect(total(items, 100)).to…
+       |                                                                     ^
+     12|   it("first item name", () => expect(first(items)).toBe("pen"));
+     13|   it("first of an empty cart is undefined", () => expect(first([])).to…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/cart.test.ts > cart > first of an empty cart is undefined
+TypeError: Cannot read properties of undefined (reading 'name')
+ ❯ Module.first src/cart.ts:10:50
+      8|   return d + tax(d); // bug propagates here
+      9| };
+     10| export const first = (items: Item[]) => items[0].name; // crashes on a…
+       |                                                  ^
+     11| 
+ ❯ tests/cart.test.ts:13:58
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 24 passed (29)
+   Start at  02:25:58
+   Duration  746ms (transform 87ms, setup 0ms, collect 80ms, tests 32ms, environment 0ms, prepare 158ms)
+

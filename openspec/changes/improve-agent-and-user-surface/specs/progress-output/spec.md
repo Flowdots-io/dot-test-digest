@@ -4,9 +4,9 @@
 With `--progress` (or `progress: true`, or `DOT_TEST_DIGEST_PROGRESS=1`), the tool SHALL print `dot-test-digest: running... <N> lines, <S>s` on stderr every 10 seconds (the interval is `DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS` when set, for tests), where `N` is the number of lines written to the log so far and `S` the elapsed seconds with one decimal. When stderr is a terminal, each heartbeat overwrites the previous one (carriage return) and the last is cleared before the digest is printed; otherwise each heartbeat is its own line. Nothing is written to stdout, the exit code and the digest are unchanged, and without the flag stderr carries nothing from this feature.
 
 #### Scenario: Heartbeats while a slow child runs
-- **GIVEN** the tool spawned with `DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS=300` as `node dist/index.js --no-jev --progress -- sh -c "echo a; sleep 1.2; echo b"` with stderr as a pipe
+- **GIVEN** the tool spawned with `DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS=300` as `node dist/index.js --no-jev --progress -- sh -c "echo a; sleep 2; echo b"` with stderr as a pipe
 - **WHEN** it exits
-- **THEN** stderr has at least 2 lines matching `^dot-test-digest: running\.\.\. \d+ lines, \d+\.\ds$`, each with a line count of at least 1
+- **THEN** stderr has at least 2 lines matching `^dot-test-digest: running\.\.\. \d+ lines, \d+\.\ds$`, whose line counts never decrease and the last of which counts at least 1 line (a beat that fires before the shell's first line reaches the log may say 0)
 - **AND** stdout is exactly the normal pass line and the exit code is `0`
 
 #### Scenario: Without the flag nothing is printed

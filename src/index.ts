@@ -8,7 +8,7 @@ import { EX_SOFTWARE } from "./cli/errors.js";
 import { isSubcommandName } from "./cli/subcommands.js";
 import { loadConfig, type LoadedConfig } from "./config/load.js";
 import { digestRun, type CapturedOutput } from "./pipeline.js";
-import { runChild } from "./runner/capture.js";
+import { PROGRESS_INTERVAL_MS, runChild, type ProgressOptions } from "./runner/capture.js";
 import { finishRun } from "./runner/finish-run.js";
 import { RawLogWriter } from "./runner/raw-log.js";
 import { loadState, resolveScopeId, saveState, type RunState } from "./state/tdd-gate.js";
@@ -24,8 +24,18 @@ export type MainDeps = SubcommandDeps;
 function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefaults: Partial<CliOptions> } {
   const config = loadConfig({ cwd: process.cwd(), env });
   for (const warning of config.warnings) process.stderr.write(`${warning}\n`);
-  const { maxClusters, contextLines, format, noJev, retryFlakes, color } = config.values;
-  return { config, flagDefaults: { maxClusters, contextLines, format, noJev, retryFlakes, color } };
+  const { maxClusters, contextLines, format, noJev, retryFlakes, color, progress } = config.values;
+  return { config, flagDefaults: { maxClusters, contextLines, format, noJev, retryFlakes, color, progress } };
+}
+
+/** Node runs a timer whose delay is above this every 1 ms. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** `DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS` shortens the heartbeat interval for tests; anything but a positive integer up to `MAX_TIMER_MS` is ignored. */
+function progressInterval(env: NodeJS.ProcessEnv): number {
+  const raw = env["DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS"] ?? "";
+  const value = /^[1-9]\d*$/.test(raw) ? Number(raw) : Number.NaN;
+  return value <= MAX_TIMER_MS ? value : PROGRESS_INTERVAL_MS;
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
@@ -76,7 +86,21 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     return EX_SOFTWARE;
   }
 
-  const capture = async (): Promise<CapturedOutput> => runChild(command, { rawLog, cwd: repoRoot });
+  const progress: ProgressOptions | undefined = options.progress === true
+    ? {
+        intervalMs: progressInterval(env),
+        isTTY: deps.stderrIsTTY ?? process.stderr.isTTY === true,
+        now: deps.now ?? Date.now,
+        write: (text) => process.stderr.write(text),
+      }
+    : undefined;
+  const capture = async (): Promise<CapturedOutput> =>
+    runChild(command, {
+      rawLog,
+      cwd: repoRoot,
+      ...(deps.lineSources ? { lineSources: deps.lineSources } : {}),
+      ...(progress ? { progress } : {}),
+    });
 
   try {
     const outcome = await digestRun({
@@ -154,13 +178,14 @@ function isEntrypoint(entry: string | undefined): boolean {
   }
 }
 
-/** A reader that closed stdout early (`| head`) gets no digest; the exit code and the log stay (INV-3). */
+/** A reader that closed stdout (`| head`) or stderr early misses that stream; the exit code and the log stay (INV-3). */
 function ignoreClosedPipe(error: NodeJS.ErrnoException): void {
   if (error.code !== "EPIPE") throw error;
 }
 
 if (isEntrypoint(process.argv[1])) {
   process.stdout.on("error", ignoreClosedPipe);
+  process.stderr.on("error", ignoreClosedPipe);
   void main(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });

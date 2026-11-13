@@ -49,6 +49,8 @@ export const CliOptionsSchema = z.object({
   noJev: z.boolean().default(false),
   retryFlakes: z.boolean().default(false),
   allowNoTests: z.boolean().default(false),
+  /** A heartbeat on stderr while the child runs; unset is off. */
+  progress: z.boolean().optional(),
   /** Unset means the configured default (`auto`). */
   color: ColorModeSchema.optional(),
 });

@@ -1,4 +1,4 @@
-import type { CapturedLine } from "../runner/capture.js";
+import { findLineIndex, type LineSource } from "../runner/line-source.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import { canonicalTestId, normalizeTestName } from "../pruner/failure-identity.js";
 import {
@@ -66,15 +66,13 @@ interface SummaryGroup {
   endLine: number;
 }
 
-function isCompactStream(lines: readonly CapturedLine[]): boolean {
+function isCompactStream(lines: LineSource): boolean {
   // A failed *suite* (`Failed Suites`, e.g. a broken import) has a banner but
   // no inline `×` rows; it must stay on the generic grammar so its error kind
   // and failure block are preserved.
-  if (lines.some((line) => COMPACT_SUMMARY.test(line.text))) return true;
-  return (
-    lines.some((line) => COMPACT_BANNER.test(line.text)) &&
-    lines.some((line) => COMPACT_FAIL_ROW.test(line.text))
-  );
+  const has = (pattern: RegExp): boolean => findLineIndex(lines, (text) => pattern.test(text)) >= 0;
+  if (has(COMPACT_SUMMARY)) return true;
+  return has(COMPACT_BANNER) && has(COMPACT_FAIL_ROW);
 }
 
 /**
@@ -83,7 +81,7 @@ function isCompactStream(lines: readonly CapturedLine[]): boolean {
  * group, and the counts. Both sections describe the same tests, so they are
  * merged by canonical identity (§4.2.2) and never counted twice.
  */
-function parseCompact(lines: readonly CapturedLine[]): AdapterResult {
+function parseCompact(lines: LineSource): AdapterResult {
   const inline: InlineFailure[] = [];
   const groups: SummaryGroup[] = [];
   let counts = emptyCounts();
@@ -339,7 +337,7 @@ export const jsTestAdapter: Adapter = {
     return score;
   },
 
-  parse(lines: readonly CapturedLine[], command: readonly string[] = []): AdapterResult {
+  parse(lines: LineSource, command: readonly string[] = []): AdapterResult {
     const result = isSpecStream(lines)
       ? parseNodeSpec(lines)
       : isCompactStream(lines)

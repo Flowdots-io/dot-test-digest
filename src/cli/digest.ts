@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { loadConfig } from "../config/load.js";
 import { digestRun, parsesFailure, type DigestSettings } from "../pipeline.js";
-import type { CapturedLine } from "../runner/capture.js";
+import { LogLineSink } from "../runner/capture.js";
 import { finishRun } from "../runner/finish-run.js";
 import { RawLogWriter } from "../runner/raw-log.js";
 import { resolveScopeId } from "../state/tdd-gate.js";
@@ -76,25 +76,39 @@ function parseDigestArgs(args: readonly string[]): DigestArgs {
   return { input, ...parsed };
 }
 
-async function readStream(stream: NodeJS.ReadableStream): Promise<string> {
-  const chunks: Buffer[] = [];
-  for await (const chunk of stream) chunks.push(typeof chunk === "string" ? Buffer.from(chunk) : chunk);
-  return Buffer.concat(chunks).toString("utf8");
+const READ_CHUNK_BYTES = 1024 * 1024;
+
+async function* streamChunks(stream: NodeJS.ReadableStream): AsyncGenerator<Buffer> {
+  for await (const chunk of stream) yield typeof chunk === "string" ? Buffer.from(chunk) : chunk;
 }
 
-function readFile(file: string, cwd: string): string {
+function cannotRead(file: string, error: unknown): NoInputError {
+  const reason = (error as NodeJS.ErrnoException).code ?? (error instanceof Error ? error.message : String(error));
+  return new NoInputError(`cannot read ${file}: ${reason}`);
+}
+
+async function* fileChunks(file: string, cwd: string): AsyncGenerator<Buffer> {
+  let fd: number;
   try {
-    return fs.readFileSync(path.resolve(cwd, file), "utf8");
+    fd = fs.openSync(path.resolve(cwd, file), "r");
   } catch (error) {
-    const reason = (error as NodeJS.ErrnoException).code ?? (error instanceof Error ? error.message : String(error));
-    throw new NoInputError(`cannot read ${file}: ${reason}`);
+    throw cannotRead(file, error);
   }
-}
-
-function linesOf(text: string): CapturedLine[] {
-  const texts = text.split("\n");
-  if (texts.at(-1) === "") texts.pop();
-  return texts.map((line, index) => ({ stream: "stdout", text: line, line: index + 1 }));
+  try {
+    const buffer = Buffer.allocUnsafe(READ_CHUNK_BYTES);
+    for (;;) {
+      let read: number;
+      try {
+        read = fs.readSync(fd, buffer);
+      } catch (error) {
+        throw cannotRead(file, error);
+      }
+      if (read === 0) return;
+      yield Buffer.from(buffer.subarray(0, read));
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 /**
@@ -104,14 +118,13 @@ function linesOf(text: string): CapturedLine[] {
  */
 export const runDigest: Subcommand = async (args, context) => {
   const flags = parseDigestArgs(args);
-  let text: string;
-  if (flags.input === STDIN) {
-    if (context.stdinIsTTY) throw new UsageError('no input: pipe a log into "digest -"');
-    text = await readStream(context.stdin);
-  } else {
-    text = readFile(flags.input, context.cwd);
-  }
-  if (text === "") throw new UsageError("input is empty");
+  if (flags.input === STDIN && context.stdinIsTTY) throw new UsageError('no input: pipe a log into "digest -"');
+  const chunks = (flags.input === STDIN ? streamChunks(context.stdin) : fileChunks(flags.input, context.cwd))[
+    Symbol.asyncIterator
+  ]();
+  let first = await chunks.next();
+  while (first.done !== true && first.value.length === 0) first = await chunks.next();
+  if (first.done === true) throw new UsageError("input is empty");
 
   const config = loadConfig({ cwd: context.cwd, env: context.env });
   for (const warning of config.warnings) context.warn(warning);
@@ -127,11 +140,14 @@ export const runDigest: Subcommand = async (args, context) => {
   };
 
   const createdAt = new Date().toISOString();
+  // Streamed into a new log, so the input is never held whole.
   const rawLog = new RawLogWriter({ dir: context.logDir });
-  rawLog.write(text.endsWith("\n") ? text : `${text}\n`);
+  const sink = new LogLineSink(rawLog, context.lineSources);
+  sink.write("stdout", first.value);
+  for (let next = await chunks.next(); next.done !== true; next = await chunks.next()) sink.write("stdout", next.value);
+  const lines = sink.end();
   rawLog.close();
 
-  const lines = linesOf(text);
   const outcome = await digestRun({
     output: {
       lines,
