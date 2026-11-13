@@ -4,7 +4,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 ## Baseline preconditions
 
-- Node >= 20 on `PATH`. The numbers in these files were measured on Node 22.23.4, `--no-jev`; the `node --test` grammar is verified on that version only.
+- Node >= 20 on `PATH`. The numbers in these files were measured on Node 22.23.4, `--no-jev`, and re-checked on the 0.2.0 release build (2026-11-13); the `node --test` grammar is verified on that version only. Sizes move with the length of the run's `home/` path.
 - `V=.claude/skills/verify/verify.sh; RUN=$($V launch)`, then `$V doctor $RUN` must show the commit under test. Run `$V cleanup $RUN` at the end.
 - Every drive adds `--no-jev` (a subcommand drive such as `show last` gets none, since the subcommand must be the first word and only `digest` can call Jev; a `digest` drive gets `--no-jev` appended after its arguments) and uses the run's own `DOT_TEST_DIGEST_HOME`. Gear 1 (the Jev API) is never exercised here: it needs `TYPESAFE_API_KEY` and the network (see "Not covered").
 - Fixtures: `node-cart` (`node --test`, 6 tests in `cart.test.js`: 2 pass, 4 fail), `tsc-small` (5 type errors in 2 files), `vitest-cart` (29 vitest tests, 5 fail). They are copied per run; edit the copy only.
@@ -25,7 +25,7 @@ This directory is the maintained source for verifying the user-facing behavior o
 
 ### Not covered (report under Not verified)
 
-Gear 1 (Jev, `--retry-flakes`), the pytest, `cargo`, `go test`, jest, Playwright and eslint grammars (fixtures only, never run against a real project), Node versions other than the one `doctor` prints, Windows.
+Gear 1 (Jev, `--retry-flakes`, and Gear 1 under `digest`), the pytest, `cargo`, `go test`, jest, Playwright and eslint grammars and their `rerun` forms (fixtures only, never run against a real project), Node versions other than the one `doctor` prints, Windows, a real MCP client (the journeys pipe JSON-RPC lines by hand; the tests use the SDK's client), and the Claude Code hook (not built).
 
 ## Feature entry contract
 
