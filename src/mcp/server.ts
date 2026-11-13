@@ -22,6 +22,14 @@ function result(outcome: ToolOutcome): CallToolResult {
 export async function serveMcp(options: ToolsOptions): Promise<void> {
   const tools = new McpTools(options);
   const server = new McpServer({ name: "dot-test-digest", version: VERSION });
+  const inFlight = new Set<Promise<unknown>>();
+  /** Calls still running when stdin ends are answered before the server closes (a client may pipe its requests in). */
+  const tracked = (outcome: ToolOutcome | Promise<ToolOutcome>): Promise<CallToolResult> => {
+    const call = Promise.resolve(outcome).then(result);
+    inFlight.add(call);
+    void call.finally(() => inFlight.delete(call)).catch(() => {});
+    return call;
+  };
 
   server.registerTool(
     "run_tests",
@@ -39,7 +47,7 @@ export async function serveMcp(options: ToolsOptions): Promise<void> {
       },
       outputSchema: { run_id: z.string(), status: z.string(), exit_code: z.number().int() },
     },
-    async (args) => result(await tools.runTests(args)),
+    (args) => tracked(tools.runTests(args)),
   );
   server.registerTool(
     "show_log",
@@ -47,7 +55,7 @@ export async function serveMcp(options: ToolsOptions): Promise<void> {
       description: "Print a run's raw log, or a range (L<a>-L<b>, <a>-<b>, L<a>) or a cluster's lines of it.",
       inputSchema: { run: runRef, selector: z.string().optional() },
     },
-    async (args) => result(await tools.showLog(args)),
+    (args) => tracked(tools.showLog(args)),
   );
   server.registerTool(
     "replay",
@@ -55,7 +63,7 @@ export async function serveMcp(options: ToolsOptions): Promise<void> {
       description: "Print the digest of a recorded run again, without running anything.",
       inputSchema: { run: runRef, format: OutputFormatSchema.optional(), max_clusters: maxClusters, context_lines: contextLines },
     },
-    async (args) => result(await tools.replay(args)),
+    (args) => tracked(tools.replay(args)),
   );
   server.registerTool(
     "list_runs",
@@ -63,7 +71,7 @@ export async function serveMcp(options: ToolsOptions): Promise<void> {
       description: "The newest runs of this directory, one per line: <run_id> <status> <created_at> <command>.",
       inputSchema: { limit: z.number().int().min(1).max(50).optional().describe("default 10") },
     },
-    async (args) => result(tools.listRuns(args)),
+    (args) => tracked(tools.listRuns(args)),
   );
 
   const stdinEnded = new Promise<void>((resolve) => {
@@ -72,5 +80,8 @@ export async function serveMcp(options: ToolsOptions): Promise<void> {
   });
   await server.connect(new StdioServerTransport());
   await stdinEnded;
+  while (inFlight.size > 0) await Promise.allSettled([...inFlight]);
+  // The SDK writes a result a few promise turns after its handler settles; a macrotask runs after all of them.
+  await new Promise((resolve) => setImmediate(resolve));
   await server.close();
 }
