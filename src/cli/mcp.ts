@@ -31,6 +31,12 @@ export const runMcp: Subcommand = async (args, context) => {
   const config = loadConfig({ cwd: context.cwd, env: context.env });
   for (const warning of config.warnings) context.warn(warning);
   const { serveMcp } = await import("../mcp/server.js");
-  await serveMcp({ allow: [...config.values["mcp.allow"], ...allow], root: context.cwd, logDir: context.logDir, env: context.env, warn: context.warn });
+  await serveMcp({
+    allow: [...config.values["mcp.allow"], ...allow],
+    root: context.cwd,
+    logDir: context.logDir,
+    env: context.env,
+    stderr: (text) => process.stderr.write(text),
+  });
   return 0;
 };
