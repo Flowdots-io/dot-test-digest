@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { useBuiltCli } from "./helpers/built-cli.js";
 import { hermeticEnv, markRepositoryRoot } from "./helpers/hermetic-env.js";
 import { startMcpServer, type McpServerProcess } from "./helpers/mcp-client.js";
-import { tempDir } from "./helpers/node-cart.js";
+import { runMain, tempDir } from "./helpers/node-cart.js";
 
 const FIXTURE = path.join(process.cwd(), "tests", "fixtures", "node-cart");
 const SPAWNED = { timeout: 30_000 };
@@ -242,5 +242,61 @@ describe("run_tests runs only commands the user allowed", () => {
     expect(result.isError).toBe(true);
     expect(textOf(result)).toMatch(/^timed out after 1s/);
     expect(sleepers()).toEqual([]);
+  });
+});
+
+describe("show_log, replay and list_runs give an agent the rest of the story", () => {
+  async function cartRun(): Promise<{ where: Setup; server: McpServerProcess; runId: string }> {
+    const where = setup();
+    const server = await serve(where, ["--allow", "node --test"]);
+    const run = await call(server, "run_tests", { command: ["node", "--test", "cart.test.js"] });
+    return { where, server, runId: String(run.structuredContent?.["run_id"]) };
+  }
+
+  it("show_log returns a range", SPAWNED, async () => {
+    const { where, server, runId } = await cartRun();
+    const result = await call(server, "show_log", { run: "last", selector: "L15-L17" });
+    expect(result.isError).toBe(false);
+    const log = fs.readFileSync(path.join(where.home, "logs", `${runId}.log`), "utf8").split("\n");
+    expect(textOf(result)).toBe(`${log.slice(14, 17).join("\n")}\n`);
+  });
+
+  it("replay returns JSON", SPAWNED, async () => {
+    const { server } = await cartRun();
+    const result = await call(server, "replay", { run: "last", format: "json", max_clusters: 15 });
+    expect(result.isError).toBe(false);
+    expect((JSON.parse(textOf(result)) as { summary: { total_clusters: number } }).summary.total_clusters).toBe(4);
+  });
+
+  it("list_runs is newest first", SPAWNED, async () => {
+    const server = await serve(setup(), ["--allow", "node --test"]);
+    const passing = await call(server, "run_tests", { command: PASSING });
+    const cart = await call(server, "run_tests", { command: ["node", "--test", "cart.test.js"] });
+    const result = await call(server, "list_runs", { limit: 5 });
+    expect(result.isError).toBe(false);
+    const lines = textOf(result).trimEnd().split("\n");
+    const iso = String.raw`\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z`;
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(new RegExp(`^${String(cart.structuredContent?.["run_id"])} FAIL ${iso} node --test cart\\.test\\.js$`));
+    expect(lines[1]).toMatch(new RegExp(`^${String(passing.structuredContent?.["run_id"])} PASS ${iso} node --test passing\\.test\\.js$`));
+  });
+
+  it("A bad reference is an error result", SPAWNED, async () => {
+    const server = await serve(setup());
+    const result = await call(server, "show_log", { run: "run_zzzzzz" });
+    expect(result.isError).toBe(true);
+    expect(textOf(result)).toBe("no such run: run_zzzzzz");
+  });
+});
+
+describe("init can print the MCP client entry", () => {
+  it("The MCP client snippet", async () => {
+    const dir = tempDir("dtd-mcp-snippet-");
+    const run = await runMain(["init", "--print-mcp-config"], { cwd: dir, home: tempDir("dtd-mcp-snippet-home-") });
+    expect(run.code).toBe(0);
+    expect(run.stdout).toBe(
+      `${JSON.stringify({ mcpServers: { "dot-test-digest": { command: "dot-test-digest", args: ["mcp"] } } }, null, 2)}\n`,
+    );
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
