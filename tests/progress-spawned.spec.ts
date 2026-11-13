@@ -24,7 +24,7 @@ describe("--progress (spawned)", () => {
 
   it("Progress never goes to stdout", async () => {
     const run = await cli.run([], ["--no-jev", "--progress", "--format=json", "--", ...SLOW_CHILD], cli.freshDir("json-"), FAST_BEATS);
+    expect(run.code, run.stderr).toBe(0);
     expect(() => JSON.parse(run.stdout) as unknown).not.toThrow();
-    expect(run.code).toBe(0);
   }, 30_000);
 });
