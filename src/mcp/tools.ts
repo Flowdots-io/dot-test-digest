@@ -1,5 +1,13 @@
 import fs from "node:fs";
+import { Readable } from "node:stream";
+import type { Subcommand, SubcommandContext } from "../cli/dispatch.js";
+import { CliError } from "../cli/errors.js";
+import { runReplay } from "../cli/replay.js";
+import { newestFirst } from "../cli/run-ref.js";
 import { runWrapped } from "../cli/run.js";
+import { runShow } from "../cli/show.js";
+import { loadRunRecords } from "../runner/run-record.js";
+import type { OutputFormat, TddPhase } from "../types/schema.js";
 import { isAllowed, notAllowedMessage, resolveCwd, type ArgvPrefix } from "./allowlist.js";
 
 /** What a tool call returns, before the SDK wraps it. */
@@ -20,26 +28,39 @@ export interface ToolsOptions {
   stderr: (text: string) => void;
 }
 
-export interface RunTestsArgs {
+/** The digest options a tool passes on as the CLI's flags. */
+interface DigestFlags {
+  format?: OutputFormat | undefined;
+  max_clusters?: number | undefined;
+  context_lines?: number | undefined;
+  tdd_phase?: TddPhase | undefined;
+}
+
+export interface RunTestsArgs extends DigestFlags {
   command: string[];
   cwd?: string | undefined;
   format?: "compact-md" | "json" | undefined;
-  max_clusters?: number | undefined;
-  context_lines?: number | undefined;
-  tdd_phase?: "red" | "green" | "refactor" | "none" | undefined;
   timeout_seconds?: number | undefined;
 }
 
-export const DEFAULT_TIMEOUT_SECONDS = 300;
+export interface ShowLogArgs {
+  run: string;
+  selector?: string | undefined;
+}
 
-const NOT_YET: ToolOutcome = { text: "not available in this version", isError: true };
+export interface ReplayArgs extends Omit<DigestFlags, "tdd_phase"> {
+  run: string;
+}
+
+export const DEFAULT_TIMEOUT_SECONDS = 300;
+export const DEFAULT_LIST_LIMIT = 10;
 
 function failure(text: string): ToolOutcome {
   return { text, isError: true };
 }
 
 /** The CLI flags a `run_tests` call sets; the rest come from the configuration, as for a wrapped run. */
-function flagsOf(args: RunTestsArgs): string[] {
+function flagsOf(args: DigestFlags): string[] {
   const flags: [string, string | number | undefined][] = [
     ["--format", args.format],
     ["--max-clusters", args.max_clusters],
@@ -47,6 +68,13 @@ function flagsOf(args: RunTestsArgs): string[] {
     ["--tdd-phase", args.tdd_phase],
   ];
   return flags.flatMap(([flag, value]) => (value === undefined ? [] : [`${flag}=${value}`]));
+}
+
+/** A run reference or a selector never starts with `-`: the subcommand would read it as a flag. */
+function positionals(values: readonly (string | undefined)[]): string[] | ToolOutcome {
+  const given = values.filter((value): value is string => value !== undefined);
+  const flag = given.find((value) => value.startsWith("-"));
+  return flag === undefined ? given : failure(`invalid argument ${JSON.stringify(flag)}: it must not start with -`);
 }
 
 export class McpTools {
@@ -91,15 +119,47 @@ export class McpTools {
     return { text: stdout, isError: false, structured };
   }
 
-  showLog(_args: object): ToolOutcome {
-    return NOT_YET;
+  showLog(args: ShowLogArgs): Promise<ToolOutcome> {
+    const words = positionals([args.run, args.selector]);
+    return Array.isArray(words) ? this.subcommand(runShow, words) : Promise.resolve(words);
   }
 
-  async replay(_args: object): Promise<ToolOutcome> {
-    return NOT_YET;
+  replay(args: ReplayArgs): Promise<ToolOutcome> {
+    const words = positionals([args.run]);
+    return Array.isArray(words) ? this.subcommand(runReplay, [...words, ...flagsOf(args)]) : Promise.resolve(words);
   }
 
-  listRuns(_args: object): ToolOutcome {
-    return NOT_YET;
+  /** The newest runs recorded in the server's directory, one `<run_id> <status> <created_at> <command>` line each. */
+  listRuns(args: { limit?: number | undefined }): ToolOutcome {
+    const lines = loadRunRecords(this.options.logDir)
+      .filter((record) => record.cwd === this.options.root)
+      .sort(newestFirst)
+      .slice(0, args.limit ?? DEFAULT_LIST_LIMIT)
+      .map((record) => `${record.run_id} ${record.status} ${record.created_at} ${record.command.join(" ")}`.trimEnd());
+    return { text: lines.length === 0 ? "no run recorded for this directory\n" : `${lines.join("\n")}\n`, isError: false };
+  }
+
+  /** What the subcommand prints, as `dot-test-digest <name> <args>` in the server's directory would; its usage or not-found error is an error result. */
+  private async subcommand(handler: Subcommand, args: readonly string[]): Promise<ToolOutcome> {
+    let text = "";
+    const context: SubcommandContext = {
+      logDir: this.options.logDir,
+      cwd: this.options.root,
+      env: this.options.env,
+      stdoutIsTTY: false,
+      stdinIsTTY: false,
+      // stdin carries the protocol; neither subcommand reads it.
+      stdin: Readable.from([]),
+      finish: {},
+      write: (chunk) => (text += chunk),
+      warn: (line) => this.options.stderr(`${line}\n`),
+    };
+    try {
+      await handler(args, context);
+    } catch (error) {
+      if (error instanceof CliError) return failure(error.message);
+      throw error;
+    }
+    return { text, isError: false };
   }
 }

@@ -47,7 +47,7 @@ export async function serveMcp(options: ToolsOptions): Promise<void> {
       description: "Print a run's raw log, or a range (L<a>-L<b>, <a>-<b>, L<a>) or a cluster's lines of it.",
       inputSchema: { run: runRef, selector: z.string().optional() },
     },
-    async (args) => result(tools.showLog(args)),
+    async (args) => result(await tools.showLog(args)),
   );
   server.registerTool(
     "replay",
