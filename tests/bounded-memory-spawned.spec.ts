@@ -1,71 +1,17 @@
-import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { hermeticEnv, markRepositoryRoot } from "./helpers/hermetic-env.js";
+import { describe, expect, it } from "vitest";
+import { useBuiltCli } from "./helpers/built-cli.js";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
-const CACHE = path.join(ROOT, "node_modules", ".cache");
 const TAP_CART = path.join(ROOT, "tests", "fixtures", "logs", "node-tap-cart.log");
 const SMALL_HEAP = "--max-old-space-size=96";
 const FOUR_HUNDRED_THOUSAND =
   "for(let i=0;i<400000;i++)console.log('line '+i+' some padding text to make it longer than usual')";
 
-let build: string;
-let work: string;
-
-beforeAll(() => {
-  fs.mkdirSync(CACHE, { recursive: true });
-  build = fs.mkdtempSync(path.join(CACHE, "bounded-memory-"));
-  fs.writeFileSync(path.join(build, "package.json"), '{"type":"module"}');
-  const tsc = spawnSync(path.join(ROOT, "node_modules", ".bin", "tsc"), ["-p", "tsconfig.json", "--outDir", build], {
-    cwd: ROOT,
-    encoding: "utf8",
-  });
-  expect(tsc.status, tsc.stdout).toBe(0);
-  work = fs.mkdtempSync(path.join(tmpdir(), "dtd-bounded-memory-"));
-}, 60_000);
-
-afterAll(() => {
-  fs.rmSync(build, { recursive: true, force: true });
-  fs.rmSync(work, { recursive: true, force: true });
-});
-
-interface Spawned {
-  code: number | null;
-  stdout: string;
-  stderr: string;
-  ms: number;
-}
-
-/** Runs the built CLI in `cwd` with a fresh home under it; `nodeFlags` go to the node that runs the CLI. */
-function runBuilt(nodeFlags: readonly string[], args: readonly string[], cwd: string): Promise<Spawned> {
-  const startedAt = Date.now();
-  return new Promise((done, fail) => {
-    const child = spawn(process.execPath, [...nodeFlags, path.join(build, "index.js"), ...args], {
-      cwd,
-      stdio: "pipe",
-      env: {
-        ...hermeticEnv(),
-        DOT_TEST_DIGEST_HOME: path.join(cwd, "home"),
-        XDG_CONFIG_HOME: path.join(cwd, "config-home"),
-      },
-    });
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8").on("data", (chunk: string) => (stdout += chunk));
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => (stderr += chunk));
-    child.on("error", fail);
-    child.on("close", (code) => done({ code, stdout, stderr, ms: Date.now() - startedAt }));
-  });
-}
-
-function freshDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(work, prefix));
-  markRepositoryRoot(dir);
-  return dir;
-}
+const cli = useBuiltCli("bounded-memory");
+const runBuilt = cli.run;
+const freshDir = cli.freshDir;
 
 function countLines(file: string): number {
   const buffer = fs.readFileSync(file);
