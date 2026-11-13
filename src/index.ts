@@ -28,10 +28,14 @@ function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefau
   return { config, flagDefaults: { maxClusters, contextLines, format, noJev, retryFlakes, color, progress } };
 }
 
-/** `DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS` shortens the heartbeat interval for tests; anything but a positive integer is ignored. */
+/** Node runs a timer whose delay is above this every 1 ms. */
+const MAX_TIMER_MS = 2_147_483_647;
+
+/** `DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS` shortens the heartbeat interval for tests; anything but a positive integer up to `MAX_TIMER_MS` is ignored. */
 function progressInterval(env: NodeJS.ProcessEnv): number {
   const raw = env["DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS"] ?? "";
-  return /^[1-9]\d*$/.test(raw) ? Number(raw) : PROGRESS_INTERVAL_MS;
+  const value = /^[1-9]\d*$/.test(raw) ? Number(raw) : Number.NaN;
+  return value <= MAX_TIMER_MS ? value : PROGRESS_INTERVAL_MS;
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
@@ -174,13 +178,14 @@ function isEntrypoint(entry: string | undefined): boolean {
   }
 }
 
-/** A reader that closed stdout early (`| head`) gets no digest; the exit code and the log stay (INV-3). */
+/** A reader that closed stdout (`| head`) or stderr early misses that stream; the exit code and the log stay (INV-3). */
 function ignoreClosedPipe(error: NodeJS.ErrnoException): void {
   if (error.code !== "EPIPE") throw error;
 }
 
 if (isEntrypoint(process.argv[1])) {
   process.stdout.on("error", ignoreClosedPipe);
+  process.stderr.on("error", ignoreClosedPipe);
   void main(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });
