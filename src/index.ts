@@ -4,6 +4,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { runGear0, type AdapterCounts } from "./adapters/index.js";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
+import { AUTO_PRUNE_MAX_FILES, pruneCache, type PruneOptions, type PruneResult } from "./cache/prune.js";
 import { runSubcommand } from "./cli/dispatch.js";
 import { EX_SOFTWARE } from "./cli/errors.js";
 import { isSubcommandName } from "./cli/subcommands.js";
@@ -14,7 +15,7 @@ import { normalizeLine } from "./pruner/ansi-stripper.js";
 import { dedupeFailures, type DedupeResult, type RawFailure } from "./pruner/cluster-dedup.js";
 import { canonicalTestId, uniqueFailures } from "./pruner/failure-identity.js";
 import { runChild, type CapturedLine } from "./runner/capture.js";
-import { RawLogWriter } from "./runner/raw-log.js";
+import { RawLogWriter, cacheRoot } from "./runner/raw-log.js";
 import { recordClusters, recordPathFor, writeRunRecord, type RunRecord } from "./runner/run-record.js";
 import {
   evaluatePhase,
@@ -51,6 +52,8 @@ export interface MainDeps {
   env?: NodeJS.ProcessEnv;
   /** Whether stdout is a terminal, for `--color=auto`; defaults to `process.stdout.isTTY`. */
   stdoutIsTTY?: boolean;
+  /** Prunes the cache after the digest is printed; tests replace it to simulate a failure. */
+  prune?: (home: string, options: PruneOptions, now: number) => PruneResult;
 }
 
 /** `auto` colors a terminal unless `NO_COLOR` is set or `TERM` is `dumb`. */
@@ -72,9 +75,14 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
   const env = deps.env ?? process.env;
   if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest, env);
 
+  let config: LoadedConfig | undefined;
   let parsed;
   try {
-    parsed = parseArgs(argv, () => configureRun(env).flagDefaults);
+    parsed = parseArgs(argv, () => {
+      const configured = configureRun(env);
+      config = configured.config;
+      return configured.flagDefaults;
+    });
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(`${error.message}\n`);
@@ -277,6 +285,27 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`dot-test-digest: could not write the run record: ${message}\n`);
+    }
+    const retention = config?.values;
+    if (retention?.["retention.auto"] === true) {
+      // INV-3: pruning is housekeeping; a failure must not change the exit code.
+      try {
+        (deps.prune ?? pruneCache)(
+          cacheRoot(),
+          {
+            keepRuns: retention["retention.keepRuns"],
+            maxAgeDays: retention["retention.maxAgeDays"],
+            stateMaxAgeDays: retention["retention.stateMaxAgeDays"],
+            currentRunId: rawLog.runId,
+            currentScopeId: scopeId,
+            maxFiles: AUTO_PRUNE_MAX_FILES,
+          },
+          Date.now(),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`dot-test-digest: could not prune the cache: ${message}\n`);
+      }
     }
     return decision.exitCode;
   } catch (error) {

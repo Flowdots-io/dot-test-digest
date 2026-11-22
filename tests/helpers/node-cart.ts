@@ -70,6 +70,8 @@ export interface CartOptions {
   subdir?: string;
   files?: Readonly<Record<string, string>>;
   deps?: MainDeps;
+  /** A prepared cache to run in; a fresh one by default. */
+  home?: string;
 }
 
 export interface CartRun {
@@ -99,7 +101,7 @@ export async function runInCart(
   options: CartOptions = {},
 ): Promise<CartRun> {
   const dir = tempDir("dtd-node-cart-");
-  const home = tempDir("dtd-node-cart-home-");
+  const home = options.home ?? tempDir("dtd-node-cart-home-");
   fs.cpSync(FIXTURE, dir, { recursive: true });
   markRepositoryRoot(dir);
   for (const [relative, contents] of Object.entries(options.files ?? {})) {

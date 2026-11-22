@@ -95,7 +95,8 @@ export interface SettingSpec<K extends SettingKey = SettingKey> {
   kind: Kind<SettingValues[K]>;
   default: SettingValues[K];
   env?: string;
-  userFileOnly?: boolean;
+  /** Why a project file may not set it: the key is then ignored with a warning ending in this reason. */
+  userFileOnly?: string;
   /** `config` prints the line only when a file set it. */
   hiddenWhenDefault?: boolean;
 }
@@ -105,6 +106,8 @@ function setting<K extends SettingKey>(spec: SettingSpec<K>): SettingSpec {
 }
 
 /** In the order `config` prints them. */
+const RETENTION_LIMIT = "retention limits are read from the user config only";
+
 export const SETTINGS: readonly SettingSpec[] = [
   setting({ key: "maxClusters", kind: integer(1, 15), default: 5, env: "DOT_TEST_DIGEST_MAX_CLUSTERS" }),
   setting({ key: "contextLines", kind: integer(0, 5), default: 2, env: "DOT_TEST_DIGEST_CONTEXT_LINES" }),
@@ -114,10 +117,17 @@ export const SETTINGS: readonly SettingSpec[] = [
   setting({ key: "color", kind: oneOf(ColorModeSchema.options), default: "auto", env: "DOT_TEST_DIGEST_COLOR" }),
   setting({ key: "progress", kind: boolean, default: false, env: "DOT_TEST_DIGEST_PROGRESS" }),
   setting({ key: "retention.auto", kind: boolean, default: true, env: "DOT_TEST_DIGEST_PRUNE" }),
-  setting({ key: "retention.keepRuns", kind: integer(0), default: 50 }),
-  setting({ key: "retention.maxAgeDays", kind: integer(0), default: 14 }),
-  setting({ key: "retention.stateMaxAgeDays", kind: integer(0), default: 90 }),
-  setting({ key: "mcp.allow", kind: argvPrefixes, default: [], userFileOnly: true, hiddenWhenDefault: true }),
+  // A limit decides what is deleted across the whole cache, so a cloned repository must not tighten it.
+  setting({ key: "retention.keepRuns", kind: integer(0), default: 50, userFileOnly: RETENTION_LIMIT }),
+  setting({ key: "retention.maxAgeDays", kind: integer(0), default: 14, userFileOnly: RETENTION_LIMIT }),
+  setting({ key: "retention.stateMaxAgeDays", kind: integer(0), default: 90, userFileOnly: RETENTION_LIMIT }),
+  setting({
+    key: "mcp.allow",
+    kind: argvPrefixes,
+    default: [],
+    userFileOnly: "the command allowlist is read from the user config only",
+    hiddenWhenDefault: true,
+  }),
 ];
 
 export const SETTINGS_BY_KEY: ReadonlyMap<string, SettingSpec> = new Map(SETTINGS.map((spec) => [spec.key, spec]));

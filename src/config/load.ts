@@ -125,6 +125,10 @@ export function loadConfig(location: ConfigLocation): LoadedConfig {
       delete object["mcp"];
     }
     for (const [spec, raw] of settingsIn(file, object)) {
+      if (layer === "project" && spec.userFileOnly !== undefined) {
+        warnings.push(`dot-test-digest: ignoring ${spec.key} in ${file}: ${spec.userFileOnly}`);
+        continue;
+      }
       const parsed = spec.kind.fromFile(raw);
       if (!parsed.ok) throw new UsageError(`${file}: ${spec.key} ${parsed.reason}`);
       values[spec.key] = parsed.value;
