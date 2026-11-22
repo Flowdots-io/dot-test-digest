@@ -95,11 +95,16 @@ function isUncounted(envelope: DigestEnvelope): boolean {
   return envelope.status === "PASS" && envelope.execution_gear === "GEAR_0_HEURISTIC_FALLBACK";
 }
 
-export function renderPassLine(envelope: DigestEnvelope): string {
+/** ` in <t>ms`, or nothing when no process was timed (a `digest` of a file). */
+function durationFragment(envelope: DigestEnvelope, timed: boolean): string {
+  return timed ? ` in ${envelope.duration_ms}ms` : "";
+}
+
+export function renderPassLine(envelope: DigestEnvelope, timed = true): string {
   const outcome = isUncounted(envelope)
     ? "exit 0"
     : `${countsFragment(envelope, "passed")}${deltaFragment(envelope)}`;
-  const line = `[${statusLabel(envelope)}] ${outcome} in ${envelope.duration_ms}ms | log: ${shortenPath(envelope.raw_log_path)}`;
+  const line = `[${statusLabel(envelope)}] ${outcome}${durationFragment(envelope, timed)} | log: ${shortenPath(envelope.raw_log_path)}`;
   return truncateBytes(line, PASS_BYTE_CEILING - 1);
 }
 
@@ -138,6 +143,8 @@ export interface RenderContext {
   omitted?: readonly FailureCluster[];
   /** Wrap the header's status word in an SGR color (compact-md only). */
   color?: boolean;
+  /** `false` drops ` in <t>ms` from the header; the default `true` keeps it. */
+  timed?: boolean;
 }
 
 function omittedLabel(cluster: FailureCluster): string {
@@ -161,9 +168,9 @@ const LADDER: readonly ((cluster: FailureCluster) => string)[] = [
   renderOneLine,
 ];
 
-function headerLine(envelope: DigestEnvelope, clusterCount: number): string {
+function headerLine(envelope: DigestEnvelope, clusterCount: number, timed: boolean): string {
   return (
-    `[${statusLabel(envelope)}] ${countsFragment(envelope, "failed")} in ${envelope.duration_ms}ms | ${clusterCount} cluster${clusterCount === 1 ? "" : "s"}` +
+    `[${statusLabel(envelope)}] ${countsFragment(envelope, "failed")}${durationFragment(envelope, timed)} | ${clusterCount} cluster${clusterCount === 1 ? "" : "s"}` +
     ` | log: ${shortenPath(envelope.raw_log_path)}`
   );
 }
@@ -179,13 +186,14 @@ function renderFailBody(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   rawText: string | undefined,
+  timed: boolean,
 ): string {
   for (const renderBlock of rawText === undefined ? LADDER.slice(0, 1) : LADDER) {
-    const { header, body } = renderLevel(envelope, omitted, renderBlock);
+    const { header, body } = renderLevel(envelope, omitted, renderBlock, timed);
     const bounded = truncateBytes(body, FAIL_BODY_BYTES);
     if (rawText === undefined || byteLength(bounded) <= byteLength(rawText) + byteLength(header)) return bounded;
   }
-  const raw = `${headerLine(envelope, (envelope.clusters ?? []).length)}\n${rawText}`;
+  const raw = `${headerLine(envelope, (envelope.clusters ?? []).length, timed)}\n${rawText}`;
   return raw.endsWith("\n") ? raw.slice(0, -1) : raw;
 }
 
@@ -197,6 +205,7 @@ function renderLevel(
   envelope: DigestEnvelope,
   omitted: readonly FailureCluster[],
   renderBlock: (cluster: FailureCluster) => string,
+  timed: boolean,
 ): { header: string; body: string } {
   const clusters = envelope.clusters ?? [];
   const all = [...clusters, ...omitted];
@@ -204,11 +213,11 @@ function renderLevel(
   const footerOf = (count: number): string => (count > 0 ? `\n+${count} more clusters (see log)` : "");
 
   const fixedBytes = (kept: number): number =>
-    byteLength(headerLine(envelope, kept) + footerOf(all.length - kept));
+    byteLength(headerLine(envelope, kept, timed) + footerOf(all.length - kept));
   let kept = clusters.length;
   while (kept > 1 && fixedBytes(kept) + byteLength(blocks.slice(0, kept).join("")) > FAIL_BODY_BYTES) kept -= 1;
 
-  const header = headerLine(envelope, kept);
+  const header = headerLine(envelope, kept, timed);
   const footer = footerOf(all.length - kept);
   const keptBlocks = truncateBytes(blocks.slice(0, kept).join(""), FAIL_BODY_BYTES - byteLength(header + footer));
   let body = `${header}${keptBlocks}${footer}`;
@@ -247,8 +256,8 @@ export function formatEnvelope(
   context: RenderContext = {},
 ): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
-  const { rawText, omitted = [], color = false } = context;
+  const { rawText, omitted = [], color = false, timed = true } = context;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED" || envelope.status === "INVALID_GREEN";
-  const digest = `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, omitted, rawText)}\n`;
+  const digest = `${oneLiner ? renderPassLine(envelope, timed) : renderFailBody(envelope, omitted, rawText, timed)}\n`;
   return color ? colorStatus(digest, envelope.status) : digest;
 }

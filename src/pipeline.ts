@@ -35,12 +35,16 @@ export interface DigestInput {
   command: readonly string[];
   /** Where source windows are read from. */
   repoRoot: string;
+  /** The log came from outside the tool: read source windows only from files under `repoRoot`. */
+  confineWindows?: boolean;
   /** The log the `raw:` pointers name. */
   logPath: string;
   settings: DigestSettings;
   /** The scope's TDD state before this run; `null` prints no delta. */
   previousState: RunState | null;
   color: boolean;
+  /** `false` when no process was timed (a `digest` of a file): the header drops ` in <t>ms`. */
+  timed?: boolean;
   client?: JevAsker;
 }
 
@@ -74,9 +78,18 @@ interface Analysis {
   rawText: string;
 }
 
+function normalized(lines: readonly CapturedLine[]): CapturedLine[] {
+  return lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
+}
+
+/** Whether a grammar finds at least one failure in the lines: what a `digest` without `--exit-code` exits on. */
+export function parsesFailure(lines: readonly CapturedLine[]): boolean {
+  return (runGear0(normalized(lines))?.failures.length ?? 0) > 0;
+}
+
 async function analyze(output: CapturedOutput, input: DigestInput): Promise<Analysis> {
   const { settings, repoRoot } = input;
-  const lines = output.lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
+  const lines = normalized(output.lines);
   const gear0 = runGear0(lines);
   // A linter that fails on warnings alone (`--max-warnings=0`) has only its warnings to show.
   const reported =
@@ -94,6 +107,7 @@ async function analyze(output: CapturedOutput, input: DigestInput): Promise<Anal
           contextLines: settings.contextLines,
           keep: settings.maxClusters,
           logPath: input.logPath,
+          ...(input.confineWindows === true ? { windowRoot: repoRoot } : {}),
         });
   let gear: ExecutionGear = gear0 === null ? "GEAR_0_HEURISTIC_FALLBACK" : "GEAR_0_GRAMMAR";
   let retryWanted = false;
@@ -173,6 +187,7 @@ export async function digestRun(input: DigestInput): Promise<DigestOutcome> {
     omitted: run.ranked.omitted,
     rawText: run.rawText,
     color: input.color,
+    timed: input.timed !== false,
   });
 
   return {

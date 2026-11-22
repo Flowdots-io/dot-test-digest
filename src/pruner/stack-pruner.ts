@@ -132,17 +132,30 @@ export function topRepoFrame(
   return null;
 }
 
+/** Whether `file`, symlinks resolved, is `root` or below it; a path that does not resolve is not. */
+function isInside(file: string, root: string): boolean {
+  try {
+    const relative = path.relative(fs.realpathSync(root), fs.realpathSync(file));
+    return !relative.startsWith("..") && !path.isAbsolute(relative);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Reads ±contextLines around `line` from `file`, marking the target with `>`.
- * Format: `28 >   return parts.split('.')`.
+ * Format: `28 >   return parts.split('.')`. With `confineTo`, a file outside that directory (by absolute path, `..` or a
+ * symlink) gives no window: a log the tool did not produce must not make it print arbitrary files.
  */
 export function readSignalWindow(
   file: string,
   line: number,
   contextLines = 2,
   repoRoot = process.cwd(),
+  confineTo?: string,
 ): string {
   const absolute = path.isAbsolute(file) ? file : path.resolve(repoRoot, file);
+  if (confineTo !== undefined && !isInside(absolute, confineTo)) return "";
   let source: string[];
   try {
     source = fs.readFileSync(absolute, "utf8").split("\n");

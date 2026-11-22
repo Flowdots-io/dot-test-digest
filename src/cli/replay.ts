@@ -94,6 +94,9 @@ export const runReplay: Subcommand = async (args, context) => {
     },
     command: record.command,
     repoRoot: record.cwd,
+    // A digest's log came from outside the tool, and no process was timed.
+    confineWindows: record.source === "digest",
+    timed: record.source !== "digest",
     logPath: run.logPath,
     settings,
     previousState: null,

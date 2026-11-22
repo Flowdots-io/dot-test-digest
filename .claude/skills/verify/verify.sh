@@ -49,14 +49,17 @@ case "$cmd" in
     out="$D/evidence/$label"
     mkdir -p "$out"
     printf '%s\n' "(cd $fixture; dot-test-digest $*)" >"$out/command.txt"
-    # A subcommand must be the first word, so it gets no --no-jev in front (none of them calls Jev uninvited).
+    # A subcommand must be the first word, so it gets no --no-jev in front. Only digest can call Jev (a non-zero
+    # --exit-code on a long log no grammar reads), so it gets --no-jev after its own arguments.
+    offline=(); trailing=()
     case "${1:-}" in
-      show|replay|digest|gc|stats|doctor|init|mcp|config|schema) offline=() ;;
+      digest) trailing=(--no-jev) ;;
+      show|replay|gc|stats|doctor|init|mcp|config|schema) ;;
       *) offline=(--no-jev) ;;
     esac
     set +e
     (cd "$cwd" && DOT_TEST_DIGEST_HOME="$D/home" XDG_CONFIG_HOME="$D/xdg" PATH="$REPO/node_modules/.bin:$PATH" \
-       node "$D/build/index.js" "${offline[@]}" "$@" >"$out/stdout.txt" 2>"$out/stderr.txt")
+       node "$D/build/index.js" "${offline[@]}" "$@" "${trailing[@]}" >"$out/stdout.txt" 2>"$out/stderr.txt")
     echo $? >"$out/exit.txt"
     set -e
     echo "== $label: exit $(cat "$out/exit.txt"), $(wc -c <"$out/stdout.txt") bytes on stdout"
