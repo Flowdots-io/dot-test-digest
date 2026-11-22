@@ -14,6 +14,7 @@ export const DigestStatusSchema = z.enum([
   "FAIL",
   "VALID_RED",
   "INVALID_RED",
+  "INVALID_GREEN",
   "REGRESSION_DETECTED",
   "BUILD_ERROR",
 ]);
@@ -44,6 +45,7 @@ export const CliOptionsSchema = z.object({
   scopeId: z.string().min(1).max(64).optional(),
   noJev: z.boolean().default(false),
   retryFlakes: z.boolean().default(false),
+  allowNoTests: z.boolean().default(false),
 });
 export type CliOptions = z.infer<typeof CliOptionsSchema>;
 
@@ -70,6 +72,8 @@ export const SummarySchema = z.object({
   passed: z.number().int().min(0),
   failed: z.number().int().min(0),
   skipped: z.number().int().min(0),
+  /** Present only when nonzero. */
+  warnings: z.number().int().min(1).optional(),
   total_clusters: z.number().int().min(0),
 });
 

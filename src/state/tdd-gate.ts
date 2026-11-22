@@ -38,6 +38,9 @@ export interface PhaseArgs {
   previousState: RunState | null;
   failedTests: readonly string[];
   passed: number;
+  failed: number;
+  /** `--allow-no-tests`: a green or refactor run may recognize no test at all. */
+  allowNoTests: boolean;
   /** Raw failure text kept for runners we could not parse (optional). */
   evidence?: string;
 }
@@ -105,6 +108,19 @@ export function computeDelta(
   };
 }
 
+const NO_TESTS: PhaseDecision = {
+  status: "INVALID_GREEN",
+  exitCode: EX_USAGE,
+  message:
+    "Command exited 0 but no passing test was recognized; a green run must run at least one test (pass --allow-no-tests to accept it).",
+  recordBaseline: false,
+};
+
+/** INV-7: an exit-0 green or refactor run proves nothing unless it ran a test. Skipped tests do not count. */
+function ranNoTest(args: PhaseArgs): boolean {
+  return !args.allowNoTests && args.passed === 0 && args.failed === 0;
+}
+
 export function evaluatePhase(args: PhaseArgs): PhaseDecision {
   const delta = computeDelta(args.previousState, args.failedTests);
   const withDelta = (decision: PhaseDecision): PhaseDecision =>
@@ -149,11 +165,13 @@ export function evaluatePhase(args: PhaseArgs): PhaseDecision {
     }
 
     case "green": {
+      if (args.childExitCode === 0 && ranNoTest(args)) return NO_TESTS;
       if (args.childExitCode === 0) return withDelta({ status: "PASS", exitCode: 0, recordBaseline: false });
       return withDelta({ status: "FAIL", exitCode: args.childExitCode, recordBaseline: false });
     }
 
     case "refactor": {
+      if (args.childExitCode === 0 && ranNoTest(args)) return NO_TESTS;
       if (args.childExitCode === 0) return withDelta({ status: "PASS", exitCode: 0, recordBaseline: false });
       return withDelta({
         status: "REGRESSION_DETECTED",

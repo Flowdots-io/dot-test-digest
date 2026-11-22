@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { realpathSync } from "node:fs";
 import { pathToFileURL } from "node:url";
-import { runGear0 } from "./adapters/index.js";
+import { runGear0, type AdapterCounts } from "./adapters/index.js";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
 import { buildEnvelope, formatEnvelope } from "./formatters/envelope.js";
 import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gears/gear1-jev.js";
@@ -28,7 +28,7 @@ interface Attempt {
   gear: ExecutionGear;
   failures: RawFailure[];
   ranked: DedupeResult;
-  counts: { passed: number; failed: number; skipped: number };
+  counts: AdapterCounts;
   exitCode: number;
   signal: string | null;
   durationMs: number;
@@ -84,11 +84,18 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     const capture = await runChild(command, { rawLog, cwd: repoRoot });
     const lines = capture.lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
     const gear0 = runGear0(lines);
+    // A linter that fails on warnings alone (`--max-warnings=0`) has only its warnings to show.
+    const reported =
+      gear0 === null
+        ? []
+        : gear0.failures.length === 0 && capture.exitCode !== 0
+          ? (gear0.warnings ?? [])
+          : gear0.failures;
 
     let ranked: DedupeResult =
       gear0 === null
         ? { kept: [], omitted: [] }
-        : dedupeFailures(gear0.failures, {
+        : dedupeFailures(reported, {
             repoRoot,
             contextLines: options.contextLines,
             keep: options.maxClusters,
@@ -117,7 +124,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     return {
       lines,
       gear,
-      failures: uniqueFailures(gear0?.failures ?? []),
+      failures: uniqueFailures(reported),
       ranked,
       counts: gear0?.counts ?? { passed: 0, failed: 0, skipped: 0 },
       exitCode: capture.exitCode,
@@ -151,13 +158,16 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       previousState,
       failedTests,
       passed: run.counts.passed,
+      failed: run.counts.failed,
+      allowNoTests: options.allowNoTests,
       // A runner we cannot parse may still leave behavioral evidence in the log.
       evidence: run.ranked.kept
         .map((cluster) => `${cluster.message}\n${cluster.signal_window}`)
         .join("\n"),
     });
 
-    if (options.tddPhase !== "none") {
+    // An INVALID_GREEN run proved nothing, so it leaves the state as it was.
+    if (options.tddPhase !== "none" && decision.status !== "INVALID_GREEN") {
       const nextState: RunState = {
         version: 1,
         scope_id: scopeId,
@@ -217,7 +227,13 @@ function isEntrypoint(entry: string | undefined): boolean {
   }
 }
 
+/** A reader that closed stdout early (`| head`) gets no digest; the exit code and the log stay (INV-3). */
+function ignoreClosedPipe(error: NodeJS.ErrnoException): void {
+  if (error.code !== "EPIPE") throw error;
+}
+
 if (isEntrypoint(process.argv[1])) {
+  process.stdout.on("error", ignoreClosedPipe);
   void main(process.argv.slice(2)).then((code) => {
     process.exitCode = code;
   });
