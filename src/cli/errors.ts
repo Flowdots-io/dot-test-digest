@@ -1,5 +1,6 @@
 export const EX_USAGE = 64;
 export const EX_NOINPUT = 66;
+export const EX_CANTCREAT = 73;
 export const EX_SOFTWARE = 70;
 
 /** An error whose message is printed as-is on stderr and whose code is the process exit code. */
