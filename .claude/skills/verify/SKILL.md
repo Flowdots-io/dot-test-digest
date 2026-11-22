@@ -18,7 +18,7 @@ V=.claude/skills/verify/verify.sh
 RUN=$($V launch)        # builds HEAD into .acceptance/verify/$RUN/build, copies the fixtures, prints the run id
 ```
 
-`launch` creates, under `.acceptance/verify/$RUN/` (git-ignored): `build/` (compiled binary), `home/` (used as `DOT_TEST_DIGEST_HOME`, so the user's `~/.cache/dot-test-digest` is never touched), `evidence/`, and a fixture copy in a `mktemp` directory **outside the repo** (`tests/fixtures/node-cart`, `tsc-small`, `vitest-cart`; outside because vitest walks up looking for a config and would pick up the repo's own). Ready means `launch` printed a run id and exited 0. It builds the working tree, so a dirty tree is recorded in `$RUN/commit`.
+`launch` creates, under `.acceptance/verify/$RUN/` (git-ignored): `build/` (compiled binary), `schema/` (a copy of the repo's, where `dot-test-digest schema` looks for it), `home/` (used as `DOT_TEST_DIGEST_HOME`, so the user's `~/.cache/dot-test-digest` is never touched), `evidence/`, and a fixture copy in a `mktemp` directory **outside the repo** (`tests/fixtures/node-cart`, `tsc-small`, `vitest-cart`; outside because vitest walks up looking for a config and would pick up the repo's own). Ready means `launch` printed a run id and exited 0. It builds the working tree, so a dirty tree is recorded in `$RUN/commit`.
 
 ## Doctor
 
@@ -39,7 +39,7 @@ $V drive $RUN <label> <fixture|-> [digest flags] -- <command ...>
 - Give every TDD journey its own `--scope-id=<name>`: state is otherwise keyed by working directory, so earlier drives in the same fixture leak into the `delta`.
 - To change a fixture (for example write a new test file), edit the copy at `$(cat .acceptance/verify/$RUN/workdir)`, never the repo's `tests/fixtures/`.
 
-Handles are literal: header lines (`[PASS]`, `[FAIL] 4 failed, 2 passed ... | 2 clusters | log: ...`), cluster ids (`c_9721831d`), `raw: L<n>-L<m>` pointers, the `+N more clusters (see log)` line, exit codes, and the files under `home/` (`logs/run_*.log`, `state-<scope>.json`). Each feature file in `.dotstack/features/` has the exact commands and expected results.
+Handles are literal: header lines (`[PASS]`, `[FAIL] 4 failed, 2 passed ... | 2 clusters | log: ...`), the `next: dot-test-digest show <run> <cluster>` line under a failure header, cluster ids (`c_9721831d`), `rerun:` and `raw: L<n>-L<m>` rows, the `+N more clusters (see log)` line, exit codes, and the files under `home/` (`logs/run_*.log`, `state-<scope>.json`). Each feature file in `.dotstack/features/` has the exact commands and expected results.
 
 ## Evidence
 
@@ -53,7 +53,7 @@ Proof is the stored `command.txt`, `stdout.txt`, `stderr.txt` and `exit.txt` of 
 ## Cleanup
 
 ```bash
-$V cleanup $RUN        # removes build/, home/ and the fixture copy; keeps .acceptance/verify/$RUN/evidence/
+$V cleanup $RUN        # removes build/, schema/, home/ and the fixture copy; keeps .acceptance/verify/$RUN/evidence/
 ```
 
 Run it after a failed attempt too. It removes only what `launch` created for this run id, never anything by process name. Evidence survives; copy it somewhere permanent if a PR needs it.

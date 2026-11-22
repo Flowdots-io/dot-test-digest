@@ -7,6 +7,7 @@ import { runGc } from "./gc.js";
 import { CliError, EX_SOFTWARE, UsageError } from "./errors.js";
 import { runReplay } from "./replay.js";
 import { runShow } from "./show.js";
+import { runSchema } from "./schema.js";
 import { runStats } from "./stats.js";
 import type { SubcommandName } from "./subcommands.js";
 
@@ -43,7 +44,7 @@ const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
   init: undefined,
   mcp: undefined,
   config: runConfig,
-  schema: undefined,
+  schema: runSchema,
 };
 
 /** What the caller of `main()` injects; each defaults to the process's own. */

@@ -15,7 +15,7 @@ const ANSI = /\u001b\[[0-9;]*[A-Za-z]/g;
 const FILE_PREFIX = /^\S+\.(?:spec|test)\.[cm]?[jt]sx?\s*>\s*/;
 /** Vitest appends per-test durations to inline failing rows. */
 const TRAILING_DURATION = /\s+\d+(?:\.\d+)?\s*(?:ms|s)\s*$/;
-const LEADING_DECORATION = /^(?:\[[^\]]+\]\s+›\s+|-\s*)/;
+const LEADING_DECORATION = /^(?:\[[^\]]+\]\s+›\s+|-\s+)/;
 
 /** Strips presentation from a test name without changing its meaning. */
 export function normalizeTestName(raw: string): string {

@@ -39,6 +39,8 @@ export interface DigestInput {
   confineWindows?: boolean;
   /** The log the `raw:` pointers name. */
   logPath: string;
+  /** The run that log belongs to: `show <run_id>` reads it. */
+  runId: string;
   settings: DigestSettings;
   /** The scope's TDD state before this run; `null` prints no delta. */
   previousState: RunState | null;
@@ -90,7 +92,7 @@ export function parsesFailure(lines: readonly CapturedLine[]): boolean {
 async function analyze(output: CapturedOutput, input: DigestInput): Promise<Analysis> {
   const { settings, repoRoot } = input;
   const lines = normalized(output.lines);
-  const gear0 = runGear0(lines);
+  const gear0 = runGear0(lines, input.command);
   // A linter that fails on warnings alone (`--max-warnings=0`) has only its warnings to show.
   const reported =
     gear0 === null
@@ -181,6 +183,8 @@ export async function digestRun(input: DigestInput): Promise<DigestOutcome> {
     clusters: run.ranked.kept,
     ...(decision.delta ? { delta: decision.delta } : {}),
     rawLogPath: input.logPath,
+    omittedCount: run.ranked.omitted.length,
+    runId: input.runId,
   });
 
   const digest = formatEnvelope(envelope, settings.format, {

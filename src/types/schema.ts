@@ -3,7 +3,7 @@ import { z } from "zod";
 export const TddPhaseSchema = z.enum(["red", "green", "refactor", "none"]);
 export type TddPhase = z.infer<typeof TddPhaseSchema>;
 
-export const OutputFormatSchema = z.enum(["compact-md", "json"]);
+export const OutputFormatSchema = z.enum(["compact-md", "json", "ndjson"]);
 export type OutputFormat = z.infer<typeof OutputFormatSchema>;
 
 export const ColorModeSchema = z.enum(["auto", "always", "never"]);
@@ -54,6 +54,8 @@ export const CliOptionsSchema = z.object({
 });
 export type CliOptions = z.infer<typeof CliOptionsSchema>;
 
+export const ENVELOPE_SCHEMA_VERSION = 1;
+
 /** R6: ≤5 repository frames + ≤1 external boundary frame. */
 export const MAX_REPO_FRAMES = 5;
 export const MAX_PRUNED_STACK = 6;
@@ -70,6 +72,8 @@ export const FailureClusterSchema = z.object({
   pruned_stack: z.array(z.string()).max(MAX_PRUNED_STACK),
   signal_window: z.string(),
   raw_log_lines: z.string().regex(/^L\d+-L\d+$/),
+  /** The POSIX shell command that reruns the first sample test alone. */
+  rerun: z.string().min(1).optional(),
 });
 export type FailureCluster = z.infer<typeof FailureClusterSchema>;
 
@@ -80,6 +84,8 @@ export const SummarySchema = z.object({
   /** Present only when nonzero. */
   warnings: z.number().int().min(1).optional(),
   total_clusters: z.number().int().min(0),
+  /** Clusters beyond `--max-clusters`; present only when nonzero. */
+  omitted_clusters: z.number().int().min(1).optional(),
 });
 
 export const DeltaSchema = z.object({
@@ -100,6 +106,10 @@ export const DigestEnvelopeSchema = z.object({
   delta: DeltaSchema.optional(),
   clusters: z.array(FailureClusterSchema).max(15).optional(),
   raw_log_path: z.string().min(1),
+  /** The envelope's contract version: adding optional keys keeps it at 1. */
+  schema_version: z.literal(ENVELOPE_SCHEMA_VERSION).optional(),
+  /** The run whose log `raw_log_path` names; a hand-built envelope has none. */
+  run_id: z.string().regex(/^run_[0-9a-z]+$/).optional(),
 });
 export type DigestEnvelope = z.infer<typeof DigestEnvelopeSchema>;
 

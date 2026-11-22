@@ -13,6 +13,8 @@ export interface RawFailure {
   diff?: { expected: string; received: string };
   startLine: number;
   endLine: number;
+  /** The shell command that reruns this test alone, when the command named a known runner. */
+  rerun?: string;
 }
 
 export interface DedupeOptions {
@@ -91,6 +93,8 @@ export function dedupeFailures(
     ].slice(0, 3);
     const startLine = Math.min(...bucket.map((item) => item.startLine));
     const endLine = Math.max(...bucket.map((item) => item.endLine));
+    // The test the cluster's first sample names, else the first failure (a lint diagnostic has no test).
+    const { rerun } = bucket.find((item) => item.testName !== null) ?? first;
 
     const cluster: FailureCluster = {
       cluster_id: `c_${fingerprint.slice(0, 8)}`,
@@ -104,6 +108,7 @@ export function dedupeFailures(
       pruned_stack: pruneStack(first.frames, options.repoRoot),
       signal_window: "",
       raw_log_lines: `L${startLine}-L${endLine}`,
+      ...(rerun !== undefined ? { rerun } : {}),
     };
     entries.push({ cluster, top, startLine, endLine });
   }

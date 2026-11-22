@@ -506,7 +506,7 @@ describe("the size rule through the CLI", () => {
     expect(jsonCode).toBe(2);
     const envelope = JSON.parse(stdout) as DigestEnvelope;
     expect(envelope.status).toBe("FAIL");
-    expect(envelope.summary).toEqual({ passed: 0, failed: 5, skipped: 0, total_clusters: 2 });
+    expect(envelope.summary).toEqual({ passed: 0, failed: 5, skipped: 0, total_clusters: 2, omitted_clusters: 3 });
     expect(clustersOf(envelope).map((c) => [c.cluster_id, c.top_frame, c.raw_log_lines])).toEqual([
       ["c_42a23d40", "src/a.ts:2:14", "L1-L1"],
       ["c_39d5c117", "src/a.ts:3:31", "L2-L2"],

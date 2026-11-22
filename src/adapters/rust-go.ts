@@ -9,6 +9,7 @@ import {
   type AdapterCounts,
   type AdapterResult,
 } from "./common.js";
+import { rerunFor } from "./rerun.js";
 
 const CARGO_DIAG = /^error(?:\[(\w+)\])?:\s+(.+)$/;
 const CARGO_SPAN = /^\s*-->\s+(\S+):(\d+):(\d+)/;
@@ -32,7 +33,7 @@ export const rustGoAdapter: Adapter = {
     return score;
   },
 
-  parse(lines: readonly CapturedLine[]): AdapterResult {
+  parse(lines: readonly CapturedLine[], command: readonly string[] = []): AdapterResult {
     const failures: RawFailure[] = [];
     let counts: AdapterCounts = emptyCounts();
     let pendingDiagnostic: RawFailure | null = null;
@@ -118,6 +119,8 @@ export const rustGoAdapter: Adapter = {
 
     for (const failure of failures) {
       if (failure.message === "") failure.message = "Unknown rust/go failure";
+      const rerun = rerunFor(command, ["cargo", "go"], { name: failure.testName });
+      if (rerun !== undefined) failure.rerun = rerun;
     }
     if (counts.failed === 0) counts.failed = failures.filter((f) => f.errorKind !== "TYPE_COMPILE_ERROR" || f.frames.length > 0).length;
     return { adapter: "rust-go", failures, counts };

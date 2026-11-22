@@ -7,16 +7,16 @@ In `compact-md`, at size levels 1 to 4, when the envelope carries a `run_id` and
 - **GIVEN** the cart and a fresh home
 - **WHEN** `-- node --test cart.test.js` runs
 - **THEN** line 2 matches `^next: dot-test-digest show run_[0-9a-z]+ c_[0-9a-f]{8}$`
-- **AND** the cluster id on it is the id on the first line after `+N more clusters (see log)`
+- **AND** the cluster id on it is the first cluster in rank order that is not shown as a full block, and when a listed line follows `+N more clusters (see log)`, that first listed line carries the same id (with a short cache path the listed lines may not fit)
 - **AND** stdout is at most 2,400 bytes
 
 #### Scenario: With nothing omitted the target is the first cluster
-- **GIVEN** the cart
-- **WHEN** `--max-clusters=15 -- node --test cart.test.js` runs
-- **THEN** line 2 names the first block's cluster id (`c_9721831d`)
+- **GIVEN** the cart with a file `one.test.js` holding a single failing test (the four clusters of `cart.test.js` never all fit in 2,400 bytes, so the cart always omits one)
+- **WHEN** `-- node --test one.test.js` runs
+- **THEN** stdout has exactly one full block and line 2 names that block's cluster id
 
 #### Scenario: The printed command works
-- **GIVEN** the run above
+- **GIVEN** the cart run of "Omitted clusters are the target"
 - **WHEN** the command on line 2 runs as `show <run_id> <cluster_id>`
 - **THEN** it prints the `raw_log_lines` range of that cluster from the log and exits `0`
 

@@ -10,8 +10,8 @@ Each setting SHALL take the first value found in this order: command-line flag, 
 
 #### Scenario: A flag beats the environment, the environment beats the file
 - **GIVEN** the same project file, `DOT_TEST_DIGEST_MAX_CLUSTERS=2` in the environment
-- **WHEN** `-- node --test cart.test.js` runs, then `--max-clusters=3 -- node --test cart.test.js` runs
-- **THEN** the first header says `2 clusters` and the second says `3 clusters`
+- **WHEN** `--format=json -- node --test cart.test.js` runs, then `--format=json --max-clusters=3 -- node --test cart.test.js` runs
+- **THEN** the first envelope has `summary.total_clusters` `2` and the second `3` (JSON, because how many compact-md blocks fit in 2,400 bytes depends on the cache path length once the `next:` and `rerun:` lines exist)
 
 #### Scenario: The user file is the lowest layer
 - **GIVEN** a user file `{ "maxClusters": 4, "contextLines": 0 }` and the project file `{ "maxClusters": 1 }`

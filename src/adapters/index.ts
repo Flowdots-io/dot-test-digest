@@ -36,7 +36,7 @@ export function selectAdapter(lines: readonly string[]): Adapter | null {
 }
 
 /** Runs the winning grammar, or returns null when Gear 0 has nothing to say. */
-export function runGear0(lines: readonly CapturedLine[]): AdapterResult | null {
+export function runGear0(lines: readonly CapturedLine[], command: readonly string[] = []): AdapterResult | null {
   const adapter = selectAdapter(lines.map((line) => line.text));
-  return adapter === null ? null : adapter.parse(lines);
+  return adapter === null ? null : adapter.parse(lines, command);
 }

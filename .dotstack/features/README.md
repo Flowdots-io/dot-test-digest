@@ -36,10 +36,10 @@ Each feature file has an H1, one paragraph, then exactly four H2s: `Sub-features
 - [CLI surface](./cli-surface.md): `--help`, `--version`, flag parsing and usage errors (exit 64), subcommand dispatch, the run record and `show` (exit 66).
 - [Exit-code transparency](./exit-codes.md): the child's exit code, a signal, a missing command.
 - [Pass digest](./pass-digest.md): a passing run is one line, at most 160 bytes, and the raw log keeps everything.
-- [Failure digest](./failure-digest.md): clusters, the 2,400-byte ceiling, omitted clusters, `raw:` pointers, the tsc raw-text fallback.
+- [Failure digest](./failure-digest.md): clusters, the 2,400-byte ceiling, the `next:` line and the `rerun:` row, omitted clusters, `raw:` pointers, the tsc raw-text fallback.
 - [Digest input](./digest-input.md): `digest <file|->` digests an existing log or stdin into a recorded run (`source: "digest"`), exit `--exit-code` or inferred, header without `in <t>ms`, input errors (64, 66).
 - [Replay and stats](./replay-stats.md): `replay <run>` re-renders a recorded run without running it (flags override the stored options, exit is the record's), `stats` totals the bytes and tokens the digests saved.
 - [TDD gate](./tdd-gate.md): `--tdd-phase` red, green and refactor, `VALID_RED`/`INVALID_RED`/`INVALID_GREEN`, exit 64, `--allow-no-tests`, baseline state.
-- [JSON envelope](./json-envelope.md): `--format=json` and `--max-clusters`.
+- [JSON envelope](./json-envelope.md): `--format=json` and `--max-clusters`, `schema_version` and `run_id`, `rerun` commands, `--format=ndjson`, the `schema` subcommand.
 - [Cache retention](./cache.md): the automatic prune after each run, `gc` and `--dry-run`, what is never deleted, `DOT_TEST_DIGEST_PRUNE`.
 - [Configuration and color](./config.md): project and user config files, `DOT_TEST_DIGEST_*` variables, `config`, the `mcp` warning, `--color` and `NO_COLOR`.
