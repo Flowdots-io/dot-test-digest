@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterAll, it, vi } from "vitest";
-import { main } from "../../src/index.js";
+import { main, type MainDeps } from "../../src/index.js";
 import type { DigestEnvelope, FailureCluster } from "../../src/types/schema.js";
 import { clustersOf } from "./digest.js";
 
@@ -28,7 +28,7 @@ export interface MainRun {
 
 export async function runMain(
   argv: readonly string[],
-  where: { cwd: string; home: string },
+  where: { cwd: string; home: string; deps?: MainDeps },
 ): Promise<MainRun> {
   const originalCwd = process.cwd();
   const originalHome = process.env["DOT_TEST_DIGEST_HOME"];
@@ -46,7 +46,7 @@ export async function runMain(
   process.chdir(where.cwd);
   process.env["DOT_TEST_DIGEST_HOME"] = where.home;
   try {
-    const code = await main([...argv]);
+    const code = await main([...argv], where.deps);
     return { stdout, stderr, code };
   } finally {
     outSpy.mockRestore();
@@ -62,6 +62,7 @@ export type CartArgs = readonly string[] | ((dir: string) => readonly string[]);
 export interface CartOptions {
   subdir?: string;
   files?: Readonly<Record<string, string>>;
+  deps?: MainDeps;
 }
 
 export interface CartRun {
@@ -102,7 +103,7 @@ export async function runInCart(
   const cwd = options.subdir === undefined ? dir : path.join(dir, options.subdir);
   fs.mkdirSync(cwd, { recursive: true });
   const argv = typeof command === "function" ? command(realDir) : command;
-  const run = await runMain([...flags, "--", ...argv], { cwd, home });
+  const run = await runMain([...flags, "--", ...argv], { cwd, home, ...(options.deps ? { deps: options.deps } : {}) });
   return { ...run, dir: realDir, home };
 }
 

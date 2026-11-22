@@ -37,6 +37,7 @@ export class RawLogWriter {
 
   private readonly fd: number;
   private nextLine = 1;
+  private bytes = 0;
 
   constructor(options: RawLogOptions = {}) {
     const directory = options.dir ?? defaultLogDir();
@@ -49,13 +50,17 @@ export class RawLogWriter {
   /** Appends a chunk of whole lines and returns the 1-based line number of its first line. */
   write(chunk: string): number {
     const first = this.nextLine;
-    fs.writeSync(this.fd, chunk);
+    this.bytes += fs.writeSync(this.fd, chunk);
     this.nextLine += chunk.split("\n").length - 1;
     return first;
   }
 
   get linesWritten(): number {
     return this.nextLine - 1;
+  }
+
+  get bytesWritten(): number {
+    return this.bytes;
   }
 
   close(): void {
