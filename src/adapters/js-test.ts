@@ -337,13 +337,13 @@ export const jsTestAdapter: Adapter = {
     return score;
   },
 
-  parse(lines: LineSource, command: readonly string[] = []): AdapterResult {
+  parse(lines: LineSource, command: readonly string[] = [], cwd: string = process.cwd()): AdapterResult {
     const result = isSpecStream(lines)
-      ? parseNodeSpec(lines)
+      ? parseNodeSpec(lines, cwd)
       : isCompactStream(lines)
         ? parseCompact(lines)
         : isNodeTapStream(lines)
-          ? parseNodeTap(lines)
+          ? parseNodeTap(lines, cwd)
           : parseGeneric(lines);
     for (const failure of result.failures) {
       const rerun = rerunFor(command, ["node", "vitest", "jest"], { file: failure.testFile, name: failure.testName });

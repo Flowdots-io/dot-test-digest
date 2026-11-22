@@ -36,7 +36,7 @@ export function selectAdapter(lines: Iterable<string>): Adapter | null {
 }
 
 /** Runs the winning grammar, or returns null when Gear 0 has nothing to say. */
-export function runGear0(lines: LineSource, command: readonly string[] = []): AdapterResult | null {
+export function runGear0(lines: LineSource, command: readonly string[] = [], cwd?: string): AdapterResult | null {
   const adapter = selectAdapter(textsOf(lines));
-  return adapter === null ? null : adapter.parse(lines, command);
+  return adapter === null ? null : adapter.parse(lines, command, cwd);
 }

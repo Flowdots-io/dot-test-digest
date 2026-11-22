@@ -44,8 +44,9 @@ function nodePath(text: string): string {
   });
 }
 
-function relativeToCwd(file: string): string {
-  const relative = path.relative(process.cwd(), file).split(path.sep).join("/");
+/** Relative to the directory the command ran in, so a `rerun` runs from there. */
+function relativeToCwd(file: string, cwd: string): string {
+  const relative = path.relative(cwd, file).split(path.sep).join("/");
   return relative === "" || relative.startsWith("..") ? file : relative;
 }
 
@@ -92,7 +93,7 @@ function errorKindOf(entry: NodeEntry): ErrorKind {
   return classifyMessage(`${entry.message}\n${entry.stack.join("\n")}`);
 }
 
-function toRawFailure(entry: NodeEntry): RawFailure {
+function toRawFailure(entry: NodeEntry, cwd: string): RawFailure {
   const message = entry.subprocessError ?? entry.message;
   const diff =
     entry.expected !== undefined && entry.actual !== undefined
@@ -100,7 +101,7 @@ function toRawFailure(entry: NodeEntry): RawFailure {
       : undefined;
   return {
     testName: entry.name === "" ? null : entry.name,
-    testFile: entry.file === null ? null : relativeToCwd(entry.file),
+    testFile: entry.file === null ? null : relativeToCwd(entry.file, cwd),
     errorKind: errorKindOf(entry),
     message: message === "" ? UNKNOWN_FAILURE : message,
     frames: entry.stack,
@@ -125,9 +126,9 @@ function disambiguateSameNames(entries: NodeEntry[]): void {
  * node does not count a suite whose hook or body threw in `fail`/`cancelled`,
  * so the printed count can sit below the failures reported: it never may.
  */
-function finish(entries: NodeEntry[], foreign: RawFailure[], counts: AdapterCounts): AdapterResult {
+function finish(entries: NodeEntry[], foreign: RawFailure[], counts: AdapterCounts, cwd: string): AdapterResult {
   disambiguateSameNames(entries);
-  const failures = [...entries.map(toRawFailure), ...foreign].sort((a, b) => a.startLine - b.startLine);
+  const failures = [...entries.map((entry) => toRawFailure(entry, cwd)), ...foreign].sort((a, b) => a.startLine - b.startLine);
   const failed = Math.max(counts.failed, failures.length);
   return { adapter: "js-test", failures, counts: { ...counts, failed } };
 }
@@ -283,7 +284,7 @@ export function isNodeTapStream(lines: LineSource): boolean {
   return findLineIndex(lines, (text) => NODE_SUBTEST.test(text)) >= 0;
 }
 
-export function parseNodeTap(lines: LineSource): AdapterResult {
+export function parseNodeTap(lines: LineSource, cwd: string = process.cwd()): AdapterResult {
   const entries: NodeEntry[] = [];
   const foreign: RawFailure[] = [];
   for (let index = 0; index < lines.length; index += 1) {
@@ -304,7 +305,7 @@ export function parseNodeTap(lines: LineSource): AdapterResult {
     }
     if (block !== null) index = block.endIndex;
   }
-  return finish(entries, foreign, nodeCounts(lines, TAP_COUNT));
+  return finish(entries, foreign, nodeCounts(lines, TAP_COUNT), cwd);
 }
 
 export const NODE_SPEC_SUMMARY = new RegExp(`^ℹ (${COUNT_KEYS}) (\\d+)\\s*$`);
@@ -446,10 +447,10 @@ function adoptSubprocessErrors(lines: LineSource, entries: NodeEntry[]): void {
   }
 }
 
-export function parseNodeSpec(lines: LineSource): AdapterResult {
+export function parseNodeSpec(lines: LineSource, cwd: string = process.cwd()): AdapterResult {
   const counts = nodeCounts(lines, NODE_SPEC_SUMMARY);
   const section = findLineIndex(lines, (text) => SPEC_FAILING_HEADER.test(text));
-  if (section < 0) return finish(readSpecLeafRows(lines), [], counts);
+  if (section < 0) return finish(readSpecLeafRows(lines), [], counts, cwd);
 
   const starts: number[] = [];
   for (let index = section + 1; index < lines.length; index += 1) {
@@ -461,5 +462,5 @@ export function parseNodeSpec(lines: LineSource): AdapterResult {
     if (entry !== null) entries.push(entry);
   });
   adoptSubprocessErrors(lines, entries);
-  return finish(entries, [], counts);
+  return finish(entries, [], counts, cwd);
 }

@@ -23,8 +23,8 @@ export interface Adapter {
   name: string;
   /** Returns 0 when the stream is not this grammar; higher is a better match. */
   detect(lines: Iterable<string>): number;
-  /** `command` is the wrapped command, for the clusters' rerun hints. */
-  parse(lines: LineSource, command?: readonly string[]): AdapterResult;
+  /** `command` is the wrapped command and `cwd` the directory it ran in, for the clusters' rerun hints. */
+  parse(lines: LineSource, command?: readonly string[], cwd?: string): AdapterResult;
 }
 
 const SYNTAX_TOKENS: readonly RegExp[] = [

@@ -6,8 +6,9 @@ import { runConfig } from "./config.js";
 import { runDigest } from "./digest.js";
 import { runDoctor } from "./doctor.js";
 import { runGc } from "./gc.js";
-import { CliError, EX_SOFTWARE, UsageError } from "./errors.js";
+import { CliError, EX_SOFTWARE } from "./errors.js";
 import { runInit } from "./init.js";
+import { runMcp } from "./mcp.js";
 import { runReplay } from "./replay.js";
 import { runShow } from "./show.js";
 import { runSchema } from "./schema.js";
@@ -18,6 +19,8 @@ export interface SubcommandContext {
   /** The cache's `logs/` directory. */
   logDir: string;
   cwd: string;
+  /** Only runs recorded in this directory or below it can be named (`RunLocation.within`). */
+  within?: string;
   env: NodeJS.ProcessEnv;
   /** Whether stdout is a terminal, for `--color=auto`. */
   stdoutIsTTY: boolean;
@@ -38,8 +41,7 @@ export interface SubcommandContext {
 /** Returns the exit code; a `CliError` it throws becomes a stderr line and that error's code. */
 export type Subcommand = (args: readonly string[], context: SubcommandContext) => number | Promise<number>;
 
-/** `undefined`: listed in the help and reserved, but not in this version yet. */
-const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
+const HANDLERS: Record<SubcommandName, Subcommand> = {
   show: runShow,
   replay: runReplay,
   digest: runDigest,
@@ -47,7 +49,7 @@ const HANDLERS: Record<SubcommandName, Subcommand | undefined> = {
   stats: runStats,
   doctor: runDoctor,
   init: runInit,
-  mcp: undefined,
+  mcp: runMcp,
   config: runConfig,
   schema: runSchema,
 };
@@ -94,9 +96,7 @@ export async function runSubcommand(
     },
   };
   try {
-    const handler = HANDLERS[name];
-    if (handler === undefined) throw new UsageError(`${name} is not available in this version`);
-    return await handler(args, context);
+    return await HANDLERS[name](args, context);
   } catch (error) {
     if (error instanceof CliError) {
       process.stderr.write(`${error.message}\n`);

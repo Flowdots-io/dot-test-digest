@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import path from "node:path";
 import {
   listLogDir,
   loadRunRecords,
@@ -16,6 +17,8 @@ export interface RunLocation {
   logDir: string;
   /** `last` means the newest run recorded in this directory. */
   cwd: string;
+  /** When set, only runs recorded in this directory or below it exist (the MCP server: one project's runs). */
+  within?: string;
 }
 
 /** A resolved run. Either file may be gone (pruned, or a log from before records existed). */
@@ -47,7 +50,21 @@ export function listRunIds(logDir: string): string[] {
 
 /** `last`, a full run id, or a unique prefix of at least 6 characters; throws a `CliError` otherwise. */
 export function resolveRunRef(ref: string, where: RunLocation): ResolvedRun {
-  return locate(where.logDir, ref === "last" ? lastRunId(where) : matchRunId(ref, where.logDir));
+  return locate(where.logDir, ref === "last" ? lastRunId(where) : matchRunId(ref, candidateIds(where)));
+}
+
+export function isWithin(dir: string, root: string): boolean {
+  return dir === root || dir.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`);
+}
+
+/** The ids a reference may name; with `within`, only those whose record says they ran there. */
+function candidateIds(where: RunLocation): string[] {
+  const { within } = where;
+  if (within === undefined) return listRunIds(where.logDir);
+  return loadRunRecords(where.logDir)
+    .filter((record) => isWithin(record.cwd, within))
+    .map((record) => record.run_id)
+    .sort();
 }
 
 function lastRunId(where: RunLocation): string {
@@ -58,11 +75,10 @@ function lastRunId(where: RunLocation): string {
   return newest.run_id;
 }
 
-function matchRunId(ref: string, logDir: string): string {
+function matchRunId(ref: string, ids: readonly string[]): string {
   if (ref.length < MIN_PREFIX) {
     throw new UsageError(`run reference "${ref}" is too short (${MIN_PREFIX} characters minimum)`);
   }
-  const ids = listRunIds(logDir);
   if (ids.includes(ref)) return ref;
   const matches = ids.filter((id) => id.startsWith(ref));
   const [only] = matches;

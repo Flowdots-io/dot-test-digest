@@ -1,4 +1,4 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { constants } from "node:os";
 import { StringDecoder } from "node:string_decoder";
 import { defaultLineSources, type LineSourceFactory, type LogLines, type StreamName } from "./line-source.js";
@@ -11,6 +11,8 @@ export interface CaptureResult {
   exitCode: number;
   signal: NodeJS.Signals | null;
   durationMs: number;
+  /** `timeoutMs` elapsed and the child was signalled. */
+  timedOut: boolean;
 }
 
 export interface CaptureOptions {
@@ -19,7 +21,11 @@ export interface CaptureOptions {
   env?: NodeJS.ProcessEnv;
   lineSources?: LineSourceFactory;
   progress?: ProgressOptions;
+  /** At this deadline the child's process group gets SIGTERM, and SIGKILL `KILL_GRACE_MS` later. */
+  timeoutMs?: number;
 }
+
+export const KILL_GRACE_MS = 5_000;
 
 /** `--progress`: a heartbeat on stderr while the child runs. */
 export interface ProgressOptions {
@@ -106,6 +112,45 @@ export class LogLineSink {
   }
 }
 
+/** Signals the child's whole process group (it leads one when spawned `detached`), else the child alone. */
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  if (child.pid === undefined) return;
+  try {
+    process.kill(-child.pid, signal);
+  } catch {
+    child.kill(signal);
+  }
+}
+
+/** The children running in their own process group: they would outlive this process, so `killRunningGroups` stops them. */
+const runningGroups = new Set<ChildProcess>();
+
+/** SIGKILLs the process group of every child started with a timeout that still runs (the MCP server, on its way out). */
+export function killRunningGroups(): void {
+  for (const child of runningGroups) signalGroup(child, "SIGKILL");
+}
+
+/** Arms the timeout; the returned function disarms it, killing what is left of the group once the deadline passed. */
+function startDeadline(child: ChildProcess, timeoutMs: number | undefined, onTimeout: () => void): () => void {
+  if (timeoutMs === undefined) return () => {};
+  runningGroups.add(child);
+  let killTimer: NodeJS.Timeout | undefined;
+  let fired = false;
+  const deadline = setTimeout(() => {
+    fired = true;
+    onTimeout();
+    signalGroup(child, "SIGTERM");
+    killTimer = setTimeout(() => signalGroup(child, "SIGKILL"), KILL_GRACE_MS);
+  }, timeoutMs);
+  return () => {
+    runningGroups.delete(child);
+    clearTimeout(deadline);
+    clearTimeout(killTimer);
+    // A grandchild that let go of the pipes would outlive the call otherwise.
+    if (fired) signalGroup(child, "SIGKILL");
+  };
+}
+
 export function runChild(
   command: readonly string[],
   options: CaptureOptions,
@@ -119,25 +164,32 @@ export function runChild(
     env: options.env ?? process.env,
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
+    // Its own process group, so a timeout reaches the processes it starts too.
+    detached: options.timeoutMs !== undefined,
   });
 
   const sink = new LogLineSink(options.rawLog, options.lineSources);
   const stopHeartbeat = options.progress ? startHeartbeat(options.progress, options.rawLog) : () => {};
+  let timedOut = false;
+  const stopDeadline = startDeadline(child, options.timeoutMs, () => (timedOut = true));
   child.stdout.on("data", (chunk: Buffer) => sink.write("stdout", chunk));
   child.stderr.on("data", (chunk: Buffer) => sink.write("stderr", chunk));
 
   return new Promise<CaptureResult>((resolve, reject) => {
     child.on("error", (error) => {
       stopHeartbeat();
+      stopDeadline();
       reject(error);
     });
     child.on("close", (code, signal) => {
       stopHeartbeat();
+      stopDeadline();
       resolve({
         lines: sink.end(),
         exitCode: code ?? signalExitCode(signal),
         signal: signal ?? null,
         durationMs: Date.now() - startedAt,
+        timedOut,
       });
     });
   });
