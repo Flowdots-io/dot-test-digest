@@ -131,6 +131,8 @@ const LABEL_BYTE_CEILING = 80;
 export interface RenderContext {
   rawText?: string;
   omitted?: readonly FailureCluster[];
+  /** Wrap the header's status word in an SGR color (compact-md only). */
+  color?: boolean;
 }
 
 function omittedLabel(cluster: FailureCluster): string {
@@ -213,13 +215,35 @@ function renderLevel(
   return { header, body };
 }
 
+const SGR_RESET = "\u001b[0m";
+const SGR_GREEN = "\u001b[32m";
+const SGR_RED = "\u001b[31m";
+
+const STATUS_COLOR: Readonly<Record<DigestStatus, string>> = {
+  PASS: SGR_GREEN,
+  VALID_RED: SGR_GREEN,
+  FAIL: SGR_RED,
+  INVALID_RED: SGR_RED,
+  INVALID_GREEN: SGR_RED,
+  REGRESSION_DETECTED: SGR_RED,
+  BUILD_ERROR: SGR_RED,
+};
+
+/** Colors the status word that opens the header; the sizes were decided on the plain text. */
+function colorStatus(digest: string, status: DigestStatus): string {
+  const opening = `[${status}`;
+  if (!digest.startsWith(opening)) return digest;
+  return `[${STATUS_COLOR[status]}${status}${SGR_RESET}${digest.slice(opening.length)}`;
+}
+
 export function formatEnvelope(
   envelope: DigestEnvelope,
   format: OutputFormat,
   context: RenderContext = {},
 ): string {
   if (format === "json") return `${JSON.stringify(envelope, null, 2)}\n`;
-  const { rawText, omitted = [] } = context;
+  const { rawText, omitted = [], color = false } = context;
   const oneLiner = envelope.status === "PASS" || envelope.status === "VALID_RED" || envelope.status === "INVALID_GREEN";
-  return `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, omitted, rawText)}\n`;
+  const digest = `${oneLiner ? renderPassLine(envelope) : renderFailBody(envelope, omitted, rawText)}\n`;
+  return color ? colorStatus(digest, envelope.status) : digest;
 }

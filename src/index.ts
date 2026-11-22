@@ -4,16 +4,18 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { runGear0, type AdapterCounts } from "./adapters/index.js";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
+import { AUTO_PRUNE_MAX_FILES, pruneCache, type PruneOptions, type PruneResult } from "./cache/prune.js";
 import { runSubcommand } from "./cli/dispatch.js";
 import { EX_SOFTWARE } from "./cli/errors.js";
 import { isSubcommandName } from "./cli/subcommands.js";
+import { loadConfig, type LoadedConfig } from "./config/load.js";
 import { buildEnvelope, formatEnvelope } from "./formatters/envelope.js";
 import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gears/gear1-jev.js";
 import { normalizeLine } from "./pruner/ansi-stripper.js";
 import { dedupeFailures, type DedupeResult, type RawFailure } from "./pruner/cluster-dedup.js";
 import { canonicalTestId, uniqueFailures } from "./pruner/failure-identity.js";
 import { runChild, type CapturedLine } from "./runner/capture.js";
-import { RawLogWriter } from "./runner/raw-log.js";
+import { RawLogWriter, cacheRoot } from "./runner/raw-log.js";
 import { recordClusters, recordPathFor, writeRunRecord, type RunRecord } from "./runner/run-record.js";
 import {
   evaluatePhase,
@@ -22,7 +24,7 @@ import {
   saveState,
   type RunState,
 } from "./state/tdd-gate.js";
-import type { ExecutionGear } from "./types/schema.js";
+import type { CliOptions, ColorMode, ExecutionGear } from "./types/schema.js";
 import { VERSION } from "./version.js";
 
 const COMMAND_NOT_FOUND = 127;
@@ -46,15 +48,41 @@ export interface MainDeps {
   client?: JevAsker;
   /** Writes `logs/<run>.json`; tests replace it to simulate a full disk. */
   writeRecord?: (file: string, record: RunRecord) => void;
+  /** The environment the configuration and color decisions read; defaults to `process.env`. */
+  env?: NodeJS.ProcessEnv;
+  /** Whether stdout is a terminal, for `--color=auto`; defaults to `process.stdout.isTTY`. */
+  stdoutIsTTY?: boolean;
+  /** Prunes the cache after the digest is printed; tests replace it to simulate a failure. */
+  prune?: (home: string, options: PruneOptions, now: number) => PruneResult;
+}
+
+/** `auto` colors a terminal unless `NO_COLOR` is set or `TERM` is `dumb`. */
+function wantsColor(mode: ColorMode, isTTY: boolean, env: NodeJS.ProcessEnv): boolean {
+  if (mode !== "auto") return mode === "always";
+  return isTTY && !env["NO_COLOR"] && env["TERM"] !== "dumb";
+}
+
+/** Loads the configuration for a run, prints its warnings, and returns it with the defaults it gives the flags. */
+function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefaults: Partial<CliOptions> } {
+  const config = loadConfig({ cwd: process.cwd(), env });
+  for (const warning of config.warnings) process.stderr.write(`${warning}\n`);
+  const { maxClusters, contextLines, format, noJev, retryFlakes, color } = config.values;
+  return { config, flagDefaults: { maxClusters, contextLines, format, noJev, retryFlakes, color } };
 }
 
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
   const [first, ...rest] = argv;
-  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest);
+  const env = deps.env ?? process.env;
+  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest, env);
 
+  let config: LoadedConfig | undefined;
   let parsed;
   try {
-    parsed = parseArgs(argv);
+    parsed = parseArgs(argv, () => {
+      const configured = configureRun(env);
+      config = configured.config;
+      return configured.flagDefaults;
+    });
   } catch (error) {
     if (error instanceof UsageError) {
       process.stderr.write(`${error.message}\n`);
@@ -212,7 +240,11 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       rawLogPath: run.logPath,
     });
 
-    const digest = formatEnvelope(envelope, options.format, { omitted: run.ranked.omitted, rawText: run.rawText });
+    const digest = formatEnvelope(envelope, options.format, {
+      omitted: run.ranked.omitted,
+      rawText: run.rawText,
+      color: wantsColor(options.color ?? "auto", deps.stdoutIsTTY ?? process.stdout.isTTY === true, env),
+    });
     process.stdout.write(digest);
     if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
     rawLog.close();
@@ -253,6 +285,27 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       process.stderr.write(`dot-test-digest: could not write the run record: ${message}\n`);
+    }
+    const retention = config?.values;
+    if (retention?.["retention.auto"] === true) {
+      // INV-3: pruning is housekeeping; a failure must not change the exit code.
+      try {
+        (deps.prune ?? pruneCache)(
+          cacheRoot(),
+          {
+            keepRuns: retention["retention.keepRuns"],
+            maxAgeDays: retention["retention.maxAgeDays"],
+            stateMaxAgeDays: retention["retention.stateMaxAgeDays"],
+            currentRunId: rawLog.runId,
+            currentScopeId: scopeId,
+            maxFiles: AUTO_PRUNE_MAX_FILES,
+          },
+          Date.now(),
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        process.stderr.write(`dot-test-digest: could not prune the cache: ${message}\n`);
+      }
     }
     return decision.exitCode;
   } catch (error) {

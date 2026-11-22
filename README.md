@@ -72,9 +72,52 @@ dot-test-digest --format=json -- vitest run | jq .   # the full structured envel
 | `--no-jev` | off | Never call the Jev API. Use this to keep every run local. |
 | `--retry-flakes` | off | Re-run once when Gear 1 is at least 80% sure the failure was a flake. |
 | `--allow-no-tests` | off | Accept a `green` or `refactor` run that exited `0` without any recognised test (a runner with no grammar). Without it such a run is `INVALID_GREEN`. |
+| `--color <auto\|always\|never>` | `auto` | Color the status word of the header (green for `PASS` and `VALID_RED`, red for every other status). `auto` colors only when stdout is a terminal, `NO_COLOR` is unset or empty and `TERM` is not `dumb`; `always` ignores `NO_COLOR`. Sizes are measured on the uncolored text, and `--format=json` is never colored. |
 | `-h`, `--help` / `-v`, `--version` | | Print usage / version and exit `0`. |
 
-Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`).
+Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`), `NO_COLOR` (see `--color`), and the `DOT_TEST_DIGEST_*` settings below.
+
+### Configuration
+
+Most flags can also be set once, so every run gets them without typing. Each setting takes the first value found in this order: the flag, an environment variable, the project file, the user file, the built-in default.
+
+- **Project file:** `.dot-test-digest.json`, the nearest one found walking up from the working directory to the first directory that contains `.git` (that directory included), never above your home directory (compared by real path, so a symlinked home still stops it). Outside your home directory a file is used only when a `.git` above the working directory bounds the walk, so a file left in a shared directory such as `/tmp` never configures your run. Only that one file is read; files in parent directories are not merged in.
+- **User file:** `$XDG_CONFIG_HOME/dot-test-digest/config.json` (default `~/.config/dot-test-digest/config.json`).
+
+```json
+{ "maxClusters": 3, "noJev": true, "retention": { "keepRuns": 100 } }
+```
+
+(`retention.keepRuns` in that example takes effect only in the user file; see below.)
+
+| Key | Values | Default | Environment variable |
+| --- | --- | --- | --- |
+| `maxClusters` | integer `1` to `15` | `5` | `DOT_TEST_DIGEST_MAX_CLUSTERS` |
+| `contextLines` | integer `0` to `5` | `2` | `DOT_TEST_DIGEST_CONTEXT_LINES` |
+| `format` | `compact-md`, `json` | `compact-md` | `DOT_TEST_DIGEST_FORMAT` |
+| `noJev` | boolean | `false` | `DOT_TEST_DIGEST_NO_JEV` |
+| `retryFlakes` | boolean | `false` | `DOT_TEST_DIGEST_RETRY_FLAKES` |
+| `color` | `auto`, `always`, `never` | `auto` | `DOT_TEST_DIGEST_COLOR` |
+| `progress` | boolean | `false` | `DOT_TEST_DIGEST_PROGRESS` |
+| `retention.auto` | boolean | `true` | `DOT_TEST_DIGEST_PRUNE` (`0` turns pruning off) |
+| `retention.keepRuns` | integer `0` or more | `50` | none; user file only |
+| `retention.maxAgeDays` | integer `0` or more | `14` | none; user file only |
+| `retention.stateMaxAgeDays` | integer `0` or more | `90` | none; user file only |
+| `mcp.allow` | list of argv prefixes, e.g. `[["pnpm", "test"]]` | empty | none; user file only |
+
+Booleans accept `true`, `false`, `1` and `0` (in a file, also as JSON `true`/`false`); an empty environment variable counts as unset. `--tdd-phase`, `--scope-id` and `--allow-no-tests` are per-run and stay flags. `progress` is read by the feature that uses it; the `retention.*` keys drive the cache prune and `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)). The configuration is strict: an unknown key (`<path>: unknown key "maxCluster"`), a wrong value (`<path>: maxClusters must be between 1 and 15, got 99`, `DOT_TEST_DIGEST_MAX_CLUSTERS must be an integer between 1 and 15, got abc`) or a file that is not valid JSON (`<path>: invalid JSON: …`) is a usage error, exit `64`, before the command is started. A project file may not set `mcp`: the key is ignored and `dot-test-digest: ignoring "mcp" in <path>: the command allowlist is read from the user config only` is printed on `stderr`, so a repository you cloned cannot widen what the MCP server runs. For the same reason a project file may not set the retention limits (`retention.keepRuns`, `retention.maxAgeDays`, `retention.stateMaxAgeDays`), which decide what is deleted across the whole cache: such a key is ignored, `config` keeps showing the value from the user file or the default, and `dot-test-digest: ignoring retention.<key> in <path>: retention limits are read from the user config only` is printed on `stderr`. A project file may still set `"retention": { "auto": false }`, which only deletes less.
+
+`dot-test-digest config` prints the effective value of every setting and where it came from, one line each (flags play no part):
+
+```text
+maxClusters = 3 (project /home/me/app/.dot-test-digest.json)
+contextLines = 2 (default)
+format = json (env DOT_TEST_DIGEST_FORMAT)
+...
+retention.stateMaxAgeDays = 90 (default)
+```
+
+The source is `default`, `user <path>`, `project <path>` or `env <NAME>`; `mcp.allow` is printed only when the user file sets it.
 
 ### What you get back
 
@@ -108,7 +151,32 @@ dot-test-digest show last --record         # the record file itself
 
 A `<run>` is `last` (the newest record whose `cwd` is the current directory, so runs in other repositories never answer), a full run id, or a unique prefix of at least 6 characters. A range running past the end is clamped. Errors are one line on `stderr`: `no run recorded for this directory` and `no such run: <ref>` exit `66`; `log of <run> was removed` and `record of <run> is missing or unreadable` (a log from before records existed) exit `66`; an ambiguous or too-short prefix, a range that starts past the end (`the log has <N> lines`), a reversed range (`invalid range: L9-L3`) or an unknown cluster id (`no cluster <id> in <run>`) exit `64`.
 
-`--help` also lists `replay`, `digest`, `gc`, `stats`, `doctor`, `init`, `mcp`, `config` and `schema`. They are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)) and `replay`, `digest`, `stats`, `doctor`, `init`, `mcp` and `schema`. Those last seven are reserved names: in this version each one exits `64` with `<name> is not available in this version`.
+
+### The cache and what is deleted
+
+Everything the tool writes lives in one directory, `~/.cache/dot-test-digest/` (or `$DOT_TEST_DIGEST_HOME`): runs in `logs/` (`<run>.log` and `<run>.json`, a pair counts as one run) and TDD state in `state-<scope_id>.json`. Nothing else in it, and nothing outside it, is ever deleted.
+
+After each run has printed its digest, the tool prunes the cache:
+
+- It keeps the newest 50 runs (`retention.keepRuns`; the run that just finished is one of them) whatever their age.
+- Among the older ones it deletes those created more than 14 days ago (`retention.maxAgeDays`). A log from before run records existed counts by its modification time; a record whose log is gone is deleted.
+- It deletes `state-*.json` files not modified for 90 days (`retention.stateMaxAgeDays`), never the current scope's.
+- It never deletes the current run, a file modified in the last hour (another run may be writing it), a symbolic link, or a file that is not named like a run (`run_<id>.log`, `run_<id>.json`) or a state file.
+- It deletes at most 200 files per run, oldest first; the rest goes on the next runs.
+
+A failure while pruning prints `dot-test-digest: could not prune the cache: <reason>` on `stderr` and never changes the exit code. `DOT_TEST_DIGEST_PRUNE=0` or `"retention": { "auto": false }` (in either file) turns the automatic prune off; the three limits are read from the user file only (see [Configuration](#configuration)). A cache directory that is a symbolic link is followed once, to the directory it names.
+
+`gc` runs the same rule on demand, without the 200-file cap, and says what it did:
+
+```bash
+dot-test-digest gc                                  # removed 10 runs (0 state files), kept 50 runs
+dot-test-digest gc --keep 10 --max-age-days 2       # stricter numbers for this call
+dot-test-digest gc --state-max-age-days 30
+dot-test-digest gc --dry-run                        # would remove 10 runs (0 state files), keeping 50 runs
+```
+
+Its defaults are the `retention.*` limits of the user file (50, 14 and 90 unless set there). A value that is not a non-negative integer exits `64` with `--keep must be a non-negative integer, got -1`. On a cache that does not exist it prints `removed 0 runs (0 state files), kept 0 runs`, exits `0` and creates nothing. The one-hour protection applies to `gc` too.
 
 ## The TDD gate
 
