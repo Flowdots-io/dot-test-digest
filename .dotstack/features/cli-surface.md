@@ -10,7 +10,7 @@
 - `cli-missing-delimiter` a command without `--` is a usage error.
 - `cli-bad-value` a missing, out-of-range or malformed flag value is a usage error.
 - `cli-no-command` `--` with nothing after it is a usage error.
-- `cli-subcommand` the first bare word `show`, `config` or `gc` dispatches (`config`: see [config.md](./config.md); `gc`: see [cache.md](./cache.md)); `replay`, `digest`, `stats`, `doctor`, `init`, `mcp`, `schema` are listed in `--help` and exit 64 `<name> is not available in this version`; any other bare word, or a subcommand name after a flag, is the missing-delimiter error; after `--` it is a program.
+- `cli-subcommand` the first bare word `show`, `config`, `gc`, `replay` or `stats` dispatches (`config`: see [config.md](./config.md); `gc`: see [cache.md](./cache.md); `replay`, `stats`: see [replay-stats.md](./replay-stats.md)); `digest`, `doctor`, `init`, `mcp`, `schema` are listed in `--help` and exit 64 `<name> is not available in this version`; any other bare word, or a subcommand name after a flag, is the missing-delimiter error; after `--` it is a program.
 - `run-record` every wrapped run writes `logs/<run>.json` (command, cwd, exit codes, signal, phase, options, summary, log and digest sizes, every cluster) atomically after the digest.
 - `show` `show <run> [L<a>-L<b>|<a>-<b>|L<a>|cluster_id] [--numbers] [--record]`; `<run>` is `last` (newest record of this directory), a run id or a 6+ character prefix; a missing run exits 66.
 
@@ -37,7 +37,7 @@ Preconditions:
 - **Missing value.** `$V drive $RUN noval - --tdd-phase -- true`. Exit `64`; stderr `--tdd-phase requires a value`.
 - **No command.** `$V drive $RUN nocmd - --`. Exit `64`; stderr `no command after --`.
 - **Help lists subcommands.** In the Help journey's stdout, the lines `  show <run> [range|cluster_id]`, `  replay <run>`, `  digest <file|->`, `  gc`, `  stats`, `  doctor`, `  init`, `  mcp`, `  config` and `  schema` are present.
-- **Reserved subcommand.** `$V drive $RUN stats - stats`. Exit `64`; stdout empty; stderr `stats is not available in this version`.
+- **Reserved subcommand.** `$V drive $RUN doctor - doctor`. Exit `64`; stdout empty; stderr `doctor is not available in this version`.
 - **Subcommand after a flag.** `$V drive $RUN lateword - --no-jev show last` (the helper adds a second `--no-jev` in front). Exit `64`; stderr `missing -- delimiter before "show": dot-test-digest [flags] -- <command>`.
 - **No side effects.** Run the journeys above first on a fresh run, then `ls .acceptance/verify/$RUN/home` lists nothing (no `logs/` directory, no state file).
 

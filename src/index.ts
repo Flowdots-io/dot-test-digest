@@ -2,46 +2,23 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-import { runGear0, type AdapterCounts } from "./adapters/index.js";
 import { EX_USAGE, USAGE, UsageError, parseArgs } from "./cli/args.js";
 import { AUTO_PRUNE_MAX_FILES, pruneCache, type PruneOptions, type PruneResult } from "./cache/prune.js";
+import { wantsColor } from "./cli/color.js";
 import { runSubcommand } from "./cli/dispatch.js";
 import { EX_SOFTWARE } from "./cli/errors.js";
 import { isSubcommandName } from "./cli/subcommands.js";
 import { loadConfig, type LoadedConfig } from "./config/load.js";
-import { buildEnvelope, formatEnvelope } from "./formatters/envelope.js";
-import { MIN_UNSTRUCTURED_LINES, triageUnstructured, type JevAsker } from "./gears/gear1-jev.js";
-import { normalizeLine } from "./pruner/ansi-stripper.js";
-import { dedupeFailures, type DedupeResult, type RawFailure } from "./pruner/cluster-dedup.js";
-import { canonicalTestId, uniqueFailures } from "./pruner/failure-identity.js";
-import { runChild, type CapturedLine } from "./runner/capture.js";
+import type { JevAsker } from "./gears/gear1-jev.js";
+import { digestRun, type CapturedOutput } from "./pipeline.js";
+import { runChild } from "./runner/capture.js";
 import { RawLogWriter, cacheRoot } from "./runner/raw-log.js";
 import { recordClusters, recordPathFor, writeRunRecord, type RunRecord } from "./runner/run-record.js";
-import {
-  evaluatePhase,
-  loadState,
-  resolveScopeId,
-  saveState,
-  type RunState,
-} from "./state/tdd-gate.js";
-import type { CliOptions, ColorMode, ExecutionGear } from "./types/schema.js";
+import { loadState, resolveScopeId, saveState, type RunState } from "./state/tdd-gate.js";
+import type { CliOptions } from "./types/schema.js";
 import { VERSION } from "./version.js";
 
 const COMMAND_NOT_FOUND = 127;
-
-interface Attempt {
-  lines: CapturedLine[];
-  gear: ExecutionGear;
-  failures: RawFailure[];
-  ranked: DedupeResult;
-  counts: AdapterCounts;
-  exitCode: number;
-  signal: string | null;
-  durationMs: number;
-  retryWanted: boolean;
-  logPath: string;
-  rawText: string;
-}
 
 export interface MainDeps {
   /** Injection point for tests; production builds a JevClient inside triageUnstructured. */
@@ -56,12 +33,6 @@ export interface MainDeps {
   prune?: (home: string, options: PruneOptions, now: number) => PruneResult;
 }
 
-/** `auto` colors a terminal unless `NO_COLOR` is set or `TERM` is `dumb`. */
-function wantsColor(mode: ColorMode, isTTY: boolean, env: NodeJS.ProcessEnv): boolean {
-  if (mode !== "auto") return mode === "always";
-  return isTTY && !env["NO_COLOR"] && env["TERM"] !== "dumb";
-}
-
 /** Loads the configuration for a run, prints its warnings, and returns it with the defaults it gives the flags. */
 function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefaults: Partial<CliOptions> } {
   const config = loadConfig({ cwd: process.cwd(), env });
@@ -73,7 +44,7 @@ function configureRun(env: NodeJS.ProcessEnv): { config: LoadedConfig; flagDefau
 export async function main(argv: readonly string[], deps: MainDeps = {}): Promise<number> {
   const [first, ...rest] = argv;
   const env = deps.env ?? process.env;
-  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest, env);
+  if (first !== undefined && isSubcommandName(first)) return runSubcommand(first, rest, { ...deps, env });
 
   let config: LoadedConfig | undefined;
   let parsed;
@@ -118,103 +89,33 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
     return EX_SOFTWARE;
   }
 
-  const attempt = async (): Promise<Attempt> => {
-    const capture = await runChild(command, { rawLog, cwd: repoRoot });
-    const lines = capture.lines.map((line) => ({ ...line, text: normalizeLine(line.text) }));
-    const gear0 = runGear0(lines);
-    // A linter that fails on warnings alone (`--max-warnings=0`) has only its warnings to show.
-    const reported =
-      gear0 === null
-        ? []
-        : gear0.failures.length === 0 && capture.exitCode !== 0
-          ? (gear0.warnings ?? [])
-          : gear0.failures;
-
-    let ranked: DedupeResult =
-      gear0 === null
-        ? { kept: [], omitted: [] }
-        : dedupeFailures(reported, {
-            repoRoot,
-            contextLines: options.contextLines,
-            keep: options.maxClusters,
-            logPath: rawLog.path,
-          });
-    let gear: ExecutionGear = gear0 === null ? "GEAR_0_HEURISTIC_FALLBACK" : "GEAR_0_GRAMMAR";
-    let retryWanted = false;
-
-    if (capture.exitCode !== 0 && ranked.kept.length === 0) {
-      const outcome = await triageUnstructured({
-        lines,
-        command,
-        exitCode: capture.exitCode,
-        repoRoot,
-        contextLines: options.contextLines,
-        // R11b: Jev needs >150 lines; shorter unstructured failures go straight to the heuristic.
-        noJev: options.noJev || lines.length < MIN_UNSTRUCTURED_LINES,
-        retryFlakes: options.retryFlakes,
-        ...(deps.client ? { client: deps.client } : {}),
-      });
-      gear = outcome.gear;
-      ranked = { kept: [outcome.cluster], omitted: [] };
-      retryWanted = outcome.retry;
-    }
-
-    return {
-      lines,
-      gear,
-      failures: uniqueFailures(reported),
-      ranked,
-      counts: gear0?.counts ?? { passed: 0, failed: 0, skipped: 0 },
-      exitCode: capture.exitCode,
-      signal: capture.signal,
-      durationMs: capture.durationMs,
-      retryWanted,
-      logPath: rawLog.path,
-      rawText: lines.map((line) => `${line.text}\n`).join(""),
-    };
-  };
+  const capture = async (): Promise<CapturedOutput> => runChild(command, { rawLog, cwd: repoRoot });
 
   try {
-    let run = await attempt();
-    if (run.retryWanted && options.retryFlakes) run = await attempt();
-
-    // SPEC-002 §4.3: baseline and delta compare canonical identities, not the
-    // presentation strings a reporter happened to print.
-    const failedTests = [
-      ...new Set(
-        run.failures
-          .map((failure) => canonicalTestId(failure.testFile, failure.testName))
-          .filter((id): id is string => id !== null),
-      ),
-    ];
-
-    const decision = evaluatePhase({
-      phase: options.tddPhase,
-      childExitCode: run.exitCode,
-      failures: run.failures,
-      gear: run.gear,
+    const outcome = await digestRun({
+      output: await capture(),
+      recapture: capture,
+      command,
+      repoRoot,
+      logPath: rawLog.path,
+      settings: options,
       previousState,
-      failedTests,
-      passed: run.counts.passed,
-      failed: run.counts.failed,
-      allowNoTests: options.allowNoTests,
-      // A runner we cannot parse may still leave behavioral evidence in the log.
-      evidence: run.ranked.kept
-        .map((cluster) => `${cluster.message}\n${cluster.signal_window}`)
-        .join("\n"),
+      color: wantsColor(options.color ?? "auto", deps.stdoutIsTTY ?? process.stdout.isTTY === true, env),
+      ...(deps.client ? { client: deps.client } : {}),
     });
+    const { envelope, digest } = outcome;
 
     // An INVALID_GREEN run proved nothing, so it leaves the state as it was.
-    if (options.tddPhase !== "none" && decision.status !== "INVALID_GREEN") {
+    if (options.tddPhase !== "none" && outcome.status !== "INVALID_GREEN") {
       const nextState: RunState = {
         version: 1,
         scope_id: scopeId,
         phase: options.tddPhase,
-        baseline: decision.recordBaseline ? failedTests : (previousState?.baseline ?? []),
+        baseline: outcome.recordBaseline ? outcome.failedTests : (previousState?.baseline ?? []),
         last_run: {
-          failed: failedTests,
-          passed: run.counts.passed,
-          status: decision.status,
+          failed: outcome.failedTests,
+          passed: envelope.summary.passed,
+          status: outcome.status,
           at: new Date().toISOString(),
         },
       };
@@ -227,26 +128,8 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       }
     }
 
-    const envelope = buildEnvelope({
-      status: decision.status,
-      phase: options.tddPhase,
-      exitCode: decision.exitCode,
-      signal: run.signal,
-      gear: run.gear,
-      durationMs: run.durationMs,
-      counts: run.counts,
-      clusters: run.ranked.kept,
-      ...(decision.delta ? { delta: decision.delta } : {}),
-      rawLogPath: run.logPath,
-    });
-
-    const digest = formatEnvelope(envelope, options.format, {
-      omitted: run.ranked.omitted,
-      rawText: run.rawText,
-      color: wantsColor(options.color ?? "auto", deps.stdoutIsTTY ?? process.stdout.isTTY === true, env),
-    });
     process.stdout.write(digest);
-    if (decision.message !== undefined) process.stderr.write(`${decision.message}\n`);
+    if (outcome.message !== undefined) process.stderr.write(`${outcome.message}\n`);
     rawLog.close();
 
     const record: RunRecord = {
@@ -257,14 +140,14 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       source: "run",
       cwd: repoRoot,
       command,
-      exit_code: decision.exitCode,
-      child_exit_code: run.exitCode,
-      signal: run.signal,
-      duration_ms: run.durationMs,
+      exit_code: outcome.exitCode,
+      child_exit_code: outcome.childExitCode,
+      signal: outcome.signal,
+      duration_ms: outcome.durationMs,
       phase: options.tddPhase,
       scope_id: scopeId,
-      status: decision.status,
-      execution_gear: run.gear,
+      status: outcome.status,
+      execution_gear: outcome.gear,
       format: options.format,
       options: {
         max_clusters: options.maxClusters,
@@ -277,7 +160,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
       raw_lines: rawLog.linesWritten,
       raw_bytes: rawLog.bytesWritten,
       digest_bytes: Buffer.byteLength(digest, "utf8"),
-      clusters: recordClusters([...run.ranked.kept, ...run.ranked.omitted]),
+      clusters: recordClusters(outcome.clusters),
     };
     // INV-3: the record is bookkeeping; losing it must not change the exit code.
     try {
@@ -307,7 +190,7 @@ export async function main(argv: readonly string[], deps: MainDeps = {}): Promis
         process.stderr.write(`dot-test-digest: could not prune the cache: ${message}\n`);
       }
     }
-    return decision.exitCode;
+    return outcome.exitCode;
   } catch (error) {
     rawLog.close();
     const message = error instanceof Error ? error.message : String(error);

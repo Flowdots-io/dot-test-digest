@@ -69,7 +69,7 @@ function readBoolean(flag: string, token: string): boolean {
   throw new UsageError(`${flag} accepts only true or false, got ${value}`);
 }
 
-function readInt(flag: string, raw: string, min: number, max: number): number {
+export function readInt(flag: string, raw: string, min: number, max: number): number {
   const value = Number(raw);
   if (!Number.isInteger(value)) throw new UsageError(`${flag} must be an integer, got ${raw}`);
   if (value < min || value > max) {

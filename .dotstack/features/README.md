@@ -37,6 +37,7 @@ Each feature file has an H1, one paragraph, then exactly four H2s: `Sub-features
 - [Exit-code transparency](./exit-codes.md): the child's exit code, a signal, a missing command.
 - [Pass digest](./pass-digest.md): a passing run is one line, at most 160 bytes, and the raw log keeps everything.
 - [Failure digest](./failure-digest.md): clusters, the 2,400-byte ceiling, omitted clusters, `raw:` pointers, the tsc raw-text fallback.
+- [Replay and stats](./replay-stats.md): `replay <run>` re-renders a recorded run without running it (flags override the stored options, exit is the record's), `stats` totals the bytes and tokens the digests saved.
 - [TDD gate](./tdd-gate.md): `--tdd-phase` red, green and refactor, `VALID_RED`/`INVALID_RED`/`INVALID_GREEN`, exit 64, `--allow-no-tests`, baseline state.
 - [JSON envelope](./json-envelope.md): `--format=json` and `--max-clusters`.
 - [Cache retention](./cache.md): the automatic prune after each run, `gc` and `--dry-run`, what is never deleted, `DOT_TEST_DIGEST_PRUNE`.
