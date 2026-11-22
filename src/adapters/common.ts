@@ -1,5 +1,5 @@
 import type { RawFailure } from "../pruner/cluster-dedup.js";
-import type { CapturedLine } from "../runner/capture.js";
+import type { LineSource } from "../runner/line-source.js";
 import type { ErrorKind } from "../types/schema.js";
 
 export interface AdapterCounts {
@@ -22,9 +22,9 @@ export interface AdapterResult {
 export interface Adapter {
   name: string;
   /** Returns 0 when the stream is not this grammar; higher is a better match. */
-  detect(lines: readonly string[]): number;
+  detect(lines: Iterable<string>): number;
   /** `command` is the wrapped command, for the clusters' rerun hints. */
-  parse(lines: readonly CapturedLine[], command?: readonly string[]): AdapterResult;
+  parse(lines: LineSource, command?: readonly string[]): AdapterResult;
 }
 
 const SYNTAX_TOKENS: readonly RegExp[] = [

@@ -1,4 +1,4 @@
-import type { CapturedLine } from "../runner/capture.js";
+import type { LineSource } from "../runner/line-source.js";
 
 export const WINDOW_SIZE = 12;
 export const WINDOW_STRIDE = 6;
@@ -38,19 +38,27 @@ export function scoreWindow(lines: readonly string[]): number {
   return score;
 }
 
-export function partitionWindows(lines: readonly CapturedLine[]): LogWindow[] {
+/** Overlapping windows over the lines; a window's text is read from the source again when it is asked for. */
+export function partitionWindows(lines: LineSource): LogWindow[] {
   const windows: LogWindow[] = [];
+  const textOf = (from: number): string =>
+    lines
+      .slice(from, from + WINDOW_SIZE)
+      .map((line) => line.text)
+      .join("\n");
 
   for (let index = 0; index < lines.length; index += WINDOW_STRIDE) {
     const slice = lines.slice(index, index + WINDOW_SIZE);
     if (slice.length === 0) break;
-    const text = slice.map((line) => line.text);
+    const from = index;
     windows.push({
       id: `w_${windows.length + 1}`,
       startLine: slice[0]?.line ?? index + 1,
       endLine: slice[slice.length - 1]?.line ?? index + 1,
-      score: scoreWindow(text),
-      text: text.join("\n"),
+      score: scoreWindow(slice.map((line) => line.text)),
+      get text() {
+        return textOf(from);
+      },
     });
     if (index + WINDOW_SIZE >= lines.length) break;
   }

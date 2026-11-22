@@ -1,4 +1,4 @@
-import type { CapturedLine } from "../runner/capture.js";
+import type { LineSource } from "../runner/line-source.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import { normalizeTestName } from "../pruner/failure-identity.js";
 import {
@@ -27,7 +27,7 @@ export function inlineDiff(text: string): { expected: string; received: string }
   return { expected: inline[2].trim(), received: inline[1].trim() };
 }
 
-export function parseGeneric(lines: readonly CapturedLine[]): AdapterResult {
+export function parseGeneric(lines: LineSource): AdapterResult {
   const failures: RawFailure[] = [];
   let counts: AdapterCounts = emptyCounts();
   let current: RawFailure | null = null;

@@ -1,4 +1,4 @@
-import type { CapturedLine } from "../runner/capture.js";
+import { textsOf, type LineSource } from "../runner/line-source.js";
 import { jsTestAdapter } from "./js-test.js";
 import { pythonAdapter } from "./python.js";
 import { rustGoAdapter } from "./rust-go.js";
@@ -25,7 +25,7 @@ export const ADAPTERS: readonly Adapter[] = [
   rustGoAdapter,
 ];
 
-export function selectAdapter(lines: readonly string[]): Adapter | null {
+export function selectAdapter(lines: Iterable<string>): Adapter | null {
   let best: { adapter: Adapter; score: number } | null = null;
   for (const adapter of ADAPTERS) {
     const score = adapter.detect(lines);
@@ -36,7 +36,7 @@ export function selectAdapter(lines: readonly string[]): Adapter | null {
 }
 
 /** Runs the winning grammar, or returns null when Gear 0 has nothing to say. */
-export function runGear0(lines: readonly CapturedLine[], command: readonly string[] = []): AdapterResult | null {
-  const adapter = selectAdapter(lines.map((line) => line.text));
+export function runGear0(lines: LineSource, command: readonly string[] = []): AdapterResult | null {
+  const adapter = selectAdapter(textsOf(lines));
   return adapter === null ? null : adapter.parse(lines, command);
 }

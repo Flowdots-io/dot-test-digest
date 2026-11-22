@@ -1,10 +1,12 @@
 import fs from "node:fs";
+import { LogLines } from "../runner/line-source.js";
 import type { RunRecord } from "../runner/run-record.js";
 import { NoInputError, UsageError } from "./errors.js";
 import { resolveRunRef } from "./run-ref.js";
 import type { SubcommandContext } from "./dispatch.js";
 
 const SHOW_USAGE = "dot-test-digest show <run> [range|cluster_id] [--numbers] [--record]";
+const SHOW_BATCH_LINES = 10_000;
 const CLUSTER_ID = /^c_[0-9a-f]{8}$/;
 const RANGES = [/^L(\d+)-L(\d+)$/, /^(\d+)-(\d+)$/, /^L(\d+)$/];
 
@@ -56,13 +58,6 @@ function rangeOf(text: string, selector: string): [number, number] {
   throw new UsageError(`invalid selector "${selector}": use L<a>-L<b>, <a>-<b>, L<a> or a cluster id`);
 }
 
-/** The log's lines as stored, without the newline that ends each. */
-function readLogLines(path: string): string[] {
-  const lines = fs.readFileSync(path, "utf8").split("\n");
-  if (lines.at(-1) === "") lines.pop();
-  return lines;
-}
-
 export function runShow(args: readonly string[], context: SubcommandContext): number {
   const options = parseShowArgs(args);
   const run = resolveRunRef(options.ref, context);
@@ -74,7 +69,7 @@ export function runShow(args: readonly string[], context: SubcommandContext): nu
     return 0;
   }
 
-  const lines = readLogLines(run.logPath);
+  const lines = LogLines.read(run.logPath);
   let from = 1;
   let to = lines.length;
   if (options.selector !== undefined) {
@@ -83,9 +78,10 @@ export function runShow(args: readonly string[], context: SubcommandContext): nu
     to = Math.min(to, lines.length);
   }
 
-  const shown = lines.slice(from - 1, to);
-  context.write(
-    shown.map((line, offset) => (options.numbers ? `${from + offset}\t${line}\n` : `${line}\n`)).join(""),
-  );
+  // Written a batch at a time, so a whole large log is never one string.
+  for (let start = from; start <= to; start += SHOW_BATCH_LINES) {
+    const shown = lines.slice(start - 1, Math.min(to, start + SHOW_BATCH_LINES - 1));
+    context.write(shown.map(({ text, line }) => (options.numbers ? `${line}\t${text}\n` : `${text}\n`)).join(""));
+  }
   return 0;
 }

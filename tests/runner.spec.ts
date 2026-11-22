@@ -36,7 +36,7 @@ describe("runChild", () => {
     log.close();
     expect(result.exitCode).toBe(0);
     expect(result.signal).toBeNull();
-    expect(result.lines).toEqual([
+    expect([...result.lines]).toEqual([
       { stream: "stdout", text: "one", line: 1 },
       { stream: "stderr", text: "two", line: 2 },
     ]);
@@ -55,7 +55,7 @@ describe("runChild", () => {
       rawLog: log,
     });
     log.close();
-    expect(result.lines).toEqual([{ stream: "stdout", text: "no newline", line: 1 }]);
+    expect([...result.lines]).toEqual([{ stream: "stdout", text: "no newline", line: 1 }]);
   });
 
   it("maps a fatal signal to 128 + signal number", async () => {

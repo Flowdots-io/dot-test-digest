@@ -1,6 +1,6 @@
 import { computeFingerprint } from "../pruner/cluster-dedup.js";
 import { toRepoRelative } from "../pruner/stack-pruner.js";
-import type { CapturedLine } from "../runner/capture.js";
+import type { LineSource } from "../runner/line-source.js";
 import type {
   ExecutionGear,
   FailureCluster,
@@ -43,7 +43,7 @@ export interface JevAsker {
 }
 
 export interface Gear1Input {
-  lines: readonly CapturedLine[];
+  lines: LineSource;
   command: readonly string[];
   exitCode: number;
   repoRoot: string;
@@ -72,16 +72,17 @@ function firstSalientLine(window: LogWindow): string {
 
 function buildCluster(
   window: LogWindow,
-  lines: readonly CapturedLine[],
+  lines: LineSource,
   repoRoot: string,
 ): FailureCluster {
   const startLine = Math.max(1, window.startLine - EXCERPT_PADDING);
-  const lastLine = lines[lines.length - 1]?.line ?? window.endLine;
+  const lastLine = lines.at(-1)?.line ?? window.endLine;
   const endLine = Math.min(lastLine, window.endLine + EXCERPT_PADDING);
-  const excerpt = lines
-    .filter((line) => line.line >= startLine && line.line <= endLine)
-    .map((line) => line.text)
-    .join("\n");
+  const excerptLines: string[] = [];
+  for (const line of lines) {
+    if (line.line >= startLine && line.line <= endLine) excerptLines.push(line.text);
+  }
+  const excerpt = excerptLines.join("\n");
 
   const frame = FILE_FRAME.exec(window.text);
   const topFrame =

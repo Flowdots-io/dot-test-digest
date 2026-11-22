@@ -35,6 +35,7 @@ Flags (everything after -- is passed to <command> verbatim):
   --retry-flakes                          retry once when Gear 1 is >=0.80 sure it is a flake
   --allow-no-tests                        accept a green or refactor run that ran no test
   --no-jev                                never call the Jev API (offline)
+  --progress                              print a heartbeat on stderr every 10s while <command> runs
   -h, --help                              show this help
   -v, --version                           show the version
 
@@ -163,6 +164,9 @@ export function parseArgs(
         break;
       case "--allow-no-tests":
         raw["allowNoTests"] = readBoolean(flag, token);
+        break;
+      case "--progress":
+        raw["progress"] = readBoolean(flag, token);
         break;
       default:
         throw new UsageError(`unknown flag: ${flag}`);

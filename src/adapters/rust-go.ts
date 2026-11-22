@@ -1,4 +1,4 @@
-import type { CapturedLine } from "../runner/capture.js";
+import type { LineSource } from "../runner/line-source.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import {
   classifyMessage,
@@ -33,7 +33,7 @@ export const rustGoAdapter: Adapter = {
     return score;
   },
 
-  parse(lines: readonly CapturedLine[], command: readonly string[] = []): AdapterResult {
+  parse(lines: LineSource, command: readonly string[] = []): AdapterResult {
     const failures: RawFailure[] = [];
     let counts: AdapterCounts = emptyCounts();
     let pendingDiagnostic: RawFailure | null = null;

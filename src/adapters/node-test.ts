@@ -1,6 +1,6 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { CapturedLine } from "../runner/capture.js";
+import { findLineIndex, lineAt, type LineSource } from "../runner/line-source.js";
 import type { RawFailure } from "../pruner/cluster-dedup.js";
 import type { ErrorKind } from "../types/schema.js";
 import {
@@ -163,8 +163,8 @@ function yamlScalar(value: string): string {
   });
 }
 
-function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapBlock | null {
-  const open = lines[headerIndex + 1]?.text;
+function readTapBlock(lines: LineSource, headerIndex: number): TapBlock | null {
+  const open = lineAt(lines, headerIndex + 1)?.text;
   if (open === undefined || open.trim() !== "---") return null;
   const base = leadingSpaces(open);
   const fields = new Map<string, string[]>();
@@ -179,7 +179,7 @@ function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapB
   };
 
   for (let index = headerIndex + 2; index < lines.length; index += 1) {
-    const text = lines[index]?.text ?? "";
+    const text = lineAt(lines, index)?.text ?? "";
     if (text.trim() === "..." && leadingSpaces(text) === base) {
       seal();
       return { fields, endIndex: index };
@@ -201,12 +201,12 @@ function readTapBlock(lines: readonly CapturedLine[], headerIndex: number): TapB
 }
 
 /** node's TAP relays a crashed file's stderr as `#` lines directly above that file's top-level `# Subtest:` line. */
-function tapSubprocessError(lines: readonly CapturedLine[], headerIndex: number): string | undefined {
+function tapSubprocessError(lines: LineSource, headerIndex: number): string | undefined {
   let subtest = headerIndex - 1;
-  while (subtest >= 0 && !/^# Subtest:/.test(lines[subtest]?.text ?? "")) subtest -= 1;
+  while (subtest >= 0 && !/^# Subtest:/.test(lineAt(lines, subtest)?.text ?? "")) subtest -= 1;
   const comments: string[] = [];
   for (let index = subtest - 1; index >= 0; index -= 1) {
-    const text = lines[index]?.text ?? "";
+    const text = lineAt(lines, index)?.text ?? "";
     if (!text.startsWith("#")) break;
     comments.unshift(text.replace(/^# ?/, ""));
   }
@@ -232,12 +232,12 @@ function readTapMessage(block: TapBlock, field: TapField): string {
 }
 
 function readTapEntry(
-  lines: readonly CapturedLine[],
+  lines: LineSource,
   index: number,
   name: string,
   block: TapBlock,
 ): NodeEntry {
-  const startLine = lines[index]?.line ?? 0;
+  const startLine = lineAt(lines, index)?.line ?? 0;
   const field: TapField = (key) => block.fields.get(key) ?? [];
   const crashedFile = field("error")[0] === "test failed" && block.fields.has("exitCode");
   const message = readTapMessage(block, field);
@@ -259,12 +259,12 @@ function readTapEntry(
     crashedFile,
     ...(subprocessError !== undefined ? { subprocessError } : {}),
     startLine,
-    endLine: lines[block.endIndex]?.line ?? startLine,
+    endLine: lineAt(lines, block.endIndex)?.line ?? startLine,
   };
 }
 
 /** node counts a timed-out test as `cancelled`, not `fail`. One stream can hold several node runs; each prints its own summary, so the counts are summed. */
-function nodeCounts(lines: readonly CapturedLine[], pattern: RegExp): AdapterCounts {
+function nodeCounts(lines: LineSource, pattern: RegExp): AdapterCounts {
   const seen = new Map<string, number>();
   for (const line of lines) {
     const match = pattern.exec(line.text);
@@ -279,15 +279,15 @@ function nodeCounts(lines: readonly CapturedLine[], pattern: RegExp): AdapterCou
   return counts;
 }
 
-export function isNodeTapStream(lines: readonly CapturedLine[]): boolean {
-  return lines.some((line) => NODE_SUBTEST.test(line.text));
+export function isNodeTapStream(lines: LineSource): boolean {
+  return findLineIndex(lines, (text) => NODE_SUBTEST.test(text)) >= 0;
 }
 
-export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
+export function parseNodeTap(lines: LineSource): AdapterResult {
   const entries: NodeEntry[] = [];
   const foreign: RawFailure[] = [];
   for (let index = 0; index < lines.length; index += 1) {
-    const notOk = TAP_NOT_OK.exec(lines[index]?.text ?? "");
+    const notOk = TAP_NOT_OK.exec(lineAt(lines, index)?.text ?? "");
     if (notOk === null) continue;
     const name = (notOk[2] ?? "").replace(/\\([\\#])/g, "$1");
     const isDirective = notOk[3] !== undefined;
@@ -295,7 +295,7 @@ export function parseNodeTap(lines: readonly CapturedLine[]): AdapterResult {
     if (!isDirective) {
       const failureType = block?.fields.get("failureType")?.[0];
       if (block === null) {
-        entries.push(nameOnlyEntry(name, lines[index]?.line ?? 0));
+        entries.push(nameOnlyEntry(name, lineAt(lines, index)?.line ?? 0));
       } else if (failureType === undefined) {
         foreign.push(...parseGeneric(lines.slice(index, block.endIndex + 1)).failures);
       } else if (failureType !== "subtestsFailed") {
@@ -318,7 +318,7 @@ const SPEC_ENTRY_INDENT = 2;
 const SPEC_TEST_ROW_START = /^\s*[✔✖▶﹣]/;
 const SPEC_DIAGNOSTIC_PREFIX = /^ℹ /;
 
-export function isSpecStream(lines: readonly CapturedLine[]): boolean {
+export function isSpecStream(lines: LineSource): boolean {
   const keys = new Set<string>();
   for (const line of lines) {
     const match = NODE_SPEC_SUMMARY.exec(line.text);
@@ -331,9 +331,9 @@ function inspectedString(value: string): string {
   return unquote(value, "'\"`", (inner, quote) => (inner.includes(quote) ? undefined : inner));
 }
 
-function readSpecEntry(lines: readonly CapturedLine[], start: number, end: number): NodeEntry | null {
-  const at = SPEC_TEST_AT.exec(lines[start]?.text ?? "");
-  const nameRow = SPEC_NAME_ROW.exec(lines[start + 1]?.text ?? "");
+function readSpecEntry(lines: LineSource, start: number, end: number): NodeEntry | null {
+  const at = SPEC_TEST_AT.exec(lineAt(lines, start)?.text ?? "");
+  const nameRow = SPEC_NAME_ROW.exec(lineAt(lines, start + 1)?.text ?? "");
   if (at === null || nameRow === null || nameRow[2] !== undefined) return null;
 
   const messageLines: string[] = [];
@@ -343,7 +343,7 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
   let propertyIndent: number | null = null;
   let last = start + 1;
   for (let index = start + 2; index < end; index += 1) {
-    const raw = lines[index]?.text ?? "";
+    const raw = lineAt(lines, index)?.text ?? "";
     const text = raw.trim();
     if (text === "") continue;
     if (leadingSpaces(raw) < SPEC_ENTRY_INDENT) break;
@@ -378,13 +378,13 @@ function readSpecEntry(lines: readonly CapturedLine[], start: number, end: numbe
       : {}),
     stack,
     crashedFile: message === "test failed" && path.resolve(name) === file,
-    startLine: lines[start]?.line ?? 0,
-    endLine: lines[last]?.line ?? 0,
+    startLine: lineAt(lines, start)?.line ?? 0,
+    endLine: lineAt(lines, last)?.line ?? 0,
   };
 }
 
 /** node's spec reporter opens a suite with a `▶` row and closes it with a `✖` row of the same name and indent. */
-function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
+function readSpecLeafRows(lines: LineSource): NodeEntry[] {
   const opened = new Set<string>();
   const entries: NodeEntry[] = [];
   for (const line of lines) {
@@ -406,13 +406,18 @@ function readSpecLeafRows(lines: readonly CapturedLine[]): NodeEntry[] {
  * The rows of node's own `✖ <name>` lines per name, in stream order. The `✖ <name>` row directly under a
  * `test at` line belongs to the failing-tests section, not to the file, and is skipped.
  */
-function ownFileRows(lines: readonly CapturedLine[]): Map<string, number[]> {
+function ownFileRows(lines: LineSource): Map<string, number[]> {
   const rows = new Map<string, number[]>();
-  lines.forEach((line, index) => {
+  let index = -1;
+  let previous = "";
+  for (const line of lines) {
+    index += 1;
+    const above = previous;
+    previous = line.text;
     const name = SPEC_NAME_ROW.exec(line.text)?.[1];
-    if (name === undefined || SPEC_TEST_AT.test(lines[index - 1]?.text ?? "")) return;
+    if (name === undefined || SPEC_TEST_AT.test(above)) continue;
     rows.set(name, [...(rows.get(name) ?? []), index]);
-  });
+  }
   return rows;
 }
 
@@ -420,9 +425,9 @@ function ownFileRows(lines: readonly CapturedLine[]): Map<string, number[]> {
  * The lines node printed between the previous test row and `row`. A `ℹ` row (node's diagnostics and its
  * summary lines) is not a test row: it belongs to these lines, with the `ℹ ` dropped.
  */
-function linesAbove(lines: readonly CapturedLine[], row: number): string[] {
+function linesAbove(lines: LineSource, row: number): string[] {
   let previous = row - 1;
-  while (previous >= 0 && !SPEC_TEST_ROW_START.test(lines[previous]?.text ?? "")) previous -= 1;
+  while (previous >= 0 && !SPEC_TEST_ROW_START.test(lineAt(lines, previous)?.text ?? "")) previous -= 1;
   return lines.slice(previous + 1, row).map((line) => line.text.replace(SPEC_DIAGNOSTIC_PREFIX, ""));
 }
 
@@ -430,7 +435,7 @@ function linesAbove(lines: readonly CapturedLine[], row: number): string[] {
  * node's spec entry for a crashed file says only `'test failed'`; its stderr is printed above that file's own
  * `✖` row. The n-th crashed entry of a name takes the n-th such row of that name (one stream can hold several runs).
  */
-function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntry[]): void {
+function adoptSubprocessErrors(lines: LineSource, entries: NodeEntry[]): void {
   const crashed = entries.filter((entry) => entry.crashedFile);
   if (crashed.length === 0) return;
   const rows = ownFileRows(lines);
@@ -441,14 +446,14 @@ function adoptSubprocessErrors(lines: readonly CapturedLine[], entries: NodeEntr
   }
 }
 
-export function parseNodeSpec(lines: readonly CapturedLine[]): AdapterResult {
+export function parseNodeSpec(lines: LineSource): AdapterResult {
   const counts = nodeCounts(lines, NODE_SPEC_SUMMARY);
-  const section = lines.findIndex((line) => SPEC_FAILING_HEADER.test(line.text));
+  const section = findLineIndex(lines, (text) => SPEC_FAILING_HEADER.test(text));
   if (section < 0) return finish(readSpecLeafRows(lines), [], counts);
 
   const starts: number[] = [];
   for (let index = section + 1; index < lines.length; index += 1) {
-    if (SPEC_TEST_AT.test(lines[index]?.text ?? "")) starts.push(index);
+    if (SPEC_TEST_AT.test(lineAt(lines, index)?.text ?? "")) starts.push(index);
   }
   const entries: NodeEntry[] = [];
   starts.forEach((start, position) => {
