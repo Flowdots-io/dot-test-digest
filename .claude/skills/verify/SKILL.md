@@ -18,7 +18,7 @@ V=.claude/skills/verify/verify.sh
 RUN=$($V launch)        # builds HEAD into .acceptance/verify/$RUN/build, copies the fixtures, prints the run id
 ```
 
-`launch` creates, under `.acceptance/verify/$RUN/` (git-ignored): `build/` (compiled binary), `schema/` (a copy of the repo's, where `dot-test-digest schema` looks for it), `home/` (used as `DOT_TEST_DIGEST_HOME`, so the user's `~/.cache/dot-test-digest` is never touched), `evidence/`, and a fixture copy in a `mktemp` directory **outside the repo** (`tests/fixtures/node-cart`, `tsc-small`, `vitest-cart`; outside because vitest walks up looking for a config and would pick up the repo's own). Ready means `launch` printed a run id and exited 0. It builds the working tree, so a dirty tree is recorded in `$RUN/commit`.
+`launch` creates, under `.acceptance/verify/$RUN/` (git-ignored): `build/` (compiled binary), `schema/` (a copy of the repo's, where `dot-test-digest schema` looks for it), `home/` (used as `DOT_TEST_DIGEST_HOME`, so the user's `~/.cache/dot-test-digest` is never touched), `xdg/` (used as `XDG_CONFIG_HOME` by `drive`, so the user's `~/.config/dot-test-digest/config.json` is never read; created only when a journey writes a user config there), `evidence/`, and a fixture copy in a `mktemp` directory **outside the repo** (`tests/fixtures/node-cart`, `tsc-small`, `vitest-cart`; outside because vitest walks up looking for a config and would pick up the repo's own). Ready means `launch` printed a run id and exited 0. It builds the working tree, so a dirty tree is recorded in `$RUN/commit`.
 
 ## Doctor
 
@@ -40,6 +40,28 @@ $V drive $RUN <label> <fixture|-> [digest flags] -- <command ...>
 - To change a fixture (for example write a new test file), edit the copy at `$(cat .acceptance/verify/$RUN/workdir)`, never the repo's `tests/fixtures/`.
 
 Handles are literal: header lines (`[PASS]`, `[FAIL] 4 failed, 2 passed ... | 2 clusters | log: ...`), the `next: dot-test-digest show <run> <cluster>` line under a failure header, cluster ids (`c_9721831d`), `rerun:` and `raw: L<n>-L<m>` rows, the `+N more clusters (see log)` line, exit codes, and the files under `home/` (`logs/run_*.log`, `state-<scope>.json`). Each feature file in `.dotstack/features/` has the exact commands and expected results.
+
+## Journeys
+
+One feature file per surface in `.dotstack/features/`; each journey is a bold label in its "Driving it with verify.sh" section, with the exact command and expected result. A release run drives the main journeys of every file:
+
+| Feature file | Main journeys |
+| --- | --- |
+| `cli-surface.md` | Help, Version, Unknown flag, Missing delimiter, Help lists subcommands, A program called show, No run yet, Range, Cluster, Bad selectors, References, Removed log |
+| `exit-codes.md` | Arbitrary code, Signal, Missing command, Test runner failure, Closed stdout |
+| `pass-digest.md` | node --test, vitest, Skipped and todo, eslint warnings, Log keeps everything |
+| `failure-digest.md` | node --test, The next step works, Same under the spec reporter, Raw pointer, Fewer clusters, vitest, tsc fallback, Unstructured |
+| `digest-input.md` | Compiler log, Inferred exit, Foreign TAP log, Read back, stdin, Errors |
+| `replay-stats.md` | Same digest, Every cluster, Red verdict, No record, Log removed, Stats, Empty |
+| `tdd-gate.md` | Valid red, Invalid red (passing test, broken import), Missing export is a valid red, Full cycle, Refactor, Green that ran nothing, Opt out |
+| `json-envelope.md` | Failing run, Rerun works, Cluster cap, ndjson, Schema |
+| `cache.md` | gc dry-run, gc, Bad value, Auto prune, Switched off, One hour, Missing cache |
+| `progress.md` | Heartbeats, Off by default, Fast child, Small heap, Failure in the middle |
+| `config.md` | Defaults, Project file, Env beats file, flag beats env, User file, Strict, Retention trust, MCP trust, Color always, Auto in a pipe |
+| `doctor-init.md` | Vitest project, JSON, Key hidden, Bad config, Init, Init again, Symlink |
+| `mcp.md` | Session, Read the runs, Default refuses, Prefix and cwd, Project file ignored, Timeout, Client snippet |
+
+`verify.sh` needs no command per feature: subcommands are driven with `drive` like any other invocation, and an MCP session is JSON-RPC lines piped into `drive` (see `mcp.md`).
 
 ## Evidence
 

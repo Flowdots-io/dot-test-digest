@@ -32,7 +32,7 @@ Preconditions:
 - **Red verdict.** `$V drive $RUN red node-cart --tdd-phase=red --scope-id=rr -- node --test passing.test.js` (exit `64`), then `$V drive $RUN rred node-cart replay last`: exit `64`, header `[INVALID_RED | RED] ...`, stderr `New test passed before implementation; expected a failing behavioral assertion.`
 - **No record.** `echo x > $H/logs/run_legacy1.log`, then `$V drive $RUN legacy - replay run_legacy1`: exit `66`, stderr `run_legacy1 has no record (written by an older version); replay needs one`. Delete the file afterwards.
 - **Log removed.** Move the cart run's `.log` aside, `$V drive $RUN gone - replay <run id>`: exit `66`, stderr `log of <run> was removed`. Move it back.
-- **Stats.** After only the cart run, `$V drive $RUN stats - stats`: exit `0`, `runs: 1`, `raw bytes:` equals `wc -c` of the log, `digest bytes:` equals `wc -c` of `evidence/cart/stdout.txt`, `status: FAIL 1` (measured: `3800`, `2371`, `saved: 1429 bytes (37.6%), about 358 tokens`; the byte counts move with the fixture path length).
+- **Stats.** After only the cart run, `$V drive $RUN stats - stats`: exit `0`, `runs: 1`, `raw bytes:` equals `wc -c` of the log, `digest bytes:` equals `wc -c` of `evidence/cart/stdout.txt`, `status: FAIL 1` (measured 2026-11-13 on the 0.2.0 build: `3799`, `1913`, `saved: 1886 bytes (49.6%), about 472 tokens`; the byte counts move with the fixture and `home/` path lengths).
 - **Stats JSON and --last.** `$V drive $RUN statsj - stats --json` prints the same numbers as one JSON line; after the red journey, `stats --last 1` counts only the `INVALID_RED` run.
 - **Empty.** On a fresh launch, `$V drive $RUN none - stats`: stdout `runs: 0`, exit `0`.
 

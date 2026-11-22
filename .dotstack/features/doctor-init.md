@@ -28,7 +28,7 @@ Preconditions:
 - `unset TYPESAFE_API_KEY JEV_API_KEY` in your shell first (the driver passes the environment through).
 - Prod: not safe (`init` writes `.dot-test-digest.json` into the fixture copy; `doctor` writes nothing).
 
-- **Vitest project.** `$V drive $RUN vit vitest-cart doctor`. Exit `0`; stdout is the six lines `ok    node: v22.23.4 (>= 20)`, `ok    version: 0.1.0`, `ok    cache: <abs $H> (writable, 0 runs, 0 KiB)`, `ok    config: none found`, `warn  gear1: TYPESAFE_API_KEY not set (Jev disabled; heuristic fallback)`, `ok    runner: vitest (package.json) -> dot-test-digest -- npx vitest run`. Second view: `ls -A $H` before and after is the same.
+- **Vitest project.** `$V drive $RUN vit vitest-cart doctor`. Exit `0`; stdout is the six lines `ok    node: v22.23.4 (>= 20)`, `ok    version: 0.2.0`, `ok    cache: <abs $H> (writable, 0 runs, 0 KiB)`, `ok    config: none found`, `warn  gear1: TYPESAFE_API_KEY not set (Jev disabled; heuristic fallback)`, `ok    runner: vitest (package.json) -> dot-test-digest -- npx vitest run`. Second view: `ls -A $H` before and after is the same.
 - **JSON.** `$V drive $RUN tscj tsc-small doctor --json`. Exit `0`; one JSON line, `ok` true, `runners` is `[{"name":"tsc","status":"ok","source":"tsconfig.json","command":"dot-test-digest -- npx tsc --noEmit"}]`.
 - **No runner.** `$V drive $RUN cart node-cart doctor`: the last line is `warn  runner: none detected (wrap your own command: dot-test-digest -- <command>)` (its `package.json` is only `{"type":"module"}`); exit `0`.
 - **Key hidden.** `TYPESAFE_API_KEY=sk-secret-123 $V drive $RUN key tsc-small doctor`. The gear1 line is `ok    gear1: TYPESAFE_API_KEY is set`; `grep -c sk-secret .acceptance/verify/$RUN/evidence/key/std*` is `0` for both files.

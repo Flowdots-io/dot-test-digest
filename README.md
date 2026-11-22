@@ -50,14 +50,16 @@ dot-test-digest --version
 
 If `dot-test-digest` is not found afterwards, run `pnpm setup` and restart your shell: it puts pnpm's global bin directory on your `PATH`. After you pull new commits, run `pnpm build` again: the linked binary is `dist/index.js`, and it does not rebuild itself.
 
-### Getting started in a project
+**Upgrading from 0.1.x.** One verdict changed: a `--tdd-phase=green` or `refactor` run that exits `0` without any recognised test is now `INVALID_GREEN` (exit `64`) instead of `PASS`; add `--allow-no-tests` for a runner without a grammar. The JSON envelope only gained keys (`schema_version`, `run_id`, `summary.warnings`, `summary.omitted_clusters`, `clusters[].rerun`), so a reader that compares `summary` by exact equality must allow them. The cache is now pruned after each run (the newest 50 runs are always kept; see [The cache and what is deleted](#the-cache-and-what-is-deleted)). The rest is new surface: subcommands, configuration files, `--color`, `--progress`, `--format=ndjson` and an MCP server.
 
-In the project you want to use it in, `doctor` checks the setup and names the command to wrap; `init` writes a starter config file; `init --print-mcp-config` prints the entry an MCP client needs (see [As an MCP server](#as-an-mcp-server)).
+## Quick start
+
+In the project you want to use it in, `doctor` checks the setup and names the command to wrap, and `init` writes a starter config file:
 
 ```text
 $ dot-test-digest doctor
 ok    node: v22.23.4 (>= 20)
-ok    version: 0.1.0
+ok    version: 0.2.0
 ok    cache: /home/me/.cache/dot-test-digest (writable, 12 runs, 84 KiB)
 ok    config: none found
 warn  gear1: TYPESAFE_API_KEY not set (Jev disabled; heuristic fallback)
@@ -67,29 +69,15 @@ $ dot-test-digest init
 wrote /home/me/app/.dot-test-digest.json
 ```
 
-`doctor` prints one line per check, `ok`, `warn` or `fail`, and exits `0` unless a check failed (`1`). It reads only: it never writes a file (a cache directory that does not exist yet is checked, not created) and never calls the network. The checks:
+Then wrap the command `doctor` named. A pass is one line; a failure is a digest whose line 2 names the next command to run:
 
-- `node`: the Node version; `fail` below 20.
-- `version`: the tool's version.
-- `cache`: the cache directory (`DOT_TEST_DIGEST_HOME`, default `~/.cache/dot-test-digest`), with the number of recorded runs and its size; `fail` when it cannot be created or written, for example under a regular file. An entry inside it that cannot be read is also a `fail`: `fail  cache: <home> (cannot read <path>: EACCES)`; a file removed while `doctor` counts (a concurrent prune) is skipped.
-- `config`: the project and user files found (see [Configuration](#configuration)), or `none found`; `fail` with the same message a run would print when one is invalid (`<path>: unknown key "maxCluster"`). A setting the file may not set (a project `mcp` key, a project retention limit) adds a `warn  config: ignoring ...` line with the text a run prints on `stderr`.
-- `gear1`: `ok    gear1: TYPESAFE_API_KEY is set` (or `JEV_API_KEY is set`; the key itself is never printed). Otherwise a `warn` that Jev is off and the heuristic is used: the key is not set, it is empty (`TYPESAFE_API_KEY` is read first, as a run does, so an empty one turns Jev off even when `JEV_API_KEY` is set), or the config sets `noJev` (`warn  gear1: Jev disabled by noJev (<source>); heuristic fallback`).
-- `runner`: one line per runner found in the working directory, with the command to wrap: `vitest`, `jest`, `mocha` and `eslint` from a dependency in `package.json`; `node --test` from a `scripts.test` that contains `node --test`; `pytest` from `pytest.ini`, or a `pyproject.toml` or `setup.cfg` that mentions pytest; `cargo` from `Cargo.toml`; `go` from `go.mod`; `tsc` from `tsconfig.json`. It is a `warn` for `mocha` (no grammar: you get the heuristic tail, and a TDD `green` run needs `--allow-no-tests`) and for the runners whose grammar is checked against fixtures only (`jest`, `pytest`, `cargo`, `go`, `eslint`; see [What it understands](#what-it-understands)). No runner found is a `warn`, and so is a `package.json` that cannot be read (`warn  runner: package.json is not valid JSON`, or `is not a JSON object`).
-
-`doctor --json` prints one line `{"ok":true,"checks":[{"name":"node","status":"ok","detail":"..."},...],"runners":[{"name":"vitest","status":"ok","source":"package.json","command":"dot-test-digest -- npx vitest run"},...]}`; a `warn` runner also has a `note`.
-
-`init` writes `.dot-test-digest.json` in the working directory with the defaults of the settings a project usually changes, and no other file:
-
-```json
-{
-  "maxClusters": 5,
-  "contextLines": 2,
-  "format": "compact-md",
-  "noJev": false
-}
+```bash
+dot-test-digest -- npx vitest run          # the digest, with vitest's own exit code
+dot-test-digest show last                  # the raw log of that run
+dot-test-digest replay last --format=json  # the same run again, as JSON, without running it
 ```
 
-If the file exists, `init` changes nothing and exits `64` with `<path> already exists (use --force to overwrite)`; `init --force` overwrites it. `init` never writes through a symlink: on a link it exits `64` with `<path> is a symlink (use --force to replace the link)`, and `--force` removes the link itself (its target is left untouched) and writes a new file. A directory at that path exits `64` `<path> is a directory`, with or without `--force`. A file that cannot be created (a read-only directory) exits `73` (`EX_CANTCREAT`) with `cannot create <path>: EACCES`. The file is used only from inside a git repository or your home directory (see [Configuration](#configuration)); `dot-test-digest config` shows whether it applies.
+`doctor` and `init` are described under [Doctor and init](#doctor-and-init); `init --print-mcp-config` prints the entry an MCP client needs (see [As an MCP server](#as-an-mcp-server)).
 
 ## How to use it
 
@@ -119,9 +107,178 @@ dot-test-digest schema                               # the JSON Schema of the en
 | `--color <auto\|always\|never>` | `auto` | Color the status word of the header (green for `PASS` and `VALID_RED`, red for every other status). `auto` colors only when stdout is a terminal, `NO_COLOR` is unset or empty and `TERM` is not `dumb`; `always` ignores `NO_COLOR`. Sizes are measured on the uncolored text, and `--format=json` and `ndjson` are never colored. |
 | `-h`, `--help` / `-v`, `--version` | | Print usage / version and exit `0`. |
 
-Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`), `NO_COLOR` (see `--color`), and the `DOT_TEST_DIGEST_*` settings below.
+Environment: `TYPESAFE_API_KEY` (enables Gear 1), `TYPESAFE_API_URL` (override, see `.env.example`), `DOT_TEST_DIGEST_HOME` (moves logs and TDD state; default `~/.cache/dot-test-digest`), `NO_COLOR` (see `--color`), and the `DOT_TEST_DIGEST_*` settings of [Configuration](#configuration).
 
-### Configuration
+### What you get back
+
+The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed> failed in <time> | <n> clusters | log: <path>` (`[<STATUS> | <PHASE>]` when `--tdd-phase` is set; the cluster count appears only when there are clusters; `, <n> skipped` and `, <n> warnings` follow the counts only when nonzero; a pass whose output no grammar recognised reads `exit 0` instead of the counts). Skipped counts skipped and todo tests; warnings are lint and compiler warnings, which are counted (`summary.warnings` in the JSON, present only when nonzero) and become failure clusters only when the command failed with no error to show (a linter run with `--max-warnings=0`).
+
+### Statuses and exit codes
+
+| Status | Meaning | Exit code |
+| --- | --- | --- |
+| `PASS` | The command exited `0` (and, with `--tdd-phase`, the phase was satisfied). | `0` |
+| `FAIL` | The command failed and a grammar found failure clusters. | the command's |
+| `BUILD_ERROR` | The command failed but no grammar recognised the output (compile errors from an unknown tool, a crash). The digest shows a narrowed tail of the log. | the command's |
+| `VALID_RED` | `--tdd-phase=red` and the test failed for a behavioural reason. A *successful* gate run. | `0` |
+| `INVALID_RED` | `--tdd-phase=red` and the test passed, or failed for a non-behavioural reason (syntax error, broken import, runner crash). | `64` |
+| `INVALID_GREEN` | `--tdd-phase=green` or `refactor`, the command exited `0`, but no passed or failed test was recognised (skipped tests do not count). A one-line message on `stderr`, and the TDD state is left as it was. `--allow-no-tests` turns it back into `PASS`. **New in 0.2.0**: before, such a run was `PASS`. | `64` |
+| `REGRESSION_DETECTED` | `--tdd-phase=refactor` and something that passed before now fails. | the command's |
+
+A wrapped run exits with exactly the command's exit code (`0..255`), or `128 + signal` when the command was killed (`143` for `SIGTERM`); the TDD gate's `64` above is the only exception. The other codes the tool itself can return:
+
+| Exit | When |
+| --- | --- |
+| `64` (`EX_USAGE`) | A usage error: an unknown flag, a bad value, a missing `--`, an invalid config file or variable, an ambiguous or too-short run reference, a bad range or cluster id, `init` on a file that exists. |
+| `66` (`EX_NOINPUT`) | A subcommand names something that does not exist: a run, its record or its log (`show`, `replay`), or an input file (`digest`). |
+| `73` (`EX_CANTCREAT`) | `init` cannot create its file (a read-only directory). |
+| `70` (`EX_SOFTWARE`) | An internal error. |
+| `127` | The wrapped command could not be started (not found). |
+| `1` | `doctor` found a failed check; `digest` without `--exit-code` found a failure. |
+
+`replay` exits with the recorded run's exit code and `digest` with the one given by `--exit-code`, so both stay transparent for what they digest; no other subcommand returns a command's code. A failure to write the log, the run record or the state file, or to prune the cache, is reported on `stderr` and never changes the exit code, and neither does a reader that closes stdout early (`dot-test-digest -- … | head -1`): the digest is dropped, the log is still written and no `EPIPE` trace is printed.
+
+### The next step and the rerun command
+
+Line 2 of a failure digest names what to look at next: `next: dot-test-digest show <run> <cluster>`, where `<cluster>` is the first cluster that did not get a full block (the first of the listed lines, when it fits), or the first cluster when every one is shown. Run it as printed: `show` prints that cluster's lines from the log. The first full block also has a `rerun:` row, a shell command that runs only that block's first test, when the command you wrapped names a test runner:
+
+```text
+[FAIL] 4 failed, 2 passed in 260ms | 3 clusters | log: ~/.cache/dot-test-digest/logs/run_mweo5b0ga9ae9e43.log
+next: dot-test-digest show run_mweo5b0ga9ae9e43 c_53a8182a
+c_9721831d ASSERTION_FAILURE x1 cart.test.js:7:46
+  …
+  tests: discount 10% leaves 90%
+  rerun: node --test --test-name-pattern '^discount 10% leaves 90%$' cart.test.js
+  raw: L15-L39
+```
+
+If the run record could not be written (a full disk; the digest says `could not write the run record` on `stderr`), the `next:` line still names the run, and `show` answers it with exit `66` and `record of <run> is missing or unreadable` (it needs the record for any selector); the lines are still in the log the header names. The `next:` line is not printed on a pass, when the digest falls back to the raw text (the small `tsc` case), or for an envelope a program builds without a `run_id`. Both lines count toward the 2,400-byte limit (together about 130 bytes), so a digest can show one full block fewer than before; the clusters that lose their block are listed or counted, as always.
+
+## The TDD gate
+
+`--tdd-phase` makes the tool check that a test-first loop is honest. State lives in `~/.cache/dot-test-digest/state-<scope_id>.json`.
+
+| Phase | When you run it | Result |
+| --- | --- | --- |
+| `red` | After writing a new test, before the code | `VALID_RED` (exit `0`) only if the test fails on a behavioural assertion or a missing export under test; the failing tests are recorded as the baseline. `INVALID_RED` (exit `64`) if it passes, or fails on a syntax error, an unresolved import or a runner startup crash. |
+| `green` | After writing the code | `PASS` when the command exits `0` and at least one test was recognised, with the count of baseline tests that now pass. `INVALID_GREEN` (exit `64`, state unchanged) when it exits `0` but no passed or failed test was recognised; pass `--allow-no-tests` for a runner without a grammar. `FAIL` (the child's exit code) otherwise, with any re-broken baseline test listed as a regression. |
+| `refactor` | While restructuring | `PASS`, `INVALID_GREEN` as for `green`, or `REGRESSION_DETECTED` with the newly broken tests. |
+| `none` | Everything else | Plain digest, no state. |
+
+This is what stops an agent (or a tired human) from calling a test "red" when it fails only because of a typo in its own import.
+
+## Subcommands
+
+A subcommand is the first word instead of flags (`dot-test-digest show last`); `-- show` still runs a program called `show`, and a subcommand name after a flag is the missing-`--` usage error. `<run>` is `last` (the newest run recorded in the current directory), a run id, or a unique prefix of at least 6 characters. `dot-test-digest --help` lists them all.
+
+| Subcommand | What it does | Section |
+| --- | --- | --- |
+| `show <run> [range\|cluster_id]` | Print a run's raw log lines, a range or a cluster's lines (`--numbers`, `--record`). | [Looking back at a run](#looking-back-at-a-run) |
+| `replay <run>` | Print the digest of a recorded run again without running it (`--format`, `--max-clusters`, `--context-lines`). | [Replay](#replay) |
+| `stats` | Total the bytes and tokens the digests saved (`--last N`, `--json`). | [Stats](#stats) |
+| `digest <file\|->` | Digest an existing log file, or stdin, into a recorded run (`--exit-code`, `--format`, `--max-clusters`, `--context-lines`, `--no-jev`). | [Digesting a log you already have](#digesting-a-log-you-already-have) |
+| `doctor` | Check the setup and name the command for each detected runner (`--json`). | [Doctor and init](#doctor-and-init) |
+| `init` | Write a starter `.dot-test-digest.json` (`--force`), or print the MCP client entry (`--print-mcp-config`). | [Doctor and init](#doctor-and-init) |
+| `config` | Print the effective settings and where each came from. | [Configuration](#configuration) |
+| `gc` | Delete old runs and state files from the cache (`--keep`, `--max-age-days`, `--state-max-age-days`, `--dry-run`). | [The cache and what is deleted](#the-cache-and-what-is-deleted) |
+| `schema` | Print the JSON Schema of the envelope. | [For programs and agents](#for-programs-and-agents) |
+| `mcp` | Serve `run_tests`, `show_log`, `replay` and `list_runs` over MCP on stdio (`--allow "<word> <word>"`, repeatable). | [As an MCP server](#as-an-mcp-server) |
+
+### Looking back at a run
+
+Every run that gets as far as a digest leaves two files in `~/.cache/dot-test-digest/logs/` (or `$DOT_TEST_DIGEST_HOME/logs/`): `<run>.log`, the raw output line for line (every `raw: L<a>-L<b>` pointer in a digest refers to it), and `<run>.json`, the **run record**. The record is written atomically after the digest is printed and holds what the log cannot: `run_id`, `version`, `created_at`, `cwd`, `command`, `exit_code` (what the tool returned) and `child_exit_code`, `signal`, `duration_ms`, `phase`, `scope_id`, `status`, `execution_gear`, `format`, `options`, `summary`, the size of the log (`raw_lines`, `raw_bytes`), the bytes of the digest (`digest_bytes`) and every cluster, shown or omitted, with its `raw_log_lines` range. A failure to write it prints `dot-test-digest: could not write the run record: <reason>` on `stderr` and never changes the exit code. A run that ends before a digest, because the command could not be started (exit `127`) or the tool hit an internal error (exit `70`), leaves its log and no record.
+
+`show` prints a run's raw lines exactly as stored, so you can open the part of the log a digest pointed at without knowing its path:
+
+```bash
+dot-test-digest show last                  # the whole log of the newest run in this directory
+dot-test-digest show last L15-L39          # a range (also 15-39, or L15 for one line)
+dot-test-digest show last c_9721831d       # the lines of one cluster, from the record
+dot-test-digest show run_mwdh6m L15-L16 --numbers   # "15<TAB>..." per line
+dot-test-digest show last --record         # the record file itself
+```
+
+`last` is the newest record whose `cwd` is the current directory, so runs in other repositories never answer. A range running past the end is clamped. Errors are one line on `stderr`: `no run recorded for this directory` and `no such run: <ref>` exit `66`; `log of <run> was removed` and `record of <run> is missing or unreadable` (a log from before records existed) exit `66`; an ambiguous or too-short prefix, a range that starts past the end (`the log has <N> lines`), a reversed range (`invalid range: L9-L3`) or an unknown cluster id (`no cluster <id> in <run>`) exit `64`.
+
+### Replay
+
+`replay` prints the digest of a recorded run again, from its record and its log, without running anything:
+
+```bash
+dot-test-digest replay last                                   # the same digest (see below for when it is byte for byte)
+dot-test-digest replay last --format=json --max-clusters=15   # every cluster, as JSON
+dot-test-digest replay last --context-lines=0                 # only the failing source line
+```
+
+It reads the stored lines through the same pipeline as a run, with the stored `phase`, `command`, `child_exit_code`, `duration_ms` and options, unless `--format`, `--max-clusters` or `--context-lines` overrides one of them, and exits with the record's `exit_code` (a replayed `INVALID_RED` exits `64` and prints its message on `stderr` again). The size rules are those of a run, so `--format=json` is how to see more than the compact budget allows. The digest is byte for byte the original only for a run whose digest came from Gear 0 (a grammar or the heuristic fallback) and that was not retried: a Gear 1 (Jev) digest is replayed through the heuristic instead, and a `--retry-flakes` run is replayed from its whole log, both attempts, where the live digest used the second only. Replay never starts a process, never calls the network (Gear 1 is off), never reads or writes a TDD state file and never writes a log or a record, so no `(delta: ...)` is printed. A log from before records existed exits `66` with `<run> has no record (written by an older version); replay needs one`; a record whose log was pruned exits `66` with `log of <run> was removed`. A source window is read from the run's directory as it is now, so an edited file shows its new lines.
+
+### Stats
+
+`stats` totals what the recorded runs of every directory saved:
+
+```bash
+dot-test-digest stats            # runs: 3 / raw bytes: 16000 / digest bytes: 1850 /
+                                 # saved: 14150 bytes (88.4%), about 3538 tokens / status: FAIL 1, PASS 2
+dot-test-digest stats --last 20  # only the 20 newest runs (by created_at)
+dot-test-digest stats --json     # {"runs":3,"raw_bytes":16000,"digest_bytes":1850,"saved_bytes":14150,
+                                 #  "saved_percent":88.4,"estimated_tokens_saved":3538,"statuses":{"FAIL":1,"PASS":2}}
+```
+
+`raw bytes` is the size of the logs and `digest bytes` what the runs printed on stdout (both from the records); the percentage is rounded to one decimal, and the tokens use the tool's own estimate (4 bytes a token, rounded up), `0` when a digest was larger than its output. Statuses are sorted by name. With no records it prints `runs: 0`. It reads only, and exits `0`; a `--last` that is not a positive integer exits `64`. Runs without a record (older logs) are not counted.
+
+### Digesting a log you already have
+
+`digest` reads a log that was written without the tool, a CI job's output or a log someone pasted, and prints the same digest a wrapped run would:
+
+```bash
+dot-test-digest digest test.log                   # exit 1 when a grammar found a failure, else 0
+dot-test-digest digest build.log --exit-code 2    # exit with the code the original command returned
+some-job | dot-test-digest digest -               # read stdin
+dot-test-digest digest test.log --format=json     # also --max-clusters, --context-lines, --no-jev[=true|false]
+dot-test-digest digest -- -odd-name.log           # -- ends the flags, for a name starting with -
+```
+
+The lines are copied unchanged into a new log under the cache, so every `raw: L<a>-L<b>` pointer is a line number of the input, and the run is recorded like any other (`source: "digest"`, `command: []`, `input: "<path>"` or `"-"`): `show last`, `replay last` (the same digest again) and `stats` work on it, and the cache is pruned afterwards as after a run. The pipeline is a run's (adapters, clusters, size rules); the header leaves out `in <t>ms`, because no process was timed, and the JSON envelope has `duration_ms: 0`. Source windows are read from the working directory and are left out when a file the log names does not exist here, so a log from another machine still gives its clusters, without windows. Because the log did not come from the tool, a window is also left out when its file is outside the working directory (an absolute path, `../`, or a symbolic link that points out, judged by real path), so a crafted log cannot make `digest` or `replay` print another file; the cluster itself stays. The input is decoded as UTF-8 like a live run's output, so invalid bytes become U+FFFD in the copied log and `raw_bytes` in the record can differ from the input's size. There is no TDD gate (`--tdd-phase` exits `64`). An empty input exits `64` with `input is empty`, a file that cannot be read exits `66` with `cannot read <path>: <reason>` (`ENOENT`, `EISDIR`, ...), `digest -` with a terminal on stdin exits `64` with `no input: pipe a log into "digest -"`, and `--exit-code` outside 0 to 255 exits `64`.
+
+Gear 1 can run here: when the exit code is non-zero, no grammar recognised a failure and the log has more than 150 lines, a digest asks Jev exactly as a run would (with `TYPESAFE_API_KEY` set). Without `--exit-code` that never happens, because the inferred code is `1` only when a grammar found a failure. Pass `--no-jev` (or set `noJev`) to stay local.
+
+In CI, run the tests as usual, keep the full log as an artifact, and print only the digest, with the tests' own exit code:
+
+```bash
+set -o pipefail
+pnpm test 2>&1 | tee test.log > /dev/null && status=0 || status=$?   # also under bash -e
+npx dot-test-digest digest test.log --exit-code "$status" --no-jev
+```
+
+The cache of a CI job is usually thrown away with the job; set `DOT_TEST_DIGEST_HOME` to a path you upload if you want the copied log and its record too.
+
+### Doctor and init
+
+`doctor` prints one line per check, `ok`, `warn` or `fail`, and exits `0` unless a check failed (`1`). It reads only: it never writes a file (a cache directory that does not exist yet is checked, not created) and never calls the network. The checks:
+
+- `node`: the Node version; `fail` below 20.
+- `version`: the tool's version.
+- `cache`: the cache directory (`DOT_TEST_DIGEST_HOME`, default `~/.cache/dot-test-digest`), with the number of recorded runs and its size; `fail` when it cannot be created or written, for example under a regular file. An entry inside it that cannot be read is also a `fail`: `fail  cache: <home> (cannot read <path>: EACCES)`; a file removed while `doctor` counts (a concurrent prune) is skipped.
+- `config`: the project and user files found (see [Configuration](#configuration)), or `none found`; `fail` with the same message a run would print when one is invalid (`<path>: unknown key "maxCluster"`). A setting the file may not set (a project `mcp` key, a project retention limit) adds a `warn  config: ignoring ...` line with the text a run prints on `stderr`.
+- `gear1`: `ok    gear1: TYPESAFE_API_KEY is set` (or `JEV_API_KEY is set`; the key itself is never printed). Otherwise a `warn` that Jev is off and the heuristic is used: the key is not set, it is empty (`TYPESAFE_API_KEY` is read first, as a run does, so an empty one turns Jev off even when `JEV_API_KEY` is set), or the config sets `noJev` (`warn  gear1: Jev disabled by noJev (<source>); heuristic fallback`).
+- `runner`: one line per runner found in the working directory, with the command to wrap: `vitest`, `jest`, `mocha` and `eslint` from a dependency in `package.json`; `node --test` from a `scripts.test` that contains `node --test`; `pytest` from `pytest.ini`, or a `pyproject.toml` or `setup.cfg` that mentions pytest; `cargo` from `Cargo.toml`; `go` from `go.mod`; `tsc` from `tsconfig.json`. It is a `warn` for `mocha` (no grammar: you get the heuristic tail, and a TDD `green` run needs `--allow-no-tests`) and for the runners whose grammar is checked against fixtures only (`jest`, `pytest`, `cargo`, `go`, `eslint`; see [What it understands](#what-it-understands)). No runner found is a `warn`, and so is a `package.json` that cannot be read (`warn  runner: package.json is not valid JSON`, or `is not a JSON object`).
+
+`doctor --json` prints one line `{"ok":true,"checks":[{"name":"node","status":"ok","detail":"..."},...],"runners":[{"name":"vitest","status":"ok","source":"package.json","command":"dot-test-digest -- npx vitest run"},...]}`; a `warn` runner also has a `note`.
+
+`init` writes `.dot-test-digest.json` in the working directory with the defaults of the settings a project usually changes, and no other file:
+
+```json
+{
+  "maxClusters": 5,
+  "contextLines": 2,
+  "format": "compact-md",
+  "noJev": false
+}
+```
+
+If the file exists, `init` changes nothing and exits `64` with `<path> already exists (use --force to overwrite)`; `init --force` overwrites it. `init` never writes through a symlink: on a link it exits `64` with `<path> is a symlink (use --force to replace the link)`, and `--force` removes the link itself (its target is left untouched) and writes a new file. A directory at that path exits `64` `<path> is a directory`, with or without `--force`. A file that cannot be created (a read-only directory) exits `73` (`EX_CANTCREAT`) with `cannot create <path>: EACCES`. The file is used only from inside a git repository or your home directory (see [Configuration](#configuration)); `dot-test-digest config` shows whether it applies.
+
+## Configuration
 
 Most flags can also be set once, so every run gets them without typing. Each setting takes the first value found in this order: the flag, an environment variable, the project file, the user file, the built-in default.
 
@@ -163,37 +320,42 @@ retention.stateMaxAgeDays = 90 (default)
 
 The source is `default`, `user <path>`, `project <path>` or `env <NAME>`; `mcp.allow` is printed only when the user file sets it.
 
-### What you get back
+## The cache and what is deleted
 
-The first line of every digest is a header: `[<STATUS>] <passed> passed, <failed> failed in <time> | <n> clusters | log: <path>` (`[<STATUS> | <PHASE>]` when `--tdd-phase` is set; the cluster count appears only when there are clusters; `, <n> skipped` and `, <n> warnings` follow the counts only when nonzero; a pass whose output no grammar recognised reads `exit 0` instead of the counts). Skipped counts skipped and todo tests; warnings are lint and compiler warnings, which are counted (`summary.warnings` in the JSON, present only when nonzero) and become failure clusters only when the command failed with no error to show (a linter run with `--max-warnings=0`). The status is one of:
+Everything the tool writes lives in one directory, `~/.cache/dot-test-digest/` (or `$DOT_TEST_DIGEST_HOME`): runs in `logs/` (`<run>.log` and `<run>.json`, a pair counts as one run) and TDD state in `state-<scope_id>.json`. Nothing else in it, and nothing outside it, is ever deleted.
 
-| Status | Meaning |
-| --- | --- |
-| `PASS` | The command exited `0` (and, with `--tdd-phase`, the phase was satisfied). |
-| `FAIL` | The command failed and a grammar found failure clusters. |
-| `BUILD_ERROR` | The command failed but no grammar recognised the output (compile errors from an unknown tool, a crash). The digest shows a narrowed tail of the log. |
-| `VALID_RED` | `--tdd-phase=red` and the test failed for a behavioural reason. A *successful* gate run: exit `0`. |
-| `INVALID_RED` | `--tdd-phase=red` and the test passed, or failed for a non-behavioural reason (syntax error, broken import, runner crash). Exit `64`. |
-| `INVALID_GREEN` | `--tdd-phase=green` or `refactor`, the command exited `0`, but no passed or failed test was recognised (skipped tests do not count). Exit `64`, a one-line message on `stderr`, and the TDD state is left as it was. `--allow-no-tests` turns it back into `PASS`. |
-| `REGRESSION_DETECTED` | `--tdd-phase=refactor` and something that passed before now fails. |
+After each run has printed its digest, the tool prunes the cache:
 
-**The next step and the rerun command.** Line 2 of a failure digest names what to look at next: `next: dot-test-digest show <run> <cluster>`, where `<cluster>` is the first cluster that did not get a full block (the first of the listed lines, when it fits), or the first cluster when every one is shown. Run it as printed: `show` prints that cluster's lines from the log. The first full block also has a `rerun:` row, a shell command that runs only that block's first test, when the command you wrapped names a test runner:
+- It keeps the newest 50 runs (`retention.keepRuns`; the run that just finished is one of them) whatever their age.
+- Among the older ones it deletes those created more than 14 days ago (`retention.maxAgeDays`). A log from before run records existed counts by its modification time; a record whose log is gone is deleted.
+- It deletes `state-*.json` files not modified for 90 days (`retention.stateMaxAgeDays`), never the current scope's.
+- It never deletes the current run, a file modified in the last hour (another run may be writing it), a symbolic link, or a file that is not named like a run (`run_<id>.log`, `run_<id>.json`) or a state file.
+- It deletes at most 200 files per run, oldest first; the rest goes on the next runs.
 
-```text
-[FAIL] 4 failed, 2 passed in 282ms | 2 clusters | log: ~/.cache/dot-test-digest/logs/run_mwe2svamacd7d77d.log
-next: dot-test-digest show run_mwe2svamacd7d77d c_fdff652c
-c_9721831d ASSERTION_FAILURE x1 cart.test.js:7:46
-  …
-  tests: discount 10% leaves 90%
-  rerun: node --test --test-name-pattern '^discount 10% leaves 90%$' cart.test.js
-  raw: L15-L39
+A failure while pruning prints `dot-test-digest: could not prune the cache: <reason>` on `stderr` and never changes the exit code. `DOT_TEST_DIGEST_PRUNE=0` or `"retention": { "auto": false }` (in either file) turns the automatic prune off; the three limits are read from the user file only (see [Configuration](#configuration)). A cache directory that is a symbolic link is followed once, to the directory it names.
+
+`gc` runs the same rule on demand, without the 200-file cap, and says what it did:
+
+```bash
+dot-test-digest gc                                  # removed 10 runs (0 state files), kept 50 runs
+dot-test-digest gc --keep 10 --max-age-days 2       # stricter numbers for this call
+dot-test-digest gc --state-max-age-days 30
+dot-test-digest gc --dry-run                        # would remove 10 runs (0 state files), keeping 50 runs
 ```
 
-If the run record could not be written (a full disk; the digest says `could not write the run record` on `stderr`), the `next:` line still names the run, and `show` answers it with exit `66` and `record of <run> is missing or unreadable` (it needs the record for any selector); the lines are still in the log the header names. The `next:` line is not printed on a pass, when the digest falls back to the raw text (the small `tsc` case), or for an envelope a program builds without a `run_id`. Both lines count toward the 2,400-byte limit (together about 130 bytes), so a digest can show one full block fewer than before; the clusters that lose their block are listed or counted, as always.
+Its defaults are the `retention.*` limits of the user file (50, 14 and 90 unless set there). A value that is not a non-negative integer exits `64` with `--keep must be a non-negative integer, got -1`. On a cache that does not exist it prints `removed 0 runs (0 state files), kept 0 runs`, exits `0` and creates nothing. The one-hour protection applies to `gc` too.
 
-**Exit codes.** The wrapper exits with exactly the child's exit code (`0..255`), or `128 + signal` when the child was killed (`143` for `SIGTERM`). The only exception is the TDD gate: `64` (`EX_USAGE`) means an invalid red phase (`INVALID_RED`), a green or refactor run that ran no test (`INVALID_GREEN`), or a usage error in the flags. Subcommands never return a child's code: `0` on success, `64` for a usage error, `66` (`EX_NOINPUT`) when the run, its record or its log does not exist. A failure to write the log or the state file is reported on `stderr` and never changes the exit code, and neither does a reader that closes stdout early (`dot-test-digest -- … | head -1`): the digest is dropped, the log is still written and no `EPIPE` trace is printed.
+## Long runs and large outputs
 
-### For programs and agents
+```bash
+dot-test-digest --progress -- pnpm test     # a heartbeat on stderr every 10 s while the tests run
+```
+
+With `--progress` (or `"progress": true` in a config file, or `DOT_TEST_DIGEST_PROGRESS=1`) the tool prints `dot-test-digest: running... <N> lines, <S>s` on `stderr` every 10 seconds while the command runs: `N` is the number of lines written to the log so far (stdout and stderr together) and `S` the elapsed seconds. When `stderr` is a terminal each heartbeat overwrites the previous one and the last is cleared before the digest is printed; otherwise each heartbeat is its own line. Nothing is written to `stdout`, so `--format=json` still prints one JSON document, and the exit code and the digest are the same as without the flag. A command that finishes within the first 10 seconds prints no heartbeat. `--progress=false` turns a configured `progress: true` off for one run. (`DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS` changes the interval; it exists for tests.)
+
+Large outputs no longer have to fit in memory as a whole. Up to 4 MiB of output is kept in memory; above that, the grammars read the lines back from the log through a cache of at most 8 MiB, and the raw text that the smallest digests print as they are is only built for an output of at most 2,400 bytes. `digest`, `replay` and `show` read their logs the same way, and `digest` streams its input (a file or stdin) into the new log instead of reading it whole. The digest is the same, byte for byte, as when every line was held in memory. Measured on 2026-11-13 (Node 22.23.4, `--no-jev`, a throwaway build of this tree): a command printing 400,000 lines (`for(let i=0;i<400000;i++)console.log('line '+i+' some padding text to make it longer than usual')`) run under `node --max-old-space-size=96` exits `0` with the one-line pass digest, where 0.1.x aborted with a V8 out-of-memory error (exit `134`); it took 5.5 s of wall time (5.9 s when re-run on the 0.2.0 release build), against 3.2 s for 0.1.x without a heap limit. A `node --test` TAP log with 200,000 filler lines before and after it gives the same four clusters under that limit, with `raw:` pointers into the middle of the log (`L200015-L200039` for the first). The run record's `raw_lines` and `raw_bytes` are the log's line count and size for any output. The limits count bytes of output, not lines or heap: below 4 MiB every line is still held as its own object, so output made of millions of very short lines can still exhaust a small heap. Measured the same day under `--max-old-space-size=96`: 1,000,000 lines of `x` exit `0`, 3,000,000 abort with exit `134` (so does 0.1.x). Lines of typical test output, as in the 400,000-line run above, are well inside the limit.
+
+## For programs and agents
 
 `--format=json` prints one JSON document. Its top-level keys are `status`, `tdd_phase`, `exit_code`, `signal`, `execution_gear`, `duration_ms`, `summary`, `delta` (with a TDD phase), `clusters` (when there are any), `raw_log_path`, `schema_version` and `run_id`. `schema_version` is `1`, and stays `1` as long as a change only adds optional keys; `run_id` is the run's id in the cache (`show <run_id>`, `replay <run_id>`). `summary` holds `passed`, `failed`, `skipped`, `total_clusters` (the clusters in `clusters`, at most `--max-clusters`), `warnings` (only when nonzero) and `omitted_clusters` (the clusters beyond `--max-clusters`, only when nonzero). Each cluster has `cluster_id`, `fingerprint`, `error_kind`, `affected_count`, `sample_tests`, `diff` (when there is one), `message`, `top_frame`, `pruned_stack`, `signal_window`, `raw_log_lines` and `rerun` (below).
 
@@ -215,7 +377,7 @@ The [JSON Schema](schema/digest-envelope.schema.json) (draft 2020-12) of this do
 
 The test name is the last part of the name (after the last ` > `), with regular-expression characters escaped for the runners that take a pattern. For vitest and jest a pattern that would start with `-` starts with `\-` instead (`-t '\-1 is rejected'`), so the runner cannot read it as a flag; the pattern still matches the same name (executed with vitest, not with jest). Every word is quoted for a POSIX shell (`sh`, `bash`, `zsh`; Windows shells are not covered). Only the runners of the grammar that read the output count (`node`, `vitest` and `jest` for JavaScript tests, `pytest`, `cargo` and `go`, `eslint`), and a word that contains whitespace is never a runner, so `sh -c "npm run build && vitest"` and a JavaScript failure under `pnpm --dir packages/go test` get no `rerun`. There is no `rerun` for a command without a runner word (`pnpm test`, `npm test`, `make test`: the tool cannot see what the script runs), for `tsc`, or when the output did not name the test or file the runner needs. The jest, pytest, cargo, go and eslint forms were checked against the grammars' fixture logs, not by running those tools.
 
-### As an MCP server
+## As an MCP server
 
 `dot-test-digest mcp` serves the tool to an agent over the [Model Context Protocol](https://modelcontextprotocol.io) on stdin and stdout, until stdin ends. It answers the calls still running, then exits `0`. Everything it writes on stdout is protocol traffic; warnings and the heartbeat of a run go to stderr. It uses the official MCP SDK (`@modelcontextprotocol/sdk`), a runtime dependency that makes a production install about 24 MB and some 90 packages instead of 4.7 MB (measured with `pnpm install --prod`); the SDK is loaded by this subcommand only, so a wrapped run starts as fast as before. `init --print-mcp-config` prints the entry for the client's configuration, writes nothing and exits `0`:
 
@@ -263,120 +425,6 @@ The allowlist is the union of the two. `node --test` allows `["node", "--test", 
 
 The Claude Code hook that would rewrite a Bash test command into a wrapped one is not part of this version.
 
-### Looking back at a run
-
-Every run that gets as far as a digest leaves two files in `~/.cache/dot-test-digest/logs/` (or `$DOT_TEST_DIGEST_HOME/logs/`): `<run>.log`, the raw output line for line (every `raw: L<a>-L<b>` pointer in a digest refers to it), and `<run>.json`, the **run record**. The record is written atomically after the digest is printed and holds what the log cannot: `run_id`, `version`, `created_at`, `cwd`, `command`, `exit_code` (what the tool returned) and `child_exit_code`, `signal`, `duration_ms`, `phase`, `scope_id`, `status`, `execution_gear`, `format`, `options`, `summary`, the size of the log (`raw_lines`, `raw_bytes`), the bytes of the digest (`digest_bytes`) and every cluster, shown or omitted, with its `raw_log_lines` range. A failure to write it prints `dot-test-digest: could not write the run record: <reason>` on `stderr` and never changes the exit code. A run that ends before a digest, because the command could not be started (exit `127`) or the tool hit an internal error (exit `70`), leaves its log and no record.
-
-`show` prints a run's raw lines exactly as stored, so you can open the part of the log a digest pointed at without knowing its path:
-
-```bash
-dot-test-digest show last                  # the whole log of the newest run in this directory
-dot-test-digest show last L15-L39          # a range (also 15-39, or L15 for one line)
-dot-test-digest show last c_9721831d       # the lines of one cluster, from the record
-dot-test-digest show run_mwdh6m L15-L16 --numbers   # "15<TAB>..." per line
-dot-test-digest show last --record         # the record file itself
-```
-
-A `<run>` is `last` (the newest record whose `cwd` is the current directory, so runs in other repositories never answer), a full run id, or a unique prefix of at least 6 characters. A range running past the end is clamped. Errors are one line on `stderr`: `no run recorded for this directory` and `no such run: <ref>` exit `66`; `log of <run> was removed` and `record of <run> is missing or unreadable` (a log from before records existed) exit `66`; an ambiguous or too-short prefix, a range that starts past the end (`the log has <N> lines`), a reversed range (`invalid range: L9-L3`) or an unknown cluster id (`no cluster <id> in <run>`) exit `64`.
-
-`replay` prints the digest of a recorded run again, from its record and its log, without running anything:
-
-```bash
-dot-test-digest replay last                                   # the same digest (see below for when it is byte for byte)
-dot-test-digest replay last --format=json --max-clusters=15   # every cluster, as JSON
-dot-test-digest replay last --context-lines=0                 # only the failing source line
-```
-
-It reads the stored lines through the same pipeline as a run, with the stored `phase`, `command`, `child_exit_code`, `duration_ms` and options, unless `--format`, `--max-clusters` or `--context-lines` overrides one of them, and exits with the record's `exit_code` (a replayed `INVALID_RED` exits `64` and prints its message on `stderr` again). The size rules are those of a run, so `--format=json` is how to see more than the compact budget allows. The digest is byte for byte the original only for a run whose digest came from Gear 0 (a grammar or the heuristic fallback) and that was not retried: a Gear 1 (Jev) digest is replayed through the heuristic instead, and a `--retry-flakes` run is replayed from its whole log, both attempts, where the live digest used the second only. Replay never starts a process, never calls the network (Gear 1 is off), never reads or writes a TDD state file and never writes a log or a record, so no `(delta: ...)` is printed. A log from before records existed exits `66` with `<run> has no record (written by an older version); replay needs one`; a record whose log was pruned exits `66` with `log of <run> was removed`. A source window is read from the run's directory as it is now, so an edited file shows its new lines.
-
-`stats` totals what the recorded runs of every directory saved:
-
-```bash
-dot-test-digest stats            # runs: 3 / raw bytes: 16000 / digest bytes: 1850 /
-                                 # saved: 14150 bytes (88.4%), about 3538 tokens / status: FAIL 1, PASS 2
-dot-test-digest stats --last 20  # only the 20 newest runs (by created_at)
-dot-test-digest stats --json     # {"runs":3,"raw_bytes":16000,"digest_bytes":1850,"saved_bytes":14150,
-                                 #  "saved_percent":88.4,"estimated_tokens_saved":3538,"statuses":{"FAIL":1,"PASS":2}}
-```
-
-`raw bytes` is the size of the logs and `digest bytes` what the runs printed on stdout (both from the records); the percentage is rounded to one decimal, and the tokens use the tool's own estimate (4 bytes a token, rounded up), `0` when a digest was larger than its output. Statuses are sorted by name. With no records it prints `runs: 0`. It reads only, and exits `0`; a `--last` that is not a positive integer exits `64`. Runs without a record (older logs) are not counted.
-
-### Digesting a log you already have
-
-`digest` reads a log that was written without the tool, a CI job's output or a log someone pasted, and prints the same digest a wrapped run would:
-
-```bash
-dot-test-digest digest test.log                   # exit 1 when a grammar found a failure, else 0
-dot-test-digest digest build.log --exit-code 2    # exit with the code the original command returned
-some-job | dot-test-digest digest -               # read stdin
-dot-test-digest digest test.log --format=json     # also --max-clusters, --context-lines, --no-jev[=true|false]
-dot-test-digest digest -- -odd-name.log           # -- ends the flags, for a name starting with -
-```
-
-The lines are copied unchanged into a new log under the cache, so every `raw: L<a>-L<b>` pointer is a line number of the input, and the run is recorded like any other (`source: "digest"`, `command: []`, `input: "<path>"` or `"-"`): `show last`, `replay last` (the same digest again) and `stats` work on it, and the cache is pruned afterwards as after a run. The pipeline is a run's (adapters, clusters, size rules); the header leaves out `in <t>ms`, because no process was timed, and the JSON envelope has `duration_ms: 0`. Source windows are read from the working directory and are left out when a file the log names does not exist here, so a log from another machine still gives its clusters, without windows. Because the log did not come from the tool, a window is also left out when its file is outside the working directory (an absolute path, `../`, or a symbolic link that points out, judged by real path), so a crafted log cannot make `digest` or `replay` print another file; the cluster itself stays. The input is decoded as UTF-8 like a live run's output, so invalid bytes become U+FFFD in the copied log and `raw_bytes` in the record can differ from the input's size. There is no TDD gate (`--tdd-phase` exits `64`). An empty input exits `64` with `input is empty`, a file that cannot be read exits `66` with `cannot read <path>: <reason>` (`ENOENT`, `EISDIR`, ...), `digest -` with a terminal on stdin exits `64` with `no input: pipe a log into "digest -"`, and `--exit-code` outside 0 to 255 exits `64`.
-
-Gear 1 can run here: when the exit code is non-zero, no grammar recognised a failure and the log has more than 150 lines, a digest asks Jev exactly as a run would (with `TYPESAFE_API_KEY` set). Without `--exit-code` that never happens, because the inferred code is `1` only when a grammar found a failure. Pass `--no-jev` (or set `noJev`) to stay local.
-
-In CI, run the tests as usual, keep the full log as an artifact, and print only the digest, with the tests' own exit code:
-
-```bash
-set -o pipefail
-pnpm test 2>&1 | tee test.log > /dev/null && status=0 || status=$?   # also under bash -e
-npx dot-test-digest digest test.log --exit-code "$status" --no-jev
-```
-
-The cache of a CI job is usually thrown away with the job; set `DOT_TEST_DIGEST_HOME` to a path you upload if you want the copied log and its record too.
-
-`--help` also lists `config` (see [Configuration](#configuration)), `gc` (see [The cache and what is deleted](#the-cache-and-what-is-deleted)), `schema` (see [For programs and agents](#for-programs-and-agents)), `doctor` and `init` (see [Getting started in a project](#getting-started-in-a-project)) and `mcp` (see [As an MCP server](#as-an-mcp-server)).
-
-### Long runs and large outputs
-
-```bash
-dot-test-digest --progress -- pnpm test     # a heartbeat on stderr every 10 s while the tests run
-```
-
-With `--progress` (or `"progress": true` in a config file, or `DOT_TEST_DIGEST_PROGRESS=1`) the tool prints `dot-test-digest: running... <N> lines, <S>s` on `stderr` every 10 seconds while the command runs: `N` is the number of lines written to the log so far (stdout and stderr together) and `S` the elapsed seconds. When `stderr` is a terminal each heartbeat overwrites the previous one and the last is cleared before the digest is printed; otherwise each heartbeat is its own line. Nothing is written to `stdout`, so `--format=json` still prints one JSON document, and the exit code and the digest are the same as without the flag. A command that finishes within the first 10 seconds prints no heartbeat. `--progress=false` turns a configured `progress: true` off for one run. (`DOT_TEST_DIGEST_PROGRESS_INTERVAL_MS` changes the interval; it exists for tests.)
-
-Large outputs no longer have to fit in memory as a whole. Up to 4 MiB of output is kept in memory; above that, the grammars read the lines back from the log through a cache of at most 8 MiB, and the raw text that the smallest digests print as they are is only built for an output of at most 2,400 bytes. `digest`, `replay` and `show` read their logs the same way, and `digest` streams its input (a file or stdin) into the new log instead of reading it whole. The digest is the same, byte for byte, as when every line was held in memory. Measured on 2026-11-13 (Node 22.23.4, `--no-jev`, a throwaway build of this tree): a command printing 400,000 lines (`for(let i=0;i<400000;i++)console.log('line '+i+' some padding text to make it longer than usual')`) run under `node --max-old-space-size=96` exits `0` with the one-line pass digest, where 0.1.x aborted with a V8 out-of-memory error (exit `134`); it took 5.5 s of wall time, against 3.2 s for 0.1.x without a heap limit. A `node --test` TAP log with 200,000 filler lines before and after it gives the same four clusters under that limit, with `raw:` pointers into the middle of the log (`L200015-L200039` for the first). The run record's `raw_lines` and `raw_bytes` are the log's line count and size for any output. The limits count bytes of output, not lines or heap: below 4 MiB every line is still held as its own object, so output made of millions of very short lines can still exhaust a small heap. Measured the same day under `--max-old-space-size=96`: 1,000,000 lines of `x` exit `0`, 3,000,000 abort with exit `134` (so does 0.1.x). Lines of typical test output, as in the 400,000-line run above, are well inside the limit.
-
-### The cache and what is deleted
-
-Everything the tool writes lives in one directory, `~/.cache/dot-test-digest/` (or `$DOT_TEST_DIGEST_HOME`): runs in `logs/` (`<run>.log` and `<run>.json`, a pair counts as one run) and TDD state in `state-<scope_id>.json`. Nothing else in it, and nothing outside it, is ever deleted.
-
-After each run has printed its digest, the tool prunes the cache:
-
-- It keeps the newest 50 runs (`retention.keepRuns`; the run that just finished is one of them) whatever their age.
-- Among the older ones it deletes those created more than 14 days ago (`retention.maxAgeDays`). A log from before run records existed counts by its modification time; a record whose log is gone is deleted.
-- It deletes `state-*.json` files not modified for 90 days (`retention.stateMaxAgeDays`), never the current scope's.
-- It never deletes the current run, a file modified in the last hour (another run may be writing it), a symbolic link, or a file that is not named like a run (`run_<id>.log`, `run_<id>.json`) or a state file.
-- It deletes at most 200 files per run, oldest first; the rest goes on the next runs.
-
-A failure while pruning prints `dot-test-digest: could not prune the cache: <reason>` on `stderr` and never changes the exit code. `DOT_TEST_DIGEST_PRUNE=0` or `"retention": { "auto": false }` (in either file) turns the automatic prune off; the three limits are read from the user file only (see [Configuration](#configuration)). A cache directory that is a symbolic link is followed once, to the directory it names.
-
-`gc` runs the same rule on demand, without the 200-file cap, and says what it did:
-
-```bash
-dot-test-digest gc                                  # removed 10 runs (0 state files), kept 50 runs
-dot-test-digest gc --keep 10 --max-age-days 2       # stricter numbers for this call
-dot-test-digest gc --state-max-age-days 30
-dot-test-digest gc --dry-run                        # would remove 10 runs (0 state files), keeping 50 runs
-```
-
-Its defaults are the `retention.*` limits of the user file (50, 14 and 90 unless set there). A value that is not a non-negative integer exits `64` with `--keep must be a non-negative integer, got -1`. On a cache that does not exist it prints `removed 0 runs (0 state files), kept 0 runs`, exits `0` and creates nothing. The one-hour protection applies to `gc` too.
-
-## The TDD gate
-
-`--tdd-phase` makes the tool check that a test-first loop is honest. State lives in `~/.cache/dot-test-digest/state-<scope_id>.json`.
-
-| Phase | When you run it | Result |
-| --- | --- | --- |
-| `red` | After writing a new test, before the code | `VALID_RED` (exit `0`) only if the test fails on a behavioural assertion or a missing export under test; the failing tests are recorded as the baseline. `INVALID_RED` (exit `64`) if it passes, or fails on a syntax error, an unresolved import or a runner startup crash. |
-| `green` | After writing the code | `PASS` when the command exits `0` and at least one test was recognised, with the count of baseline tests that now pass. `INVALID_GREEN` (exit `64`, state unchanged) when it exits `0` but no passed or failed test was recognised; pass `--allow-no-tests` for a runner without a grammar. `FAIL` (the child's exit code) otherwise, with any re-broken baseline test listed as a regression. |
-| `refactor` | While restructuring | `PASS`, `INVALID_GREEN` as for `green`, or `REGRESSION_DETECTED` with the newly broken tests. |
-| `none` | Everything else | Plain digest, no state. |
-
-This is what stops an agent (or a tired human) from calling a test "red" when it fails only because of a typo in its own import.
-
 ## What it understands
 
 The digest picks a grammar from the shape of the output (no flag needed):
@@ -393,18 +441,18 @@ The digest picks a grammar from the shape of the output (no flag needed):
 
 The three gears: **Gear 0** is the local grammars above (no network). **Gear 1** is optional: for an *unstructured* failure above 150 lines it asks Jev (`jev-1.13.0`) to pick the relevant windows of the log, and needs `TYPESAFE_API_KEY`. Without a key, or with `--no-jev`, it falls back to a local heuristic. See [Things to know](#where-it-works-well-and-where-it-does-not) for what was and was not measured.
 
-**Privacy.** Gear 1 is the only part of the tool that uses the network. When `TYPESAFE_API_KEY` is set and `--no-jev` is not passed, it sends excerpts of the failing run's log (the failure windows and the tail, bounded in size) to `api.typesafe.ai`. Pass `--no-jev` to keep every run local. Without a key, nothing leaves your machine.
+**Privacy.** Gear 1 is the only part of the tool that uses the network. When `TYPESAFE_API_KEY` (or `JEV_API_KEY`) is set and `--no-jev` is not passed, it sends excerpts of the failing run's log (the failure windows and the tail, bounded in size) to `api.typesafe.ai`. Pass `--no-jev` to keep every run local. Without a key, nothing leaves your machine.
 
 ## Example
 
-The same small project run without and with the digest: a cart module with two bugs (`discount` returns the discount instead of the amount left, and `first` crashes on an empty cart) and 29 vitest tests, 5 of them failing. The project is in [`tests/fixtures/vitest-cart/`](tests/fixtures/vitest-cart). It is a recreation: the project I measured the first version of this example with was not kept, so the numbers below come from this one and are not comparable with the earlier ones. First measured on 2026-11-01; re-measured on 2026-11-12 from a throwaway build of this tree (`846620d`, the version that added the `next:` line and the `rerun:` row), Node 22.23.4, vitest 2.1.9, `--no-jev`, in a fresh temporary copy of the fixture. The log path in the pasted digest is shortened to `~/.cache/...`; the byte count is of the real output, with a `/tmp/...` cache path. The raw excerpt is from the first measurement; the raw size moves by a few bytes with the directory name vitest prints on its `RUN` line and with the timings.
+The same small project run without and with the digest: a cart module with two bugs (`discount` returns the discount instead of the amount left, and `first` crashes on an empty cart) and 29 vitest tests, 5 of them failing. The project is in [`tests/fixtures/vitest-cart/`](tests/fixtures/vitest-cart). It is a recreation: the project I measured the first version of this example with was not kept, so the numbers below come from this one and are not comparable with the earlier ones. First measured on 2026-11-01; re-measured for 0.2.0 on 2026-11-13 from a build of this tree made by `.claude/skills/verify/verify.sh launch`, Node 22.23.4, vitest 2.1.9, `--no-jev`, in a fresh temporary copy of the fixture, with the cache at its default `~/.cache/dot-test-digest` (a temporary `HOME`), so the header's log path is the one you would see. The raw excerpt is from the first measurement; the raw size moves by a few bytes with the directory name vitest prints on its `RUN` line and with the timings.
 
 ```bash
 vitest run                                  # raw
 dot-test-digest --no-jev -- vitest run      # through the digest
 ```
 
-**Raw:** 110 lines, 4,317 bytes, exit code `1` (excerpt)
+**Raw:** 110 lines, 4,294 bytes, exit code `1` (excerpt)
 
 ```text
  RUN  v2.1.9 /tmp/m/vc
@@ -430,11 +478,11 @@ dot-test-digest --no-jev -- vitest run      # through the digest
    Duration  787ms (transform 98ms, setup 0ms, collect 77ms, tests 48ms, environment 0ms, prepare 144ms)
 ```
 
-**Digest:** 36 lines, 2,265 bytes, same exit code (`1`)
+**Digest:** 36 lines, 2,268 bytes, same exit code (`1`)
 
 ```text
-[FAIL] 5 failed, 24 passed in 1489ms | 3 clusters | log: ~/.cache/dot-test-digest/logs/run_mwe2u35s31f1a107.log
-next: dot-test-digest show run_mwe2u35s31f1a107 c_c7823024
+[FAIL] 5 failed, 24 passed in 1569ms | 3 clusters | log: ~/.cache/dot-test-digest/logs/run_mweo5kif60c6012d.log
+next: dot-test-digest show run_mweo5kif60c6012d c_c7823024
 c_992bb564 ASSERTION_FAILURE x1 tests/cart.test.ts:7:66
   AssertionError: expected 100 to be 900 // Object.is equality
   diff: expected 900 / received 100
@@ -473,19 +521,19 @@ c_cf012b19 ASSERTION_FAILURE x1 tests/cart.test.ts:10:59
 
 Fair reading of this example: vitest already prints a one-line summary of every failure at the top, so the raw output is not hard to scan here. The digest drops the repeated per-failure detail and adds a source window around each failing line. It prints full detail for **3 of the 5 failures** (the `--max-clusters` default is 5, but the output is also capped at about 600 tokens); the other two are listed one per line after `+2 more clusters`, with their id, kind, location and test name, but no message, diff or window. Line 2 points at the first of those two (`show <run> c_c7823024` prints its lines from the log), and the first block's `rerun:` row is a command that runs only `discount 10% leaves 90%`. The one that is not an assertion (the `TypeError` from `first`) is one of the two that only get a line. The full output is always in the log the header names.
 
-A passing run is one line: for the same project with both bugs fixed, `[PASS] 29 passed, 0 failed in 1306ms | log: …` was 86 bytes against 249 bytes raw (10 lines).
+A passing run is one line: for the same project with both bugs fixed, `[PASS] 29 passed, 0 failed in 1279ms | log: ~/.cache/dot-test-digest/logs/<run>.log` was 99 bytes against 249 bytes raw (10 lines).
 
 ## Where it works well, and where it does not
 
-These are measurements from small hand-made projects, not a benchmark. Sizes are raw output against digest output; the digest bytes include the header line with its log path (a `/tmp/...` path here; the default `~/.cache/...` path is a little longer). The failing rows were re-measured on 2026-11-12 from a throwaway build of `846620d`, which added the `next:` line and the first block's `rerun:` row (about 130 bytes); the passing vitest row is from 2026-11-01 (a pass line did not change).
+These are measurements from small hand-made projects, not a benchmark. Sizes are raw output against digest output; the digest bytes include the header line with the default log path `~/.cache/dot-test-digest/logs/<run>.log`. Every row was re-measured for 0.2.0 on 2026-11-13 from a build made by `.claude/skills/verify/verify.sh launch` (Node 22.23.4, `--no-jev`). Raw sizes move by a few bytes with the directory the fixture is copied to and with the timings; digest sizes move with the length of the log path, which can change how many listed lines fit.
 
 | Case | Raw | Digest | Verdict |
 | --- | --- | --- | --- |
-| vitest (non-TTY), 5 of 29 failing | 110 lines, 4,317 B | 36 lines, 2,265 B | **Good.** Distinct failures become clusters with file, line, diff and a source window. Full detail for the first 3; the others are listed one per line. |
-| vitest, all passing | 10 lines, 249 B | 1 line, 86 B | **Good.** |
-| `node --test` (default or `--test-reporter=tap`), 4 of 6 failing | 120 lines, 3,797 B (default); 3,800 B (tap) | 39 lines, 2,395 B (both) | **Good.** The four failures are four clusters (three with file, line, diff and source window), not one merged cluster. The fourth is counted in `+1 more clusters (see log)` and named on the `next:` line; its listed line no longer fits (with a longer cache path only 2 blocks fit, and the other two are listed). |
-| `node --test --test-reporter=spec`, 4 of 6 failing | 91 lines, 3,448 B | 39 lines, 2,395 B | **Good.** Parsed, with the same clusters as the tap reporter; no longer reported as `BUILD_ERROR`. |
-| `tsc --noEmit`, 5 errors in 2 files | 5 lines, 419 B | 6 lines, 527 B | **Not smaller.** The digest is the header line (108 B with this cache path) plus the 5 raw lines unchanged: the size rule falls back to the raw text when a digest would be larger. So it costs the header and saves nothing, and has no `next:` line. |
+| vitest (non-TTY), 5 of 29 failing | 110 lines, 4,294 B | 36 lines, 2,268 B | **Good.** Distinct failures become clusters with file, line, diff and a source window. Full detail for the first 3; the others are listed one per line. |
+| vitest, all passing | 10 lines, 249 B | 1 line, 99 B | **Good.** |
+| `node --test` (default or `--test-reporter=tap`), 4 of 6 failing | 120 lines, 3,590 B (default); 3,593 B (tap) | 39 lines, 2,329 B (both) | **Good.** The four failures are four clusters (three with file, line, diff and source window), not one merged cluster. The fourth is counted in `+1 more clusters (see log)` and named on the `next:` line; its listed line does not fit with this log path (with a shorter one, `/tmp/m/h/logs/...`, it does: 40 lines, 2,396 B). |
+| `node --test --test-reporter=spec`, 4 of 6 failing | 91 lines, 3,335 B | 39 lines, 2,329 B | **Good.** Parsed, with the same clusters as the tap reporter; no longer reported as `BUILD_ERROR`. |
+| `tsc --noEmit`, 5 errors in 2 files | 5 lines, 419 B | 6 lines, 530 B | **Not smaller.** The digest is the header line (111 B) plus the 5 raw lines unchanged: the size rule falls back to the raw text when a digest would be larger. So it costs the header and saves nothing, and has no `next:` line. |
 
 Differences from the first version of this table, so the numbers are not read as a like-for-like comparison: the `node --test` project here has 6 tests (not 26) and the `tsc` project has 5 errors (not 6), because these are the fixtures kept in `tests/fixtures/` (`node-cart`, `tsc-small`). The same-bug-in-each claim from before no longer holds; each project has its own failures.
 
@@ -518,9 +566,9 @@ The `node --test` labels are now the right ones for what I checked: with `--form
   | v0.1.2 (`4f540a8`) | 5 | 5 | none | 0 | 1,026 |
   | previous shipped rule (`2e2613a`) | 1 | 1 | `+29 more clusters (see log)` | 19 | 2,366 |
   | 0.1.4 rule (`c240b9b`) | 5 | 5 | `+25 more clusters (see log)` | 13 | 2,377 |
-  | this version, with `next:` (`846620d`, 2026-11-12) | 5 | 5 | `+25 more clusters (see log)` | 12 | 2,330 |
+  | 0.2.0, with `next:` (2026-11-13) | 5 | 5 | `+25 more clusters (see log)` | 12 | 2,333 |
 
-  So the 0.1.4 rule prints the same 5 full blocks as v0.1.2, then the `+25` line, then 13 of the 25 omitted clusters on a line each; the other 12 are only counted in the 25. This version adds the `next:` line (reserved before the blocks, like the `+25` line; `tsc` clusters have no `rerun:` row), keeps the 5 full blocks and lists 12 (35 lines; the byte count is with a shorter `/tmp` cache path than the older rows, so compare lines, not bytes). Bytes move by a few with the length of the log path (the previous README said 1,025 and 2,365 for the same two older builds, with a shorter path). I did not search for the number of omitted clusters at which the listing stops; I only ran 30 files. The vitest example above gives the same result with the 0.1.4 rule as before: 3 full blocks, `+2 more clusters (see log)` and the 2 listed lines (34 lines, 2,136 bytes with a long `/tmp` log path; 36 lines with `next:` and `rerun:`). `--format=json` still carries 5 clusters (`--max-clusters`).
+  So the 0.1.4 rule prints the same 5 full blocks as v0.1.2, then the `+25` line, then 13 of the 25 omitted clusters on a line each; the other 12 are only counted in the 25. This version adds the `next:` line (reserved before the blocks, like the `+25` line; `tsc` clusters have no `rerun:` row), keeps the 5 full blocks and lists 12 (35 lines; the byte count is with the default `~/.cache` log path, not the `/tmp` path of the older rows, so compare lines, not bytes). Bytes move by a few with the length of the log path (the previous README said 1,025 and 2,365 for the same two older builds, with a shorter path). I did not search for the number of omitted clusters at which the listing stops; I only ran 30 files. The vitest example above gives the same result with the 0.1.4 rule as before: 3 full blocks, `+2 more clusters (see log)` and the 2 listed lines (34 lines, 2,136 bytes with a long `/tmp` log path; 36 lines with `next:` and `rerun:`). `--format=json` still carries 5 clusters (`--max-clusters`).
 - A `node --test` file that crashes at load (missing module, syntax error, a throw) takes its error from the crash block node printed directly above its own entry, under both the tap and the spec reporter, and from nothing else. A block starts at a line that holds only a location, which is any line that is not indented, is not an error line, ends in `:<N>` and is followed, before the block's trailer, by an error line (so a message that continues on a line ending in a number, `/etc/app/config.json:12`, is not the location) (`file:///...:3`, `node:internal/...:275`, `/dir with a space/x.test.cjs:3`, `<anonymous_script>:1` for `eval` code, or the same text glued after a partial stdout line), runs through the source line, the error and its stack, and ends at `Node.js v22.23.4`; the digest uses the first `<Name>Error: <text>` line of it. When several blocks sit above the entry (a server a setup module started crashed after the file did), the first block whose error is an import or syntax error wins, so a broken import is never hidden, and otherwise the last block does. A line printed outside the block (a setup module's log, another file's output) never stands in for the file's error, whether or not it names the file, and a crash block that names another file (`Cannot find module '.../missing-dep.js' imported from .../helper.js`, thrown from a helper the test imports) is still the test's error. When the block has no such line (`throw 42`) or there is no block (`process.exit(1)` at load), the message stays `test failed`, which is `INVALID_RED`. Measured on Node 22.23.4 with a setup module (`--import data:text/javascript,console.log("Error: config.json not found, using defaults")`), `--no-jev --tdd-phase=red`, in a copy of `tests/fixtures/node-cart/` (a throwaway build of origin/main `74208cc`, then this version; each cell is one measured run, the cluster message trimmed):
 
   | Case | Reporter | Before | Now |
@@ -549,7 +597,7 @@ The `node --test` labels are now the right ones for what I checked: with `--form
 - `rerun` commands are quoted for a POSIX shell only; Windows was not tried.
 - Gear 1 (the optional Jev call) was not exercised: every measurement used `--no-jev`.
 
-**How these were measured.** Each project was copied to a fresh temporary directory (the vitest and tsc copies use this repo's `node_modules`), then each command was run twice with stdout and stderr redirected to a file, so vitest ran non-TTY: once raw and once through the digest, with `DOT_TEST_DIGEST_HOME` pointing at a temporary directory. Lines and bytes are `wc -l` and `wc -c`. Commands, with `D` standing for `node dist/index.js --no-jev`:
+**How these were measured.** Each project was copied to a fresh temporary directory (the vitest and tsc copies use this repo's `node_modules`), then each command was run twice with stdout and stderr redirected to a file, so vitest ran non-TTY: once raw (stdout and stderr together) and once through the digest (its stdout), with `HOME` pointing at an empty temporary directory so the cache is the default `~/.cache/dot-test-digest` under it (the older rows of the many-omitted-clusters table used `DOT_TEST_DIGEST_HOME` with a `/tmp` path). Lines and bytes are `wc -l` and `wc -c`. Commands, with `D` standing for `node <build>/index.js --no-jev`:
 
 ```bash
 vitest run                                  # in tests/fixtures/vitest-cart, and D -- vitest run
@@ -561,7 +609,7 @@ D --tdd-phase=red --scope-id <id> -- <the same commands>   # red-phase table; mi
                                                            # missing export: missing-export.test.js, already passing: passing.test.js
 ```
 
-The many-omitted-clusters bullet was measured on 2026-11-10 from three throwaway builds, and its last row on 2026-11-12 from a build of `846620d` made by `.claude/skills/verify/verify.sh launch`, (worktrees at `4f540a8`, `2e2613a` and `c240b9b`, each built with `npx tsc -p . --outDir dist`), on a project of 30 files `src/m1.ts` ... `src/m30.ts` (`export const vN: number = "text N";`) with the `tsconfig.json` of `tests/fixtures/tsc-small/`, command `D --max-clusters=5 -- npx tsc --noEmit`. The unreadable-file and crashed-file rows ran in a copy of `tests/fixtures/node-cart/` with `noread.test.js` (`import test from "node:test"; test("x", () => {});`, mode `000`) added. The crash-block table ran on 2026-11-10 from two throwaway builds (the base `9cae136` and this branch, each built with `npx tsc -p . --outDir dist`), in copies of the same fixture with `helper.js`, `deep.test.js`, `throw42.test.js`, `exitload.test.js`, `logc.test.js`, `cfg.test.js` and `cfg.test.json` (mode `000`, run as a user who is not root) added, as `node dist/index.js --no-jev --format=json --tdd-phase=red -- node --test [--test-reporter=spec] <files>`.
+The many-omitted-clusters bullet was measured on 2026-11-10 from three throwaway builds, and its last row on 2026-11-13 from the 0.2.0 build made by `.claude/skills/verify/verify.sh launch` (worktrees at `4f540a8`, `2e2613a` and `c240b9b`, each built with `npx tsc -p . --outDir dist`), on a project of 30 files `src/m1.ts` ... `src/m30.ts` (`export const vN: number = "text N";`) with the `tsconfig.json` of `tests/fixtures/tsc-small/`, command `D --max-clusters=5 -- npx tsc --noEmit`. The unreadable-file and crashed-file rows ran in a copy of `tests/fixtures/node-cart/` with `noread.test.js` (`import test from "node:test"; test("x", () => {});`, mode `000`) added. The crash-block table ran on 2026-11-10 from two throwaway builds (the base `9cae136` and this branch, each built with `npx tsc -p . --outDir dist`), in copies of the same fixture with `helper.js`, `deep.test.js`, `throw42.test.js`, `exitload.test.js`, `logc.test.js`, `cfg.test.js` and `cfg.test.json` (mode `000`, run as a user who is not root) added, as `node dist/index.js --no-jev --format=json --tdd-phase=red -- node --test [--test-reporter=spec] <files>`.
 
 For the red-phase table's vitest missing-module case, a one-test project imported `../src/nope`, which does not exist. The all-passing vitest row is the cart fixture with the two bugs fixed.
 

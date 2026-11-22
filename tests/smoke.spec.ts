@@ -3,6 +3,6 @@ import { VERSION } from "../src/version.js";
 
 describe("toolchain", () => {
   it("exposes the package version", () => {
-    expect(VERSION).toBe("0.1.0");
+    expect(VERSION).toBe("0.2.0");
   });
 });

@@ -28,7 +28,7 @@ Preconditions:
 - Prod: safe (none of these journeys starts a child or writes a log; confirm with step "No side effects" below).
 
 - **Help.** `$V drive $RUN help - --help`. Exit `0`; stdout starts `dot-test-digest — bounded test/build output compressor` and lists `--tdd-phase`, `--format`, `--max-clusters`, `--context-lines`, `--scope-id`, `--retry-flakes`, `--allow-no-tests`, `--no-jev`.
-- **Version.** `$V drive $RUN version - --version`. Exit `0`; stdout is `0.1.0` (the value in `package.json`/`src/version.ts` at the commit under test).
+- **Version.** `$V drive $RUN version - --version`. Exit `0`; stdout is `0.2.0` (the value in `package.json`/`src/version.ts` at the commit under test).
 - **Unknown flag.** `$V drive $RUN unknown - --bogus -- true`. Exit `64`; stdout empty; stderr `unknown flag: --bogus`.
 - **Missing delimiter.** `$V drive $RUN nodelim - true`. Exit `64`; stderr `missing -- delimiter before "true": dot-test-digest [flags] -- <command>`.
 - **Out of range.** `$V drive $RUN range - --max-clusters=99 -- true`. Exit `64`; stderr `--max-clusters must be between 1 and 15, got 99`.
